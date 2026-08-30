@@ -16,9 +16,8 @@ The façade is supplied by `github.com/scbizu/tape-go/pkg/runner` at tape-go
 commit `3b2ddbc850af2880930ab3bc688ba707bf1eb7af`. Anra may only use its
 neutral `Runner.RunTurn`, `Request`, `Response`, `Message`, and `ToolSpec`
 types. `pkg/agent`, Google ADK, and provider-specific types must not enter an
-Anra package. Until that commit is pushed and resolves as a published Go
-module version, this repository's local `replace` directive is development-only
-and is not a releasable dependency configuration.
+Anra package. The dependency is pinned to the published pseudo-version for this
+commit, so the repository does not rely on a local `replace` directive.
 
 The working design and implementation plan are maintained with task #17.
 The initial repository commits are `6978030` (package scaffold) and `968ef1e`
