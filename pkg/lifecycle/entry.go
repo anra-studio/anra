@@ -37,7 +37,21 @@ type Entry struct {
 	Data         json.RawMessage `json:"data"`
 }
 
-func New(kind Kind, data any) (Entry, error) {
+type Option func(*Entry)
+
+func WithActivationID(id string) Option {
+	return func(entry *Entry) { entry.ActivationID = id }
+}
+
+func WithTurnIndex(index uint32) Option {
+	return func(entry *Entry) { entry.TurnIndex = &index }
+}
+
+func WithActionIndex(index uint32) Option {
+	return func(entry *Entry) { entry.ActionIndex = &index }
+}
+
+func New(kind Kind, data any, opts ...Option) (Entry, error) {
 	if !kind.valid() {
 		return Entry{}, fmt.Errorf("lifecycle: unsupported kind %q", kind)
 	}
@@ -45,7 +59,16 @@ func New(kind Kind, data any) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("lifecycle: encode %s payload: %w", kind, err)
 	}
-	return Entry{Schema: SchemaV1, Kind: kind, Data: payload}, nil
+	entry := Entry{Schema: SchemaV1, Kind: kind, Data: payload}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&entry)
+		}
+	}
+	if err := entry.Validate(); err != nil {
+		return Entry{}, err
+	}
+	return entry, nil
 }
 
 func (e Entry) Validate() error {
@@ -57,6 +80,31 @@ func (e Entry) Validate() error {
 	}
 	if len(e.Data) == 0 || !json.Valid(e.Data) {
 		return fmt.Errorf("lifecycle: invalid %s payload", e.Kind)
+	}
+	if err := e.validateCorrelation(); err != nil {
+		return err
+	}
+	return e.validatePayload()
+}
+
+func (e Entry) validateCorrelation() error {
+	activation := e.ActivationID != ""
+	turn := e.TurnIndex != nil
+	action := e.ActionIndex != nil
+
+	valid := false
+	switch e.Kind {
+	case EventReceived:
+		valid = !activation && !turn && !action
+	case ActivationOpened, ActivationClosed, ActivationBlocked, ActivationFailed:
+		valid = activation && !turn && !action
+	case TurnOpened, TurnDecided:
+		valid = activation && turn && !action
+	case ActionAllowed, ActionDenied, EffectPrepared, EffectConfirmed, EffectFailed, EffectDropped:
+		valid = activation && turn && action
+	}
+	if !valid {
+		return fmt.Errorf("lifecycle: invalid %s correlation", e.Kind)
 	}
 	return nil
 }

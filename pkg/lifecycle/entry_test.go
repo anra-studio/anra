@@ -1,6 +1,9 @@
 package lifecycle
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestEntryValidation(t *testing.T) {
 	tests := []struct {
@@ -8,10 +11,12 @@ func TestEntryValidation(t *testing.T) {
 		entry   Entry
 		wantErr bool
 	}{
-		{name: "valid", entry: Entry{Schema: SchemaV1, Kind: EventReceived, Data: []byte(`{"id":"e1"}`)}},
-		{name: "unknown schema", entry: Entry{Schema: "anra.lifecycle/v2", Kind: EventReceived, Data: []byte(`{}`)}, wantErr: true},
+		{name: "valid", entry: Entry{Schema: SchemaV1, Kind: EventReceived, Data: []byte(`{"id":"e1","type":"input.text","payload":{}}`)}},
+		{name: "unknown schema", entry: Entry{Schema: "anra.lifecycle/v2", Kind: EventReceived, Data: []byte(`{"id":"e1","type":"input.text","payload":{}}`)}, wantErr: true},
 		{name: "unknown kind", entry: Entry{Schema: SchemaV1, Kind: "other", Data: []byte(`{}`)}, wantErr: true},
 		{name: "invalid data", entry: Entry{Schema: SchemaV1, Kind: EventReceived, Data: []byte(`{`)}, wantErr: true},
+		{name: "missing payload field", entry: Entry{Schema: SchemaV1, Kind: EventReceived, Data: []byte(`{"id":"e1","type":"input.text"}`)}, wantErr: true},
+		{name: "unexpected correlation", entry: Entry{Schema: SchemaV1, Kind: EventReceived, ActivationID: "a1", Data: []byte(`{"id":"e1","type":"input.text","payload":{}}`)}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -24,7 +29,7 @@ func TestEntryValidation(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	got, err := New(EventReceived, map[string]string{"id": "e1"})
+	got, err := New(EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

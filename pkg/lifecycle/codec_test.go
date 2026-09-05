@@ -1,13 +1,17 @@
 package lifecycle
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
 func TestCustomEntryRoundTrip(t *testing.T) {
-	want := Entry{Schema: SchemaV1, Kind: EventReceived, Data: []byte(`{"id":"e1"}`)}
+	want, err := New(EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 	custom, err := want.ToCustomEntry(entry.Entry{Owner: "p1"})
 	if err != nil {
 		t.Fatalf("ToCustomEntry() error = %v", err)
