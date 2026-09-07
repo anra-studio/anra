@@ -37,54 +37,27 @@ type Entry struct {
 	Data         json.RawMessage `json:"data"`
 }
 
-type Option func(*Entry)
-
-func WithActivationID(id string) Option {
-	return func(entry *Entry) { entry.ActivationID = id }
-}
-
-func WithTurnIndex(index uint32) Option {
-	return func(entry *Entry) { entry.TurnIndex = &index }
-}
-
-func WithActionIndex(index uint32) Option {
-	return func(entry *Entry) { entry.ActionIndex = &index }
-}
-
-func New(kind Kind, data any, opts ...Option) (Entry, error) {
-	if !kind.valid() {
-		return Entry{}, fmt.Errorf("lifecycle: unsupported kind %q", kind)
-	}
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return Entry{}, fmt.Errorf("lifecycle: encode %s payload: %w", kind, err)
-	}
-	entry := Entry{Schema: SchemaV1, Kind: kind, Data: payload}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&entry)
-		}
-	}
-	if err := entry.Validate(); err != nil {
-		return Entry{}, err
-	}
-	return entry, nil
-}
-
 func (e Entry) Validate() error {
+	if err := e.validateEnvelope(); err != nil {
+		return err
+	}
+	return e.validatePayload()
+}
+
+func (e Entry) validateEnvelope() error {
 	if e.Schema != SchemaV1 {
 		return fmt.Errorf("lifecycle: unsupported schema %q", e.Schema)
 	}
 	if !e.Kind.valid() {
 		return fmt.Errorf("lifecycle: unsupported kind %q", e.Kind)
 	}
-	if len(e.Data) == 0 || !json.Valid(e.Data) {
+	if len(e.Data) == 0 {
 		return fmt.Errorf("lifecycle: invalid %s payload", e.Kind)
 	}
 	if err := e.validateCorrelation(); err != nil {
 		return err
 	}
-	return e.validatePayload()
+	return nil
 }
 
 func (e Entry) validateCorrelation() error {
@@ -110,12 +83,6 @@ func (e Entry) validateCorrelation() error {
 }
 
 func (k Kind) valid() bool {
-	switch k {
-	case EventReceived, ActivationOpened, ActivationClosed, ActivationBlocked,
-		ActivationFailed, TurnOpened, TurnDecided, ActionAllowed, ActionDenied,
-		EffectPrepared, EffectConfirmed, EffectFailed, EffectDropped:
-		return true
-	default:
-		return false
-	}
+	_, ok := payloadDecoders[k]
+	return ok
 }

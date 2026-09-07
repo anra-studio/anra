@@ -1,4 +1,4 @@
-package core
+package agent
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/scbizu/anra/pkg/events"
 	"io"
 
 	"github.com/scbizu/anra/pkg/lifecycle"
@@ -15,13 +16,9 @@ import (
 
 const EventTypeInputText = "input.text"
 
-var ErrEventConflict = errors.New("core: event conflict")
+var ErrEventConflict = errors.New("agent: event conflict")
 
-type Event struct {
-	ID      string
-	Type    string
-	Payload json.RawMessage
-}
+type Event = events.Event
 
 type SubmitResult struct {
 	EventID   string
@@ -34,20 +31,20 @@ type EventConflictError struct {
 }
 
 func (e EventConflictError) Error() string {
-	return fmt.Sprintf("core: event %q conflicts with the existing event", e.EventID)
+	return fmt.Sprintf("agent: event %q conflicts with the existing event", e.EventID)
 }
 
 func (e EventConflictError) Unwrap() error { return ErrEventConflict }
 
-func (c *Core) Submit(ctx context.Context, event Event) (SubmitResult, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (a *Anra) Submit(ctx context.Context, event Event) (SubmitResult, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	normalized, err := normalizeEvent(event)
 	if err != nil {
 		return SubmitResult{}, err
 	}
-	projection, err := c.inspect(ctx)
+	projection, err := a.inspect(ctx)
 	if err != nil {
 		return SubmitResult{}, err
 	}
@@ -58,43 +55,41 @@ func (c *Core) Submit(ctx context.Context, event Event) (SubmitResult, error) {
 		return SubmitResult{EventID: existing.ID, Seq: existing.Seq, Duplicate: true}, nil
 	}
 	if normalized.Type != EventTypeInputText {
-		return SubmitResult{}, fmt.Errorf("core: unsupported event type %q", normalized.Type)
+		return SubmitResult{}, fmt.Errorf("agent: unsupported event type %q", normalized.Type)
 	}
 
-	fact, err := lifecycle.New(lifecycle.EventReceived, lifecycle.EventReceivedData{
-		ID: normalized.ID, Type: normalized.Type, Payload: normalized.Payload,
-	})
+	fact, err := lifecycle.NewEvent(normalized)
 	if err != nil {
-		return SubmitResult{}, fmt.Errorf("core: create event fact: %w", err)
+		return SubmitResult{}, fmt.Errorf("agent: create event fact: %w", err)
 	}
 	custom, err := fact.ToCustomEntry(tapeentry.NewEntry(
 		tapeentry.WithEntryKind(tapeentry.EntrySystem),
-		tapeentry.WithEntryOwner(c.principal),
+		tapeentry.WithEntryOwner(a.principal),
 	))
 	if err != nil {
-		return SubmitResult{}, fmt.Errorf("core: encode event fact: %w", err)
+		return SubmitResult{}, fmt.Errorf("agent: encode event fact: %w", err)
 	}
-	tapeCtx := owner.WithOwnerId(ctx, c.principal)
-	if err := c.tape.Store(tapeCtx, custom); err != nil {
-		return SubmitResult{}, fmt.Errorf("core: append event: %w", err)
+	tapeCtx := owner.WithOwnerId(ctx, a.principal)
+	if err := a.tape.Store(tapeCtx, custom); err != nil {
+		return SubmitResult{}, fmt.Errorf("agent: append event: %w", err)
 	}
-	tapeView, err := c.tape.Get(tapeCtx)
+	tapeView, err := a.tape.Get(tapeCtx)
 	if err != nil {
-		return SubmitResult{}, fmt.Errorf("core: get appended event sequence: %w", err)
+		return SubmitResult{}, fmt.Errorf("agent: get appended event sequence: %w", err)
 	}
 	return SubmitResult{EventID: normalized.ID, Seq: tapeView.Scope.SeqE}, nil
 }
 
 func normalizeEvent(event Event) (Event, error) {
 	if event.ID == "" {
-		return Event{}, errors.New("core: empty event ID")
+		return Event{}, errors.New("agent: empty event ID")
 	}
 	if event.Type == "" {
-		return Event{}, errors.New("core: empty event type")
+		return Event{}, errors.New("agent: empty event type")
 	}
 	payload, err := canonicalJSON(event.Payload)
 	if err != nil {
-		return Event{}, fmt.Errorf("core: invalid event payload: %w", err)
+		return Event{}, fmt.Errorf("agent: invalid event payload: %w", err)
 	}
 	event.Payload = payload
 	return event, nil

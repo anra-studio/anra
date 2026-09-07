@@ -2,13 +2,15 @@ package lifecycle
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/scbizu/anra/pkg/events"
 	"testing"
 
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
 func TestCustomEntryRoundTrip(t *testing.T) {
-	want, err := New(EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{}`)})
+	want, err := NewEvent(events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -16,18 +18,25 @@ func TestCustomEntryRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToCustomEntry() error = %v", err)
 	}
-	got, found, err := FromCustomEntry(custom)
+	got, err := FromCustomEntry(custom)
 	if err != nil {
 		t.Fatalf("FromCustomEntry() error = %v", err)
 	}
-	if !found || got.Schema != want.Schema || got.Kind != want.Kind || string(got.Data) != string(want.Data) {
-		t.Fatalf("FromCustomEntry() = %#v, found %v", got, found)
+	if got == nil || got.Schema != want.Schema || got.Kind != want.Kind || string(got.Data) != string(want.Data) {
+		t.Fatalf("FromCustomEntry() = %#v", got)
+	}
+}
+
+func TestFromCustomEntryReturnsNotFoundForNonAnraEntry(t *testing.T) {
+	got, err := FromCustomEntry(entry.CustomEntry{})
+	if got != nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("FromCustomEntry() = %#v, error %v; want nil, ErrNotFound", got, err)
 	}
 }
 
 func TestFromCustomEntryRejectsCorruptAnraExtension(t *testing.T) {
-	_, found, err := FromCustomEntry(entry.CustomEntry{Extensions: map[string]any{extensionKey: "{"}})
-	if !found || err == nil {
-		t.Fatalf("FromCustomEntry() found %v, error %v; want corrupt extension error", found, err)
+	got, err := FromCustomEntry(entry.CustomEntry{Extensions: map[string]any{extensionKey: "{"}})
+	if got != nil || err == nil {
+		t.Fatalf("FromCustomEntry() = %#v, error %v; want corrupt extension error", got, err)
 	}
 }

@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"encoding/json"
 	"errors"
+	"github.com/scbizu/anra/pkg/events"
 	"testing"
 
 	"github.com/scbizu/anra/pkg/action"
@@ -13,8 +14,8 @@ import (
 func TestReplayProjectsPendingEventsInSequenceOrder(t *testing.T) {
 	entries := []tapeentry.EntryLike{
 		plainEntry(1, "p1"),
-		lifecycleEntry(t, 2, "p1", EventReceived, EventReceivedData{ID: "e2", Type: "input.text", Payload: json.RawMessage(`{"text":"two"}`)}),
-		lifecycleEntry(t, 3, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
+		lifecycleEntry(t, 2, "p1", EventReceived, events.Event{ID: "e2", Type: "input.text", Payload: json.RawMessage(`{"text":"two"}`)}),
+		lifecycleEntry(t, 3, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
 	}
 
 	projection, err := Replay("p1", entries)
@@ -32,22 +33,22 @@ func TestReplayProjectsPendingEventsInSequenceOrder(t *testing.T) {
 }
 
 func TestReplayReconstructsCompletedMultiTurnActivation(t *testing.T) {
-	continueDecision := TurnDecidedData{
-		Type:    DecisionContinue,
+	continueDecision := events.Decision{
+		Type:    events.DecisionContinue,
 		Actions: []action.Action{{ID: "a1/0/0", Name: "lookup", Args: json.RawMessage(`{"q":"tape"}`)}},
 	}
-	completeDecision := TurnDecidedData{Type: DecisionComplete, Output: json.RawMessage(`{"text":"done"}`)}
+	completeDecision := events.Decision{Type: events.DecisionComplete, Output: json.RawMessage(`{"text":"done"}`)}
 	entries := []tapeentry.EntryLike{
-		lifecycleEntry(t, 1, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"go"}`)}),
-		correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, ActivationOpenedData{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
-		correlatedEntry(t, 3, "p1", TurnOpened, "a1", index(0), nil, EmptyData{}),
+		lifecycleEntry(t, 1, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"go"}`)}),
+		correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, events.Activation{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
+		correlatedEntry(t, 3, "p1", TurnOpened, "a1", index(0), nil, struct{}{}),
 		correlatedEntry(t, 4, "p1", TurnDecided, "a1", index(0), nil, continueDecision),
-		correlatedEntry(t, 5, "p1", ActionAllowed, "a1", index(0), index(0), AuthorizationData{}),
-		correlatedEntry(t, 6, "p1", EffectPrepared, "a1", index(0), index(0), EmptyData{}),
-		correlatedEntry(t, 7, "p1", EffectConfirmed, "a1", index(0), index(0), EffectConfirmedData{Result: json.RawMessage(`{"value":"found"}`)}),
-		correlatedEntry(t, 8, "p1", TurnOpened, "a1", index(1), nil, EmptyData{}),
+		correlatedEntry(t, 5, "p1", ActionAllowed, "a1", index(0), index(0), events.Reason{}),
+		correlatedEntry(t, 6, "p1", EffectPrepared, "a1", index(0), index(0), struct{}{}),
+		correlatedEntry(t, 7, "p1", EffectConfirmed, "a1", index(0), index(0), events.EffectResult{Result: json.RawMessage(`{"value":"found"}`)}),
+		correlatedEntry(t, 8, "p1", TurnOpened, "a1", index(1), nil, struct{}{}),
 		correlatedEntry(t, 9, "p1", TurnDecided, "a1", index(1), nil, completeDecision),
-		correlatedEntry(t, 10, "p1", ActivationClosed, "a1", nil, nil, TerminalData{Reason: "completed"}),
+		correlatedEntry(t, 10, "p1", ActivationClosed, "a1", nil, nil, events.Reason{Reason: "completed"}),
 	}
 
 	projection, err := Replay("p1", entries)
@@ -77,43 +78,43 @@ func TestReplayRejectsIllegalTrace(t *testing.T) {
 		{
 			name: "duplicate event",
 			entries: []tapeentry.EntryLike{
-				lifecycleEntry(t, 1, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
-				lifecycleEntry(t, 2, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
+				lifecycleEntry(t, 1, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
+				lifecycleEntry(t, 2, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
 			},
 		},
 		{
 			name: "foreign principal",
 			entries: []tapeentry.EntryLike{
-				lifecycleEntry(t, 1, "p2", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
+				lifecycleEntry(t, 1, "p2", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
 			},
 		},
 		{
 			name: "opens event out of fifo order",
 			entries: []tapeentry.EntryLike{
-				lifecycleEntry(t, 1, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
-				lifecycleEntry(t, 2, "p1", EventReceived, EventReceivedData{ID: "e2", Type: "input.text", Payload: json.RawMessage(`{"text":"two"}`)}),
-				correlatedEntry(t, 3, "p1", ActivationOpened, "a2", nil, nil, ActivationOpenedData{TriggerEventID: "e2", InputRange: view.EntryRange{SeqS: 1, SeqE: 3}}),
+				lifecycleEntry(t, 1, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
+				lifecycleEntry(t, 2, "p1", EventReceived, events.Event{ID: "e2", Type: "input.text", Payload: json.RawMessage(`{"text":"two"}`)}),
+				correlatedEntry(t, 3, "p1", ActivationOpened, "a2", nil, nil, events.Activation{TriggerEventID: "e2", InputRange: view.EntryRange{SeqS: 1, SeqE: 3}}),
 			},
 		},
 		{
 			name: "duplicate turn decision",
 			entries: []tapeentry.EntryLike{
-				lifecycleEntry(t, 1, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
-				correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, ActivationOpenedData{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
-				correlatedEntry(t, 3, "p1", TurnOpened, "a1", index(0), nil, EmptyData{}),
-				correlatedEntry(t, 4, "p1", TurnDecided, "a1", index(0), nil, TurnDecidedData{Type: DecisionComplete, Output: json.RawMessage(`{"text":"one"}`)}),
-				correlatedEntry(t, 5, "p1", TurnDecided, "a1", index(0), nil, TurnDecidedData{Type: DecisionComplete, Output: json.RawMessage(`{"text":"two"}`)}),
+				lifecycleEntry(t, 1, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
+				correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, events.Activation{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
+				correlatedEntry(t, 3, "p1", TurnOpened, "a1", index(0), nil, struct{}{}),
+				correlatedEntry(t, 4, "p1", TurnDecided, "a1", index(0), nil, events.Decision{Type: events.DecisionComplete, Output: json.RawMessage(`{"text":"one"}`)}),
+				correlatedEntry(t, 5, "p1", TurnDecided, "a1", index(0), nil, events.Decision{Type: events.DecisionComplete, Output: json.RawMessage(`{"text":"two"}`)}),
 			},
 		},
 		{
 			name: "effect before prepare",
 			entries: []tapeentry.EntryLike{
-				lifecycleEntry(t, 1, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
-				correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, ActivationOpenedData{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
-				correlatedEntry(t, 3, "p1", TurnOpened, "a1", index(0), nil, EmptyData{}),
-				correlatedEntry(t, 4, "p1", TurnDecided, "a1", index(0), nil, TurnDecidedData{Type: DecisionContinue, Actions: []action.Action{{ID: "a1/0/0", Name: "lookup", Args: json.RawMessage(`{}`)}}}),
-				correlatedEntry(t, 5, "p1", ActionAllowed, "a1", index(0), index(0), AuthorizationData{}),
-				correlatedEntry(t, 6, "p1", EffectConfirmed, "a1", index(0), index(0), EffectConfirmedData{Result: json.RawMessage(`{}`)}),
+				lifecycleEntry(t, 1, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{"text":"one"}`)}),
+				correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, events.Activation{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
+				correlatedEntry(t, 3, "p1", TurnOpened, "a1", index(0), nil, struct{}{}),
+				correlatedEntry(t, 4, "p1", TurnDecided, "a1", index(0), nil, events.Decision{Type: events.DecisionContinue, Actions: []action.Action{{ID: "a1/0/0", Name: "lookup", Args: json.RawMessage(`{}`)}}}),
+				correlatedEntry(t, 5, "p1", ActionAllowed, "a1", index(0), index(0), events.Reason{}),
+				correlatedEntry(t, 6, "p1", EffectConfirmed, "a1", index(0), index(0), events.EffectResult{Result: json.RawMessage(`{}`)}),
 			},
 		},
 	}
@@ -129,14 +130,14 @@ func TestReplayRejectsIllegalTrace(t *testing.T) {
 
 func TestReplayProjectsBlockedAndFailedActivations(t *testing.T) {
 	blocked := []tapeentry.EntryLike{
-		lifecycleEntry(t, 1, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{}`)}),
-		correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, ActivationOpenedData{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
-		correlatedEntry(t, 3, "p1", TurnOpened, "a1", index(0), nil, EmptyData{}),
-		correlatedEntry(t, 4, "p1", TurnDecided, "a1", index(0), nil, TurnDecidedData{Type: DecisionContinue, Actions: []action.Action{{ID: "a1/0/0", Name: "send", Args: json.RawMessage(`{}`)}}}),
-		correlatedEntry(t, 5, "p1", ActionAllowed, "a1", index(0), index(0), AuthorizationData{}),
-		correlatedEntry(t, 6, "p1", EffectPrepared, "a1", index(0), index(0), EmptyData{}),
-		correlatedEntry(t, 7, "p1", EffectDropped, "a1", index(0), index(0), EffectDroppedData{Reason: "receipt unavailable"}),
-		correlatedEntry(t, 8, "p1", ActivationBlocked, "a1", nil, nil, TerminalData{Reason: "effect_dropped"}),
+		lifecycleEntry(t, 1, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{}`)}),
+		correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, events.Activation{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
+		correlatedEntry(t, 3, "p1", TurnOpened, "a1", index(0), nil, struct{}{}),
+		correlatedEntry(t, 4, "p1", TurnDecided, "a1", index(0), nil, events.Decision{Type: events.DecisionContinue, Actions: []action.Action{{ID: "a1/0/0", Name: "send", Args: json.RawMessage(`{}`)}}}),
+		correlatedEntry(t, 5, "p1", ActionAllowed, "a1", index(0), index(0), events.Reason{}),
+		correlatedEntry(t, 6, "p1", EffectPrepared, "a1", index(0), index(0), struct{}{}),
+		correlatedEntry(t, 7, "p1", EffectDropped, "a1", index(0), index(0), events.Reason{Reason: "receipt unavailable"}),
+		correlatedEntry(t, 8, "p1", ActivationBlocked, "a1", nil, nil, events.Reason{Reason: "effect_dropped"}),
 	}
 	projection, err := Replay("p1", blocked)
 	if err != nil {
@@ -148,9 +149,9 @@ func TestReplayProjectsBlockedAndFailedActivations(t *testing.T) {
 	}
 
 	failed := []tapeentry.EntryLike{
-		lifecycleEntry(t, 1, "p1", EventReceived, EventReceivedData{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{}`)}),
-		correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, ActivationOpenedData{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
-		correlatedEntry(t, 3, "p1", ActivationFailed, "a1", nil, nil, TerminalData{Reason: "invalid runner response"}),
+		lifecycleEntry(t, 1, "p1", EventReceived, events.Event{ID: "e1", Type: "input.text", Payload: json.RawMessage(`{}`)}),
+		correlatedEntry(t, 2, "p1", ActivationOpened, "a1", nil, nil, events.Activation{TriggerEventID: "e1", InputRange: view.EntryRange{SeqS: 1, SeqE: 2}}),
+		correlatedEntry(t, 3, "p1", ActivationFailed, "a1", nil, nil, events.Reason{Reason: "invalid runner response"}),
 	}
 	projection, err = Replay("p1", failed)
 	if err != nil {
@@ -163,15 +164,28 @@ func TestReplayProjectsBlockedAndFailedActivations(t *testing.T) {
 }
 
 func TestReplayRejectsCorruptAnraEntry(t *testing.T) {
-	corrupt := tapeentry.CustomEntry{
-		Entry: tapeentry.NewEntry(tapeentry.WithEntryID(1), tapeentry.WithEntryOwner("p1")),
-		Extensions: map[string]any{
-			extensionKey: "{",
+	tests := []struct {
+		name      string
+		extension string
+	}{
+		{name: "malformed envelope", extension: "{"},
+		{
+			name:      "invalid event payload",
+			extension: `{"schema":"anra.lifecycle/v1","kind":"event.received","data":{"id":"","type":"input.text","payload":{}}}`,
 		},
 	}
-	_, err := Replay("p1", []tapeentry.EntryLike{corrupt})
-	if err == nil || !errors.Is(err, ErrInvalidTrace) {
-		t.Fatalf("Replay() error = %v, want ErrInvalidTrace", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			corrupt := tapeentry.CustomEntry{
+				Entry:      tapeentry.NewEntry(tapeentry.WithEntryID(1), tapeentry.WithEntryOwner("p1")),
+				Extensions: map[string]any{extensionKey: tt.extension},
+			}
+			_, err := Replay("p1", []tapeentry.EntryLike{corrupt})
+			if err == nil || !errors.Is(err, ErrInvalidTrace) {
+				t.Fatalf("Replay() error = %v, want ErrInvalidTrace", err)
+			}
+		})
 	}
 }
 
@@ -182,19 +196,9 @@ func lifecycleEntry(t *testing.T, seq uint64, owner string, kind Kind, data any)
 
 func correlatedEntry(t *testing.T, seq uint64, owner string, kind Kind, activationID string, turnIndex, actionIndex *uint32, data any) tapeentry.EntryLike {
 	t.Helper()
-	opts := []Option{}
-	if activationID != "" {
-		opts = append(opts, WithActivationID(activationID))
-	}
-	if turnIndex != nil {
-		opts = append(opts, WithTurnIndex(*turnIndex))
-	}
-	if actionIndex != nil {
-		opts = append(opts, WithActionIndex(*actionIndex))
-	}
-	lifecycle, err := New(kind, data, opts...)
+	lifecycle, err := newEntry(kind, data, activationID, turnIndex, actionIndex)
 	if err != nil {
-		t.Fatalf("New(%s) error = %v", kind, err)
+		t.Fatalf("newEntry(%s) error = %v", kind, err)
 	}
 	custom, err := lifecycle.ToCustomEntry(tapeentry.NewEntry(
 		tapeentry.WithEntryID(seq),

@@ -1,4 +1,4 @@
-package core_test
+package agent_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/scbizu/anra/pkg/core"
+	"github.com/scbizu/anra/pkg/agent"
 	tapeentry "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
@@ -17,23 +17,23 @@ import (
 
 func TestNewRejectsInvalidConfiguration(t *testing.T) {
 	store := newStore(t, "p1")
-	if _, err := core.New("", store); err == nil {
+	if _, err := agent.New("", store); err == nil {
 		t.Fatal("New() empty principal error = nil")
 	}
-	if _, err := core.New("p1", nil); err == nil {
+	if _, err := agent.New("p1", nil); err == nil {
 		t.Fatal("New() nil tape error = nil")
 	}
 }
 
 func TestSubmitPersistsAndDeduplicatesEvent(t *testing.T) {
 	store := newStore(t, "p1")
-	harness, err := core.New("p1", store)
+	harness, err := agent.New("p1", store)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	first, err := harness.Submit(context.Background(), core.Event{
-		ID: "e1", Type: core.EventTypeInputText, Payload: json.RawMessage(` { "text" : "hello", "lang": "en" } `),
+	first, err := harness.Submit(context.Background(), agent.Event{
+		ID: "e1", Type: agent.EventTypeInputText, Payload: json.RawMessage(` { "text" : "hello", "lang": "en" } `),
 	})
 	if err != nil {
 		t.Fatalf("Submit() error = %v", err)
@@ -42,13 +42,13 @@ func TestSubmitPersistsAndDeduplicatesEvent(t *testing.T) {
 		t.Fatalf("Submit() = %#v", first)
 	}
 
-	// A new Core proves deduplication is reconstructed from Tape, not cached state.
-	restarted, err := core.New("p1", store)
+	// A new Anra proves deduplication is reconstructed from Tape, not cached state.
+	restarted, err := agent.New("p1", store)
 	if err != nil {
 		t.Fatalf("New(restarted) error = %v", err)
 	}
-	duplicate, err := restarted.Submit(context.Background(), core.Event{
-		ID: "e1", Type: core.EventTypeInputText, Payload: json.RawMessage(`{"lang":"en","text":"hello"}`),
+	duplicate, err := restarted.Submit(context.Background(), agent.Event{
+		ID: "e1", Type: agent.EventTypeInputText, Payload: json.RawMessage(`{"lang":"en","text":"hello"}`),
 	})
 	if err != nil {
 		t.Fatalf("Submit(duplicate) error = %v", err)
@@ -68,27 +68,27 @@ func TestSubmitPersistsAndDeduplicatesEvent(t *testing.T) {
 
 func TestSubmitRejectsConflictAndInvalidEvents(t *testing.T) {
 	store := newStore(t, "p1")
-	harness, err := core.New("p1", store)
+	harness, err := agent.New("p1", store)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	valid := core.Event{ID: "e1", Type: core.EventTypeInputText, Payload: json.RawMessage(`{"text":"hello"}`)}
+	valid := agent.Event{ID: "e1", Type: agent.EventTypeInputText, Payload: json.RawMessage(`{"text":"hello"}`)}
 	if _, err := harness.Submit(context.Background(), valid); err != nil {
 		t.Fatalf("Submit() error = %v", err)
 	}
-	if _, err := harness.Submit(context.Background(), core.Event{ID: "e1", Type: core.EventTypeInputText, Payload: json.RawMessage(`{"text":"changed"}`)}); !errors.Is(err, core.ErrEventConflict) {
+	if _, err := harness.Submit(context.Background(), agent.Event{ID: "e1", Type: agent.EventTypeInputText, Payload: json.RawMessage(`{"text":"changed"}`)}); !errors.Is(err, agent.ErrEventConflict) {
 		t.Fatalf("Submit(conflict) error = %v, want ErrEventConflict", err)
 	}
-	if _, err := harness.Submit(context.Background(), core.Event{ID: "e1", Type: "other", Payload: valid.Payload}); !errors.Is(err, core.ErrEventConflict) {
+	if _, err := harness.Submit(context.Background(), agent.Event{ID: "e1", Type: "other", Payload: valid.Payload}); !errors.Is(err, agent.ErrEventConflict) {
 		t.Fatalf("Submit(type conflict) error = %v, want ErrEventConflict", err)
 	}
 
-	tests := []core.Event{
-		{Type: core.EventTypeInputText, Payload: json.RawMessage(`{}`)},
+	tests := []agent.Event{
+		{Type: agent.EventTypeInputText, Payload: json.RawMessage(`{}`)},
 		{ID: "e2", Payload: json.RawMessage(`{}`)},
 		{ID: "e2", Type: "other", Payload: json.RawMessage(`{}`)},
-		{ID: "e2", Type: core.EventTypeInputText},
-		{ID: "e2", Type: core.EventTypeInputText, Payload: json.RawMessage(`{`)},
+		{ID: "e2", Type: agent.EventTypeInputText},
+		{ID: "e2", Type: agent.EventTypeInputText, Payload: json.RawMessage(`{`)},
 	}
 	for _, event := range tests {
 		if _, err := harness.Submit(context.Background(), event); err == nil {
@@ -104,12 +104,12 @@ func TestSeparatePrincipalsRemainIsolated(t *testing.T) {
 			t.Fatalf("Init(%s) error = %v", principal, err)
 		}
 	}
-	one, _ := core.New("p1", store)
-	two, _ := core.New("p2", store)
-	if _, err := one.Submit(context.Background(), core.Event{ID: "same", Type: core.EventTypeInputText, Payload: json.RawMessage(`{"text":"one"}`)}); err != nil {
+	one, _ := agent.New("p1", store)
+	two, _ := agent.New("p2", store)
+	if _, err := one.Submit(context.Background(), agent.Event{ID: "same", Type: agent.EventTypeInputText, Payload: json.RawMessage(`{"text":"one"}`)}); err != nil {
 		t.Fatalf("p1 Submit() error = %v", err)
 	}
-	if _, err := two.Submit(context.Background(), core.Event{ID: "same", Type: core.EventTypeInputText, Payload: json.RawMessage(`{"text":"two"}`)}); err != nil {
+	if _, err := two.Submit(context.Background(), agent.Event{ID: "same", Type: agent.EventTypeInputText, Payload: json.RawMessage(`{"text":"two"}`)}); err != nil {
 		t.Fatalf("p2 Submit() error = %v", err)
 	}
 	p1, _ := one.Inspect(context.Background())

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/scbizu/anra/pkg/events"
 	"slices"
 	"sort"
 
@@ -42,10 +43,8 @@ const (
 )
 
 type EventState struct {
-	Seq          uint64
-	ID           string
-	Type         string
-	Payload      json.RawMessage
+	Seq uint64
+	events.Event
 	ActivationID string
 }
 
@@ -62,7 +61,7 @@ type ActivationState struct {
 type TurnState struct {
 	Seq      uint64
 	Index    uint32
-	Decision *TurnDecidedData
+	Decision *events.Decision
 	Actions  []ActionState
 }
 
@@ -99,17 +98,17 @@ func Replay(principal string, entries []tapeentry.EntryLike) (Projection, error)
 		}
 		previousSeq = seq
 
-		lifecycleEntry, found, err := decodeLifecycleEntry(raw)
+		lifecycleEntry, err := decodeLifecycleEntry(raw)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return Projection{}, invalidTrace(seq, err.Error())
-		}
-		if !found {
-			continue
 		}
 		if raw.GetOwner() != principal {
 			return Projection{}, invalidTrace(seq, fmt.Sprintf("owner %q does not match principal %q", raw.GetOwner(), principal))
 		}
-		if err := projection.apply(seq, lifecycleEntry); err != nil {
+		if err := projection.apply(seq, *lifecycleEntry); err != nil {
 			return Projection{}, invalidTrace(seq, err.Error())
 		}
 	}
@@ -197,28 +196,29 @@ func (p *Projection) apply(seq uint64, entry Entry) error {
 }
 
 func (p *Projection) applyEvent(seq uint64, entry Entry) error {
-	var data EventReceivedData
-	if err := decodePayload(entry.Data, &data); err != nil {
+	event, err := entry.decodeEvent()
+	if err != nil {
 		return err
 	}
-	if _, exists := p.eventByID[data.ID]; exists {
-		return fmt.Errorf("event %q already exists", data.ID)
+	if _, exists := p.eventByID[event.ID]; exists {
+		return fmt.Errorf("event %q already exists", event.ID)
 	}
-	p.eventByID[data.ID] = len(p.events)
-	p.events = append(p.events, EventState{Seq: seq, ID: data.ID, Type: data.Type, Payload: slices.Clone(data.Payload)})
+	p.eventByID[event.ID] = len(p.events)
+	event.Payload = slices.Clone(event.Payload)
+	p.events = append(p.events, EventState{Seq: seq, Event: event})
 	return nil
 }
 
 func (p *Projection) applyActivationOpened(seq uint64, entry Entry) error {
+	data, err := entry.decodeActivation()
+	if err != nil {
+		return err
+	}
 	if p.active != "" {
 		return fmt.Errorf("activation %q is still active", p.active)
 	}
 	if _, exists := p.activation(entry.ActivationID); exists {
 		return fmt.Errorf("activation %q already exists", entry.ActivationID)
-	}
-	var data ActivationOpenedData
-	if err := decodePayload(entry.Data, &data); err != nil {
-		return err
 	}
 	eventIndex, exists := p.eventByID[data.TriggerEventID]
 	if !exists {
@@ -245,12 +245,12 @@ func (p *Projection) applyActivationOpened(seq uint64, entry Entry) error {
 }
 
 func (p *Projection) applyActivationTerminal(entry Entry) error {
-	activation, err := p.activeActivation(entry.ActivationID)
+	data, err := entry.decodeReason()
 	if err != nil {
 		return err
 	}
-	var data TerminalData
-	if err := decodePayload(entry.Data, &data); err != nil {
+	activation, err := p.activeActivation(entry.ActivationID)
+	if err != nil {
 		return err
 	}
 	switch entry.Kind {
@@ -259,7 +259,7 @@ func (p *Projection) applyActivationTerminal(entry Entry) error {
 			return fmt.Errorf("activation %q cannot close without a turn", activation.ID)
 		}
 		decision := activation.Turns[len(activation.Turns)-1].Decision
-		if decision == nil || decision.Type != DecisionComplete {
+		if decision == nil || decision.Type != events.DecisionComplete {
 			return fmt.Errorf("activation %q cannot close before a complete decision", activation.ID)
 		}
 		activation.Status = ActivationStatusClosed
@@ -277,6 +277,9 @@ func (p *Projection) applyActivationTerminal(entry Entry) error {
 }
 
 func (p *Projection) applyTurnOpened(seq uint64, entry Entry) error {
+	if err := entry.decodeNoPayload(); err != nil {
+		return err
+	}
 	activation, err := p.activeActivation(entry.ActivationID)
 	if err != nil {
 		return err
@@ -287,7 +290,7 @@ func (p *Projection) applyTurnOpened(seq uint64, entry Entry) error {
 	}
 	if len(activation.Turns) > 0 {
 		previous := &activation.Turns[len(activation.Turns)-1]
-		if previous.Decision == nil || previous.Decision.Type != DecisionContinue || !allActionsTerminal(previous.Actions) {
+		if previous.Decision == nil || previous.Decision.Type != events.DecisionContinue || !allActionsTerminal(previous.Actions) {
 			return fmt.Errorf("previous turn is not ready to advance")
 		}
 	}
@@ -296,16 +299,16 @@ func (p *Projection) applyTurnOpened(seq uint64, entry Entry) error {
 }
 
 func (p *Projection) applyTurnDecided(entry Entry) error {
+	data, err := entry.decodeDecision()
+	if err != nil {
+		return err
+	}
 	turn, err := p.activeTurn(entry)
 	if err != nil {
 		return err
 	}
 	if turn.Decision != nil {
 		return fmt.Errorf("turn %d already has a decision", turn.Index)
-	}
-	var data TurnDecidedData
-	if err := decodePayload(entry.Data, &data); err != nil {
-		return err
 	}
 	decision := cloneDecision(data)
 	turn.Decision = &decision
@@ -319,11 +322,21 @@ func (p *Projection) applyTurnDecided(entry Entry) error {
 }
 
 func (p *Projection) applyAuthorization(entry Entry) error {
+	var data events.Reason
+	var err error
+	if entry.Kind == ActionAllowed {
+		err = entry.decodeNoPayload()
+	} else {
+		data, err = entry.decodeReason()
+	}
+	if err != nil {
+		return err
+	}
 	actionState, turn, err := p.activeAction(entry)
 	if err != nil {
 		return err
 	}
-	if turn.Decision == nil || turn.Decision.Type != DecisionContinue {
+	if turn.Decision == nil || turn.Decision.Type != events.DecisionContinue {
 		return fmt.Errorf("turn %d has no continue decision", turn.Index)
 	}
 	if actionState.Authorization != AuthorizationPending {
@@ -333,10 +346,6 @@ func (p *Projection) applyAuthorization(entry Entry) error {
 		if !actionTerminal(turn.Actions[index]) {
 			return fmt.Errorf("previous action %d is not terminal", index)
 		}
-	}
-	var data AuthorizationData
-	if err := decodePayload(entry.Data, &data); err != nil {
-		return err
 	}
 	if entry.Kind == ActionAllowed {
 		actionState.Authorization = AuthorizationAllowed
@@ -348,6 +357,24 @@ func (p *Projection) applyAuthorization(entry Entry) error {
 }
 
 func (p *Projection) applyEffect(entry Entry) error {
+	var result events.EffectResult
+	var failure events.EffectFailure
+	var reason events.Reason
+	var err error
+	switch entry.Kind {
+	case EffectPrepared:
+		err = entry.decodeNoPayload()
+	case EffectConfirmed:
+		result, err = entry.decodeEffectResult()
+	case EffectFailed:
+		failure, err = entry.decodeEffectFailure()
+	case EffectDropped:
+		reason, err = entry.decodeReason()
+	}
+	if err != nil {
+		return err
+	}
+
 	actionState, _, err := p.activeAction(entry)
 	if err != nil {
 		return err
@@ -365,32 +392,20 @@ func (p *Projection) applyEffect(entry Entry) error {
 		if actionState.Effect != EffectStatusPrepared {
 			return fmt.Errorf("action %d effect was not prepared", actionState.Index)
 		}
-		var data EffectConfirmedData
-		if err := decodePayload(entry.Data, &data); err != nil {
-			return err
-		}
 		actionState.Effect = EffectStatusConfirmed
-		actionState.Result = slices.Clone(data.Result)
+		actionState.Result = slices.Clone(result.Result)
 	case EffectFailed:
 		if actionState.Effect != EffectStatusPrepared {
 			return fmt.Errorf("action %d effect was not prepared", actionState.Index)
 		}
-		var data EffectFailedData
-		if err := decodePayload(entry.Data, &data); err != nil {
-			return err
-		}
 		actionState.Effect = EffectStatusFailed
-		actionState.Error = data.Error
+		actionState.Error = failure.Error
 	case EffectDropped:
 		if actionState.Effect != EffectStatusPrepared {
 			return fmt.Errorf("action %d effect was not prepared", actionState.Index)
 		}
-		var data EffectDroppedData
-		if err := decodePayload(entry.Data, &data); err != nil {
-			return err
-		}
 		actionState.Effect = EffectStatusDropped
-		actionState.Reason = data.Reason
+		actionState.Reason = reason.Reason
 	}
 	return nil
 }
@@ -463,14 +478,14 @@ func actionTerminal(actionState ActionState) bool {
 		actionState.Effect == EffectStatusFailed
 }
 
-func decodeLifecycleEntry(raw tapeentry.EntryLike) (Entry, bool, error) {
+func decodeLifecycleEntry(raw tapeentry.EntryLike) (*Entry, error) {
 	switch value := raw.(type) {
 	case tapeentry.CustomEntry:
 		return FromCustomEntry(value)
 	case *tapeentry.CustomEntry:
 		return FromCustomEntry(*value)
 	default:
-		return Entry{}, false, nil
+		return nil, ErrNotFound
 	}
 }
 
@@ -502,7 +517,7 @@ func cloneActivation(activation ActivationState) ActivationState {
 	return activation
 }
 
-func cloneDecision(decision TurnDecidedData) TurnDecidedData {
+func cloneDecision(decision events.Decision) events.Decision {
 	decision.Output = slices.Clone(decision.Output)
 	actions := decision.Actions
 	decision.Actions = make([]action.Action, len(actions))
