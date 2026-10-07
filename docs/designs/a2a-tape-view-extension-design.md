@@ -1,6 +1,7 @@
 # A2A Tape View Borrowing Extension
 
-Status: proposed; RPC names and schemas below are a project extension, not A2A core methods.
+Status: v1 implemented in `pkg/a2a`; RPC names and schemas below are a project
+extension, not A2A core methods. See [integration and limits](../a2a-integration.md).
 
 ## Project ownership
 
@@ -51,12 +52,12 @@ sequenceDiagram
     A->>D: Discover relevant peer card URLs
     D-->>A: Best matching peer card URL, or no match
     A->>B: Fetch Agent Card
-    A->>B: tape/views/borrow (activate extension)
+    A->>B: TapeViewService/Borrow (activate extension)
     B->>P: Authenticate requester; select best permitted context range
     P-->>B: Grant or denial
     B->>S: Capture source identity and head
     B-->>A: Granted view, denied, or pending decision
-    A->>B: tape/views/read (viewId, optional cursor)
+    A->>B: TapeViewService/Read (viewId, optional cursor)
     B->>P: Check grant, requester, expiry and revocation
     B->>S: Read only granted ranges within captured head
     B-->>A: Entry page with source provenance
@@ -65,9 +66,7 @@ sequenceDiagram
 
 ## Extension declaration and activation
 
-Use a versioned URI owned by the project. A provisional identifier is
-`urn:anra:a2a:tape-view:v1`; publishing the final identifier is a separate
-compatibility decision. Declare it in `capabilities.extensions`, with
+Use the versioned project identifier `urn:anra:a2a:tape-view:v1`. Declare it in `capabilities.extensions`, with
 `required: false` when ordinary A2A operations work without it. Extension params
 declare its RPC endpoint and supported entry media types.
 
@@ -120,16 +119,19 @@ peer's policy; they do not widen permissions or substitute arbitrary context.
 Decision records can retain candidate references, selected results, and the
 provider/model identity for provenance without duplicating private payloads.
 
-## Proposed RPC contract
+## RPC contract
 
-All methods use JSON-RPC 2.0 over HTTP and require an authenticated requester.
+All methods use generated protobuf/Connect bindings over HTTP and require an
+authenticated requester. The canonical contract is
+`proto/anra/a2a/tape/v1/tape.proto`; the handwritten extension JSON-RPC transport
+has been removed.
 
 | Method | Input | Result |
 | --- | --- | --- |
-| `tape/views/borrow` | `requestId`, `purpose`, relevance `query`, optional requested bounds | `granted` with view, `denied`, or `pending` with request ID |
-| `tape/views/get` | `requestId` | Current decision, including an existing grant when approved |
-| `tape/views/read` | `viewId`, optional opaque cursor, bounded page size | Ordered entry page and optional next cursor |
-| `tape/views/release` | `viewId` | Idempotent acknowledgement that this requester has released the grant |
+| `TapeViewService/Borrow` | `requestId`, `purpose`, relevance `query`, optional requested bounds | `granted` with view, `denied`, or `pending` with request ID |
+| `TapeViewService/Get` | `requestId` | Current decision, including an existing grant when approved |
+| `TapeViewService/Read` | `viewId`, optional opaque cursor, bounded page size | Ordered entry page and optional next cursor |
+| `TapeViewService/Release` | `viewId` | Idempotent acknowledgement that this requester has released the grant |
 
 `borrow` asks the peer to select context, rather than assuming the requester
 knows its sequence numbers. Requested bounds can narrow selection but never
@@ -191,7 +193,7 @@ projection. Already delivered context cannot be recalled by revocation.
 
 Responses distinguish pending decisions, denials, invalid params, request-ID
 conflicts, unavailable views, and storage failures. Concrete extension error
-codes and payload size/page limits must be fixed before implementation. Errors
+codes and payload size/page limits are fixed in the [integration contract](../a2a-integration.md). Errors
 for unauthorized view IDs must not reveal another requester's grant details.
 
 ## Integration and compatibility
@@ -200,8 +202,9 @@ The former tape-go adapter used `a2a-go/v2 v2.3.1`. That SDK's JSON-RPC handler 
 returns method-not-found for unknown ones. Call interceptors do not add method
 dispatch. A project dispatcher must route extension methods and delegate core
 requests intact to the official handler, preserving streaming and authentication.
-An explicitly advertised separate extension endpoint is also compatible with
-the extension model; the endpoint choice remains open.
+The implementation uses an explicitly advertised separate extension endpoint,
+compatible with the extension model, and delegates core requests to the SDK
+without inspecting or rewriting their bodies.
 
 The wire view is a new DTO, not a change to local `TapeView`, `EntryView`, or
 profile-v1 task records. No current storage record migration is required by
@@ -215,5 +218,20 @@ negotiate this extension before borrowing.
 - [Historical A2A tape persistence profile](a2a-tape-storage-profile-design.md)
 - [Historical A2A list pager design](a2a-list-pager-review-design.md)
 
-Open compatibility decisions are the final extension URI, endpoint routing,
-stable source identity provisioning, entry codecs, limits, and error codes.
+## Implemented v1 decisions
+
+The extension identifier is `urn:anra:a2a:tape-view:v1`. The native Agent Card
+advertises `/anra.a2a.tape.v1.TapeViewService` as its single Connect service
+endpoint; `/a2a` remains the SDK's core endpoint. The integration pins the official Go SDK at v2.5.0.
+
+Grants and decisions are persisted in a dedicated indexed bbolt journal, separate from
+source context. Source identity is provisioned by the application and pinned
+with session/head/content fingerprints. The default exporter shares only
+user/assistant summaries; other payloads require a deterministic typed exporter.
+Limits and error codes are fixed in the integration contract linked above.
+
+Configured card discovery, best-peer ranking, permissioned best-range ranking,
+borrowing RPCs, and Anra tool-result consumption are implemented. Network
+directory registration and a concrete JEV adapter remain future integrations;
+`Ranker` and `Eligible` provide their boundaries. The historical A2A task-store
+adapter has not been restored.

@@ -1,59 +1,45 @@
 package agent
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"math"
 	"sync"
 
-	"github.com/scbizu/anra/pkg/lifecycle"
-	"github.com/scbizu/tape-go/pkg/tape/owner"
+	"github.com/scbizu/anra/internal/tapestorage"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
-	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 type Anra struct {
 	mu        sync.Mutex
 	principal string
 	tape      storage.TapeStorage
+	runtime   runtimeConfig
 }
 
-func New(principal string, tape storage.TapeStorage) (*Anra, error) {
+// New requires an initialized bbolt tape. Storage decorators must implement
+// storage.Unwrapper and ultimately wrap bbolt. The caller closes the tape.
+func New(principal string, tape storage.TapeStorage, opts ...Option) (*Anra, error) {
 	if principal == "" {
 		return nil, errors.New("agent: empty principal")
 	}
-	if tape == nil {
-		return nil, errors.New("agent: nil tape")
+	if err := tapestorage.RequireBbolt(tape); err != nil {
+		return nil, fmt.Errorf("agent: %w", err)
 	}
-	return &Anra{principal: principal, tape: tape}, nil
-}
-
-func (a *Anra) Inspect(ctx context.Context) (lifecycle.Projection, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.inspect(ctx)
-}
-
-func (a *Anra) inspect(ctx context.Context) (lifecycle.Projection, error) {
-	ctx = owner.WithOwnerId(ctx, a.principal)
-	tapeView, err := a.tape.Get(ctx)
-	if err != nil {
-		return lifecycle.Projection{}, fmt.Errorf("agent: get tape: %w", err)
+	anra := &Anra{
+		principal: principal,
+		tape:      tape,
+		runtime: runtimeConfig{
+			maxTurns:   defaultMaxTurns,
+			toolByName: make(map[string]Tool),
+		},
 	}
-	if tapeView.Owner != "" && tapeView.Owner != a.principal {
-		return lifecycle.Projection{}, fmt.Errorf("agent: tape owner %q does not match principal %q", tapeView.Owner, a.principal)
+	for _, opt := range opts {
+		if opt == nil {
+			return nil, errors.New("agent: nil option")
+		}
+		if err := opt(anra); err != nil {
+			return nil, err
+		}
 	}
-	if tapeView.Scope.SeqE == math.MaxUint64 {
-		return lifecycle.Projection{}, errors.New("agent: tape sequence exhausted")
-	}
-	entries, err := a.tape.Range(ctx, view.EntryRange{SeqS: 0, SeqE: tapeView.Scope.SeqE + 1})
-	if err != nil {
-		return lifecycle.Projection{}, fmt.Errorf("agent: read tape: %w", err)
-	}
-	projection, err := lifecycle.Replay(a.principal, entries.Raw)
-	if err != nil {
-		return lifecycle.Projection{}, fmt.Errorf("agent: replay tape: %w", err)
-	}
-	return projection, nil
+	return anra, nil
 }
