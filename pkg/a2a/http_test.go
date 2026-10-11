@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/encoding/protojson"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -65,7 +66,7 @@ func TestTwoIndependentPeersBorrowAndUseContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config(lenderTape, journal, a.PolicyFunc(func(_ context.Context, p string, _ a.BorrowRequest, _ te.Seq) (a.Selection, error) {
+	cfg := config(lenderTape, journal, a.PolicyFunc(func(_ context.Context, p string, _ *pb.BorrowRequest, _ te.Seq) (a.Selection, error) {
 		if p != "borrower" {
 			return a.Selection{Status: a.Denied}, nil
 		}
@@ -183,14 +184,14 @@ func TestTwoIndependentPeersBorrowAndUseContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.Get(ctx, request().RequestID)
-	if err != nil || got.View.ID != d.View.ID {
+	got, err := client.Get(ctx, request().RequestId)
+	if err != nil || got.View.ViewId != d.View.ViewId {
 		t.Fatalf("get = %#v %v", got, err)
 	}
-	if err := client.Release(ctx, d.View.ID); err != nil {
+	if err := client.Release(ctx, d.View.ViewId); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Read(ctx, a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := client.Read(ctx, &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatal("released read succeeded")
 	}
 	intruderHTTP := &http.Client{Transport: credentialTransport{server.Client().Transport, "intruder-token"}}
@@ -221,7 +222,7 @@ func TestExtensionHTTPValidationAndNegotiation(t *testing.T) {
 	journal := openJournal(t, filepath.Join(t.TempDir(), "journal"))
 	appendText(t, tape, "local", "entry")
 	calls := 0
-	cfg := config(tape, journal, a.PolicyFunc(func(_ context.Context, peer string, _ a.BorrowRequest, _ te.Seq) (a.Selection, error) {
+	cfg := config(tape, journal, a.PolicyFunc(func(_ context.Context, peer string, _ *pb.BorrowRequest, _ te.Seq) (a.Selection, error) {
 		if peer != "borrower" {
 			t.Errorf("unverified body identity reached policy: %q", peer)
 		}
@@ -402,7 +403,7 @@ func TestClientRejectsMissingAcknowledgementAndMismatchedProvenance(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			b, _ := json.Marshal(request())
+			b, _ := protojson.Marshal(request())
 			_, err = (a.BorrowTool{Client: c}).Execute(context.Background(), b)
 			want := a.ErrInvalidParams
 			if mode == "inactive" {

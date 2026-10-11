@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -57,15 +58,15 @@ type Candidate struct {
 
 // Eligible must check sharing permission and exportability before returning
 // candidate summaries. Ranking never grants permission by itself.
-type Eligible func(context.Context, string, BorrowRequest, te.Seq) ([]Candidate, error)
+type Eligible func(context.Context, string, *pb.BorrowRequest, te.Seq) ([]Candidate, error)
 type BestRangePolicy struct {
 	Eligible Eligible
 	Ranker   Ranker
 	TTL      time.Duration
 }
 
-func (p BestRangePolicy) Select(ctx context.Context, requester string, req BorrowRequest, head te.Seq) (Selection, error) {
-	if p.Eligible == nil {
+func (p BestRangePolicy) Select(ctx context.Context, requester string, req *pb.BorrowRequest, head te.Seq) (Selection, error) {
+	if p.Eligible == nil || validateMessage(req) != nil {
 		return Selection{}, ErrInvalidParams
 	}
 	cs, err := p.Eligible(ctx, requester, req, head)
@@ -78,8 +79,14 @@ func (p BestRangePolicy) Select(ctx context.Context, requester string, req Borro
 		if !validRange(c.Range, head) {
 			return Selection{}, ErrInvalidParams
 		}
-		if req.Bounds != nil && (c.Range.SeqS.Cmp(req.Bounds.SeqS) < 0 || c.Range.SeqE.Cmp(req.Bounds.SeqE) > 0) {
-			continue
+		if req.Bounds != nil {
+			bounds, err := rangeFromProto(req.Bounds)
+			if err != nil {
+				return Selection{}, err
+			}
+			if c.Range.SeqS.Cmp(bounds.SeqS) < 0 || c.Range.SeqE.Cmp(bounds.SeqE) > 0 {
+				continue
+			}
 		}
 		permitted = append(permitted, c)
 		summaries = append(summaries, c.Summary)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	"google.golang.org/protobuf/proto"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -38,12 +40,12 @@ func appendText(t *testing.T, tape *bbolt.Bbolt, principal, text string) {
 	}
 }
 func grantPolicy(start, end uint64) a.Policy {
-	return a.PolicyFunc(func(context.Context, string, a.BorrowRequest, te.Seq) (a.Selection, error) {
+	return a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a.Selection, error) {
 		return a.Selection{Status: a.Granted, Range: &tv.EntryRange{SeqS: seq(start), SeqE: seq(end)}, TTL: time.Hour}, nil
 	})
 }
 func config(tape *bbolt.Bbolt, journal *bolt.DB, policy a.Policy) a.Config {
-	return a.Config{Source: a.Source{AgentID: "researcher", TapeID: "opaque-incarnation-1"}, Owner: "local", Tape: tape, Journal: journal, JournalOwner: "grants", Policy: policy}
+	return a.Config{Source: &pb.Source{AgentId: "researcher", TapeId: "opaque-incarnation-1"}, Owner: "local", Tape: tape, Journal: journal, JournalOwner: "grants", Policy: policy}
 }
 func service(t *testing.T, c a.Config) *a.Service {
 	t.Helper()
@@ -53,8 +55,8 @@ func service(t *testing.T, c a.Config) *a.Service {
 	}
 	return s
 }
-func request() a.BorrowRequest {
-	return a.BorrowRequest{RequestID: "request-1", Purpose: "debug storage", Query: "bbolt"}
+func request() *pb.BorrowRequest {
+	return &pb.BorrowRequest{RequestId: "request-1", Purpose: "debug storage", Query: "bbolt"}
 }
 func closeTape(t *testing.T, tape *bbolt.Bbolt) {
 	t.Helper()
@@ -80,8 +82,8 @@ func TestGrantSnapshotRestartAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vid := d.View.ID
-	page, err := s.Read(context.Background(), "borrower", a.ReadRequest{ViewID: vid, PageSize: 1})
+	vid := d.View.ViewId
+	page, err := s.Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: vid, PageSize: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,10 +91,10 @@ func TestGrantSnapshotRestartAndIsolation(t *testing.T) {
 		t.Fatalf("page = %#v", page)
 	}
 	appendText(t, tape, "local", "appended after snapshot")
-	if _, err := s.Read(context.Background(), "intruder", a.ReadRequest{ViewID: vid}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := s.Read(context.Background(), "intruder", &pb.ReadRequest{ViewId: vid}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("intruder read = %v", err)
 	}
-	if _, err := s.Get(context.Background(), "intruder", request().RequestID); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := s.Get(context.Background(), "intruder", request().RequestId); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("intruder get = %v", err)
 	}
 	if err := s.Release(context.Background(), "intruder", vid); !errors.Is(err, a.ErrUnavailable) {
@@ -111,7 +113,7 @@ func TestGrantSnapshotRestartAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.View.ID != vid {
+	if again.View.ViewId != vid {
 		t.Fatal("grant changed after restart")
 	}
 	changed := request()
@@ -119,24 +121,24 @@ func TestGrantSnapshotRestartAndIsolation(t *testing.T) {
 	if _, err := s.Borrow(context.Background(), "borrower", changed); !errors.Is(err, a.ErrConflict) {
 		t.Fatalf("conflict = %v", err)
 	}
-	rest, err := s.Read(context.Background(), "borrower", a.ReadRequest{ViewID: vid, Cursor: page.NextCursor, PageSize: 100})
+	rest, err := s.Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: vid, Cursor: page.NextCursor, PageSize: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rest.SnapshotHead != seq(3) || len(rest.Entries) != 2 || rest.Entries[1].Summary != "three" || rest.NextCursor != "" {
+	if rest.SnapshotHead != seq(3).String() || len(rest.Entries) != 2 || rest.Entries[1].Summary != "three" || rest.NextCursor != "" {
 		t.Fatalf("snapshot page = %#v", rest)
 	}
 	second := request()
-	second.RequestID = "second"
+	second.RequestId = "second"
 	other, err := s.Borrow(context.Background(), "borrower", second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Read(context.Background(), "borrower", a.ReadRequest{ViewID: other.View.ID, Cursor: page.NextCursor}); !errors.Is(err, a.ErrInvalidParams) {
+	if _, err := s.Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: other.View.ViewId, Cursor: page.NextCursor}); !errors.Is(err, a.ErrInvalidParams) {
 		t.Fatalf("cross-grant cursor = %v", err)
 	}
 	now = now.Add(2 * time.Hour)
-	if _, err := s.Read(context.Background(), "borrower", a.ReadRequest{ViewID: vid}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := s.Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: vid}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("expiry = %v", err)
 	}
 	if err := s.Release(context.Background(), "borrower", vid); err != nil {
@@ -146,7 +148,7 @@ func TestGrantSnapshotRestartAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = service(t, cfg)
-	if _, err := s.Read(context.Background(), "borrower", a.ReadRequest{ViewID: vid}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := s.Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: vid}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("released after restart = %v", err)
 	}
 }
@@ -156,7 +158,7 @@ func TestPendingDenialResolveAndConcurrentIdempotency(t *testing.T) {
 	journal := openJournal(t, filepath.Join(t.TempDir(), "journal"))
 	appendText(t, tape, "local", "knowledge")
 	calls := 0
-	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, a.BorrowRequest, te.Seq) (a.Selection, error) {
+	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a.Selection, error) {
 		calls++
 		return a.Selection{Status: a.Pending}, nil
 	}))
@@ -177,26 +179,26 @@ func TestPendingDenialResolveAndConcurrentIdempotency(t *testing.T) {
 		t.Fatalf("policy called %d times", calls)
 	}
 	s = service(t, cfg)
-	d, err := s.Get(context.Background(), "borrower", request().RequestID)
+	d, err := s.Get(context.Background(), "borrower", request().RequestId)
 	if err != nil || d.Status != a.Pending {
 		t.Fatalf("pending = %#v %v", d, err)
 	}
-	d, err = s.Resolve(context.Background(), "borrower", request().RequestID, a.Selection{Status: a.Granted, Range: &tv.EntryRange{SeqS: seq(1), SeqE: seq(2)}, TTL: time.Hour})
+	d, err = s.Resolve(context.Background(), "borrower", request().RequestId, a.Selection{Status: a.Granted, Range: &tv.EntryRange{SeqS: seq(1), SeqE: seq(2)}, TTL: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Revoke(context.Background(), "borrower", d.View.ID); err != nil {
+	if err := s.Revoke(context.Background(), "borrower", d.View.ViewId); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service(t, cfg).Read(context.Background(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := service(t, cfg).Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("revocation = %v", err)
 	}
 	deny := request()
-	deny.RequestID = "denial"
+	deny.RequestId = "denial"
 	if _, err := s.Borrow(context.Background(), "borrower", deny); err != nil {
 		t.Fatal(err)
 	}
-	denied, err := s.Resolve(context.Background(), "borrower", deny.RequestID, a.Selection{Status: a.Denied})
+	denied, err := s.Resolve(context.Background(), "borrower", deny.RequestId, a.Selection{Status: a.Denied})
 	if err != nil || denied.View != nil || denied.Status != a.Denied {
 		t.Fatalf("denied = %#v %v", denied, err)
 	}
@@ -212,7 +214,7 @@ func TestTextExporterPreservesLargeSequence(t *testing.T) {
 		te.WithEntryKind(te.EntryUser),
 	)
 	exported, err := (a.TextExporter{}).Export(value)
-	if err != nil || exported.Seq != value.GetID() {
+	if err != nil || exported.Seq != value.GetID().String() {
 		t.Fatalf("Export() = %#v, error %v", exported, err)
 	}
 }
@@ -225,7 +227,7 @@ func TestBorrowPreservesLargeSequences(t *testing.T) {
 	if _, err := tape.Store(owner.WithOwnerId(context.Background(), "local"), value); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, a.BorrowRequest, te.Seq) (a.Selection, error) {
+	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a.Selection, error) {
 		return a.Selection{Status: a.Granted, Range: &tv.EntryRange{SeqS: start, SeqE: start.Next()}, TTL: time.Hour}, nil
 	}))
 	s := service(t, cfg)
@@ -234,17 +236,17 @@ func TestBorrowPreservesLargeSequences(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Recover the grant from the journal before reading its source range.
-	page, err := service(t, cfg).Read(context.Background(), "borrower", a.ReadRequest{ViewID: d.View.ID})
-	if err != nil || page.SnapshotHead != start || len(page.Entries) != 1 || page.Entries[0].Seq != start {
+	page, err := service(t, cfg).Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId})
+	if err != nil || page.SnapshotHead != start.String() || len(page.Entries) != 1 || page.Entries[0].Seq != start.String() {
 		t.Fatalf("Read() = %#v, error %v", page, err)
 	}
-	data, err := json.Marshal(page)
+	data, err := proto.Marshal(page)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded a.Page
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Entries[0].Seq != start {
-		t.Fatalf("page round trip = %#v, error %v", decoded, err)
+	var decoded pb.Page
+	if err := proto.Unmarshal(data, &decoded); err != nil || decoded.Entries[0].Seq != start.String() {
+		t.Fatalf("page round trip = %#v, error %v", &decoded, err)
 	}
 }
 
@@ -265,7 +267,7 @@ func TestFailClosedOnCorruptionAndSourceReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Read(t.Context(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := s.Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("source replacement = %v", err)
 	}
 	// Inject a real storage gap, then reopen the source with the same identity.
@@ -283,17 +285,17 @@ func TestFailClosedOnCorruptionAndSourceReplacement(t *testing.T) {
 	}
 	cfg.Tape = openTape(t, sourcePath, "local")
 	s = service(t, cfg)
-	if _, err := s.Read(t.Context(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrStorage) {
+	if _, err := s.Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("missing source entry = %v", err)
 	}
 	if err := journal.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("anra:grant-journal/v2")).Bucket([]byte("grants")).Bucket([]byte("requests"))
-		k, _ := json.Marshal([]string{"borrower", request().RequestID})
+		k, _ := json.Marshal([]string{"borrower", request().RequestId})
 		return b.Put(k, []byte("corrupt grant"))
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Get(t.Context(), "borrower", request().RequestID); !errors.Is(err, a.ErrStorage) {
+	if _, err := s.Get(t.Context(), "borrower", request().RequestId); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("corrupt grant = %v", err)
 	}
 }
@@ -309,12 +311,12 @@ func TestExportDoesNotLeakExtensionsAndRejectsUnsupportedKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := s.Read(context.Background(), "borrower", a.ReadRequest{ViewID: d.View.ID})
+	page, err := s.Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(page.Entries[0].Payload.Data) != `"safe summary"` {
-		t.Fatalf("payload = %s", page.Entries[0].Payload.Data)
+	if string(page.Entries[0].Payload.JsonData) != `"safe summary"` {
+		t.Fatalf("payload = %s", page.Entries[0].Payload.JsonData)
 	}
 	if _, err := (a.TextExporter{}).Export(te.NewEntry(te.WithEntryKind("anra:private"))); !errors.Is(err, a.ErrUnsupported) {
 		t.Fatalf("unsupported = %v", err)
@@ -340,7 +342,7 @@ func TestSequencesBoundsAndRanking(t *testing.T) {
 		}
 		return []a.Score{{Index: 1, Score: 1, Confidence: 1}, {Index: 0, Score: 1, Confidence: 1}}, nil
 	})
-	policy := a.BestRangePolicy{TTL: time.Hour, Ranker: ranker, Eligible: func(context.Context, string, a.BorrowRequest, te.Seq) ([]a.Candidate, error) {
+	policy := a.BestRangePolicy{TTL: time.Hour, Ranker: ranker, Eligible: func(context.Context, string, *pb.BorrowRequest, te.Seq) ([]a.Candidate, error) {
 		return []a.Candidate{{Summary: "allowed first", Range: tv.EntryRange{SeqS: seq(1), SeqE: seq(2)}}, {Summary: "allowed second", Range: tv.EntryRange{SeqS: seq(2), SeqE: seq(3)}}}, nil
 	}}
 	sel, err := policy.Select(context.Background(), "borrower", request(), seq(3))
@@ -357,18 +359,18 @@ func TestSequencesBoundsAndRanking(t *testing.T) {
 	appendText(t, tape, "local", "one")
 	appendText(t, tape, "local", "two")
 	req := request()
-	req.Bounds = &tv.EntryRange{SeqS: seq(2), SeqE: seq(3)}
+	req.Bounds = pbRange(tv.EntryRange{SeqS: seq(2), SeqE: seq(3)})
 	if _, err := service(t, config(tape, journal, grantPolicy(1, 3))).Borrow(context.Background(), "borrower", req); !errors.Is(err, a.ErrInvalidParams) {
 		t.Fatalf("bounds widened = %v", err)
 	}
-	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, a.BorrowRequest, te.Seq) (a.Selection, error) {
+	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a.Selection, error) {
 		return a.Selection{Status: a.Granted, TTL: time.Hour}, nil
 	}))
 	d, err := service(t, cfg).Borrow(context.Background(), "borrower", request())
 	if err != nil || len(d.View.Ranges) != 0 {
 		t.Fatalf("empty grant = %#v %v", d, err)
 	}
-	p, err := service(t, cfg).Read(context.Background(), "borrower", a.ReadRequest{ViewID: d.View.ID})
+	p, err := service(t, cfg).Read(context.Background(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId})
 	if err != nil || len(p.Entries) != 0 {
 		t.Fatalf("empty read = %#v %v", p, err)
 	}
@@ -389,19 +391,19 @@ func TestBorrowKeepsCompleteSelectedView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.View.Ranges) != 1 || d.View.Ranges[0] != selected {
+	if len(d.View.Ranges) != 1 || !proto.Equal(d.View.Ranges[0], pbRange(selected)) {
 		t.Fatalf("selected view changed: %#v", d.View.Ranges)
 	}
 	count := 0
 	cursor := ""
 	for {
-		page, err := s.Read(t.Context(), "borrower", a.ReadRequest{ViewID: d.View.ID, Cursor: cursor, PageSize: a.MaxPageSize})
+		page, err := s.Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId, Cursor: cursor, PageSize: a.MaxPageSize})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, entry := range page.Entries {
 			count++
-			if entry.Seq != seq(uint64(count)) {
+			if entry.Seq != seq(uint64(count)).String() {
 				t.Fatalf("sequence %s at entry %d", entry.Seq, count)
 			}
 		}
@@ -423,4 +425,8 @@ func openJournal(t *testing.T, path string) *bolt.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+func pbRange(r tv.EntryRange) *pb.EntryRange {
+	return &pb.EntryRange{SeqS: r.SeqS.String(), SeqE: r.SeqE.String()}
 }

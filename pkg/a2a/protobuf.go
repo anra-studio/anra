@@ -2,18 +2,15 @@ package a2a
 
 import (
 	"encoding/json"
-	"fmt"
-
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Only tape-go's numeric ranges need conversion at the storage boundary.
 func rangeToProto(r tv.EntryRange) *pb.EntryRange {
 	return &pb.EntryRange{SeqS: r.SeqS.String(), SeqE: r.SeqE.String()}
 }
-
 func rangeFromProto(r *pb.EntryRange) (tv.EntryRange, error) {
 	if r == nil {
 		return tv.EntryRange{}, ErrInvalidParams
@@ -29,81 +26,59 @@ func rangeFromProto(r *pb.EntryRange) (tv.EntryRange, error) {
 	return tv.EntryRange{SeqS: s, SeqE: e}, nil
 }
 
-func decisionToProto(d Decision) *pb.Decision {
-	status := map[Status]pb.DecisionStatus{Granted: pb.DecisionStatus_DECISION_STATUS_GRANTED, Denied: pb.DecisionStatus_DECISION_STATUS_DENIED, Pending: pb.DecisionStatus_DECISION_STATUS_PENDING}
-	r := &pb.Decision{RequestId: d.RequestID, Status: status[d.Status]}
-	if v := d.View; v != nil {
-		r.View = &pb.View{ViewId: v.ID, Source: &pb.Source{AgentId: v.Source.AgentID, TapeId: v.Source.TapeID}, SnapshotHead: v.SnapshotHead.String(), ExpiresAt: timestamppb.New(v.ExpiresAt)}
-		for _, bounds := range v.Ranges {
-			r.View.Ranges = append(r.View.Ranges, rangeToProto(bounds))
-		}
+// Validate peer responses without constructing a second representation.
+func validateDecision(d *pb.Decision, id string) error {
+	if d == nil || d.RequestId != id {
+		return ErrInvalidParams
 	}
-	return r
-}
-
-func decisionFromProto(d *pb.Decision, id string) (Decision, error) {
-	if d == nil {
-		return Decision{}, ErrInvalidParams
-	}
-	status := map[pb.DecisionStatus]Status{pb.DecisionStatus_DECISION_STATUS_GRANTED: Granted, pb.DecisionStatus_DECISION_STATUS_DENIED: Denied, pb.DecisionStatus_DECISION_STATUS_PENDING: Pending}
-	r := Decision{RequestID: d.RequestId, Status: status[d.Status]}
-	if v := d.View; v != nil {
-		if v.Source == nil || v.ExpiresAt == nil || v.ExpiresAt.CheckValid() != nil {
-			return Decision{}, ErrInvalidParams
+	switch d.Status {
+	case Granted:
+		v := d.View
+		if v == nil || v.ViewId == "" || v.GetSource().GetAgentId() == "" || v.GetSource().GetTapeId() == "" || len(v.Ranges) > 1 || v.ExpiresAt == nil || v.ExpiresAt.CheckValid() != nil {
+			return ErrInvalidParams
 		}
 		head, err := te.ParseSeq(v.SnapshotHead)
 		if err != nil {
-			return Decision{}, ErrInvalidParams
+			return ErrInvalidParams
 		}
-		r.View = &View{ID: v.ViewId, Source: Source{AgentID: v.Source.AgentId, TapeID: v.Source.TapeId}, SnapshotHead: head, ExpiresAt: v.ExpiresAt.AsTime()}
-		for _, bounds := range v.Ranges {
-			b, err := rangeFromProto(bounds)
-			if err != nil {
-				return Decision{}, err
+		for _, r := range v.Ranges {
+			b, err := rangeFromProto(r)
+			if err != nil || !validRange(b, head) {
+				return ErrInvalidParams
 			}
-			r.View.Ranges = append(r.View.Ranges, b)
 		}
-	}
-	return r, validateDecision(r, id)
-}
-
-func pageToProto(p Page) *pb.Page {
-	r := &pb.Page{ViewId: p.ViewID, Source: &pb.Source{AgentId: p.Source.AgentID, TapeId: p.Source.TapeID}, SnapshotHead: p.SnapshotHead.String(), NextCursor: p.NextCursor}
-	for _, e := range p.Entries {
-		entry := &pb.ExportedEntry{Seq: e.Seq.String(), Kind: string(e.Kind), Summary: e.Summary, Timestamp: timestamppb.New(e.Timestamp)}
-		if e.Payload != nil {
-			entry.Payload = &pb.Payload{MediaType: e.Payload.MediaType, JsonData: e.Payload.Data}
+	case Pending, Denied:
+		if d.View != nil {
+			return ErrInvalidParams
 		}
-		r.Entries = append(r.Entries, entry)
+	default:
+		return ErrInvalidParams
 	}
-	return r
+	return nil
 }
-
-func pageFromProto(p *pb.Page) (Page, error) {
+func validateEntry(e *pb.ExportedEntry) error {
+	if e == nil || e.Timestamp == nil || e.Timestamp.CheckValid() != nil {
+		return ErrInvalidParams
+	}
+	if _, err := te.ParseSeq(e.Seq); err != nil {
+		return ErrInvalidParams
+	}
+	if e.Payload != nil && (e.Payload.MediaType == "" || !json.Valid(e.Payload.JsonData)) {
+		return ErrInvalidParams
+	}
+	return nil
+}
+func validatePage(p *pb.Page) error {
 	if p == nil || p.Source == nil {
-		return Page{}, ErrInvalidParams
+		return ErrInvalidParams
 	}
-	head, err := te.ParseSeq(p.SnapshotHead)
-	if err != nil {
-		return Page{}, ErrInvalidParams
+	if _, err := te.ParseSeq(p.SnapshotHead); err != nil {
+		return ErrInvalidParams
 	}
-	r := Page{ViewID: p.ViewId, Source: Source{AgentID: p.Source.AgentId, TapeID: p.Source.TapeId}, SnapshotHead: head, NextCursor: p.NextCursor, Entries: make([]ExportedEntry, 0, len(p.Entries))}
 	for _, e := range p.Entries {
-		if e == nil || e.Timestamp == nil || e.Timestamp.CheckValid() != nil {
-			return Page{}, ErrInvalidParams
+		if err := validateEntry(e); err != nil {
+			return err
 		}
-		seq, err := te.ParseSeq(e.Seq)
-		if err != nil {
-			return Page{}, ErrInvalidParams
-		}
-		entry := ExportedEntry{ProjectedEntry: tv.ProjectedEntry{Seq: seq, Kind: te.EntryKind(e.Kind), Summary: e.Summary}, Timestamp: e.Timestamp.AsTime()}
-		if e.Payload != nil {
-			if e.Payload.MediaType == "" || !json.Valid(e.Payload.JsonData) {
-				return Page{}, fmt.Errorf("%w: invalid payload", ErrInvalidParams)
-			}
-			entry.Payload = &Payload{MediaType: e.Payload.MediaType, Data: json.RawMessage(e.Payload.JsonData)}
-		}
-		r.Entries = append(r.Entries, entry)
 	}
-	return r, nil
+	return nil
 }

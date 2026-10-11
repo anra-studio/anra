@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"google.golang.org/protobuf/encoding/protojson"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -73,15 +74,15 @@ func TestConnectTapeViews(t *testing.T) {
 	if err != nil || d.Status != a.Granted {
 		t.Fatalf("Borrow = %#v, %v", d, err)
 	}
-	again, err := client.Get(t.Context(), request().RequestID)
-	if err != nil || again.View.ID != d.View.ID {
+	again, err := client.Get(t.Context(), request().RequestId)
+	if err != nil || again.View.ViewId != d.View.ViewId {
 		t.Fatalf("Get = %#v, %v", again, err)
 	}
-	first, err := client.Read(t.Context(), a.ReadRequest{ViewID: d.View.ID, PageSize: 1})
+	first, err := client.Read(t.Context(), &pb.ReadRequest{ViewId: d.View.ViewId, PageSize: 1})
 	if err != nil || len(first.Entries) != 1 || first.NextCursor == "" {
 		t.Fatalf("Read = %#v, %v", first, err)
 	}
-	second, err := client.Read(t.Context(), a.ReadRequest{ViewID: d.View.ID, Cursor: first.NextCursor, PageSize: 1})
+	second, err := client.Read(t.Context(), &pb.ReadRequest{ViewId: d.View.ViewId, Cursor: first.NextCursor, PageSize: 1})
 	if err != nil || len(second.Entries) != 1 || second.NextCursor != "" || second.Entries[0].Summary != "second finding" {
 		t.Fatalf("Read next = %#v, %v", second, err)
 	}
@@ -90,10 +91,14 @@ func TestConnectTapeViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	var borrowed struct {
-		Context []a.Page `json:"context"`
+		Context []json.RawMessage `json:"context"`
 	}
-	if err := json.Unmarshal(result, &borrowed); err != nil || len(borrowed.Context) != 1 || len(borrowed.Context[0].Entries) != 2 {
+	if err := json.Unmarshal(result, &borrowed); err != nil || len(borrowed.Context) != 1 {
 		t.Fatalf("tool = %s, %v", result, err)
+	}
+	var borrowedPage pb.Page
+	if err := protojson.Unmarshal(borrowed.Context[0], &borrowedPage); err != nil || len(borrowedPage.Entries) != 2 {
+		t.Fatalf("tool page = %s, %v", borrowed.Context[0], err)
 	}
 	changed := request()
 	changed.Query = "different"
@@ -105,13 +110,13 @@ func TestConnectTapeViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := intruder.Get(t.Context(), request().RequestID); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := intruder.Get(t.Context(), request().RequestId); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("intruder get = %v", err)
 	}
-	if _, err := intruder.Read(t.Context(), a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := intruder.Read(t.Context(), &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("intruder read = %v", err)
 	}
-	if err := intruder.Release(t.Context(), d.View.ID); !errors.Is(err, a.ErrUnavailable) {
+	if err := intruder.Release(t.Context(), d.View.ViewId); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("intruder release = %v", err)
 	}
 	for _, jsonCodec := range []bool{false, true} {
@@ -120,13 +125,13 @@ func TestConnectTapeViews(t *testing.T) {
 			options = append(options, connecthttp.WithProtoJSON())
 		}
 		raw := tapev1connect.NewTapeViewServiceClient(connect.NewClient(connecthttp.NewTransport(httpClient, base, options...)))
-		if _, err := raw.Get(t.Context(), &pb.GetRequest{RequestId: request().RequestID}); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		if _, err := raw.Get(t.Context(), &pb.GetRequest{RequestId: request().RequestId}); connect.CodeOf(err) != connect.CodeFailedPrecondition {
 			t.Fatalf("missing negotiation = %v", err)
 		}
 		ctx, info := connect.NewClientContext(t.Context())
 		info.RequestHeader().Set(a.ExtensionHeader, a.ExtensionURI)
-		res, err := raw.Get(ctx, &pb.GetRequest{RequestId: request().RequestID})
-		if err != nil || res.Decision.View.ViewId != d.View.ID {
+		res, err := raw.Get(ctx, &pb.GetRequest{RequestId: request().RequestId})
+		if err != nil || res.Decision.View.ViewId != d.View.ViewId {
 			t.Fatalf("generated Get = %#v, %v", res, err)
 		}
 		if info.ResponseHeader().Get(a.ExtensionHeader) != a.ExtensionURI {
@@ -146,18 +151,18 @@ func TestConnectTapeViews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := unauthenticated.Get(t.Context(), request().RequestID); connect.CodeOf(err) != connect.CodeUnauthenticated {
+	if _, err := unauthenticated.Get(t.Context(), request().RequestId); connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("unauthenticated = %v", err)
 	}
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := client.Get(canceled, request().RequestID); connect.CodeOf(err) != connect.CodeCanceled {
+	if _, err := client.Get(canceled, request().RequestId); connect.CodeOf(err) != connect.CodeCanceled {
 		t.Fatalf("canceled = %v", err)
 	}
-	if err := client.Release(t.Context(), d.View.ID); err != nil {
+	if err := client.Release(t.Context(), d.View.ViewId); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Read(t.Context(), a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := client.Read(t.Context(), &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("released view = %v", err)
 	}
 }

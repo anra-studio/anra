@@ -3,6 +3,7 @@ module github.com/scbizu/anra
 go 1.27.0
 
 require (
+	buf.build/go/protovalidate v1.4.0
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
 	connectrpc.com/connect/v2 v2.0.0-rc.1
 	connectrpc.com/validate v0.8.0-rc.1
@@ -14,7 +15,6 @@ require (
 )
 
 require (
-	buf.build/go/protovalidate v1.4.0 // indirect
 	cel.dev/cel-go v0.32.0 // indirect
 	cel.dev/expr v0.25.3 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect

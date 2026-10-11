@@ -20,6 +20,8 @@ is an initialized `*bbolt.Bbolt`; `Config.Journal` is an open `*bolt.DB` from
 value from a peer request body. The caller initializes/closes the source tape
 and opens/closes the grant database.
 
+The example imports `tapev1 "github.com/scbizu/anra/gen/anra/a2a/tape/v1"`.
+
 ```go
 researcherTape, err := bbolt.NewBboltStorage("researcher-session", "researcher.db")
 // Check err, then defer researcherTape.Close().
@@ -28,7 +30,7 @@ grantJournal, err := bolt.Open("grants.db", 0600, &bolt.Options{Timeout: time.Se
 // Check err, then defer grantJournal.Close().
 // Keep the source session ID stable across restarts and check initialization errors.
 views, err := a2a.NewService(a2a.Config{
-    Source: a2a.Source{AgentID: "researcher", TapeID: persistentTapeIncarnationID},
+    Source: &tapev1.Source{AgentId: "researcher", TapeId: persistentTapeIncarnationID},
     Owner: "researcher-local",
     Tape: researcherTape,
     Journal: grantJournal,
@@ -131,11 +133,12 @@ and field violation details. View size remains the complete selected range;
 there is no independent entry-count cap. Authorization and grant integrity
 are enforced by `Service` separately from request validation.
 
-Direct local service calls use go-playground/validator/v10 for configuration
-and request structs. Tag rules and custom byte-length/range rules preserve the
-same request semantics; errors retain `ErrInvalidParams` and expose
-`validator.ValidationErrors` for local field inspection. The Connect interceptor
-continues to validate protobuf requests before invoking these domain APIs.
+`Service`, `Client`, policies, and exporters use generated protobuf messages
+from `gen/anra/a2a/tape/v1` directly. Local requests use the same Protovalidate
+rules as Connect requests; validation errors retain `ErrInvalidParams` and
+expose `protovalidate.ValidationError`. Configuration uses
+`go-playground/validator/v10`. Conversion is limited to tape-go ranges and the
+private journal representation, whose existing JSON format remains compatible.
 
 | Method | Parameters | Result |
 | --- | --- | --- |
@@ -151,8 +154,8 @@ arbitrary precision. v1 supports at most one half-open range `[seq_s, seq_e)`,
 plus an empty approved range list. Status uses `DecisionStatus`; times use
 protobuf Timestamp. Exported entries contain only public projections and
 allowed payload metadata, never local owner IDs or CustomEntry extensions.
-`Payload.json_data` preserves raw JSON bytes and is base64 in ProtoJSON. Local
-journal/tool JSON is independent of this transport encoding.
+`Payload.json_data` preserves raw JSON bytes and is base64 in ProtoJSON. The borrowing tool also uses ProtoJSON for decisions and pages. Journal JSON
+retains its independent storage format.
 
 Bounds can only narrow selection. Grants capture source identity, tape session,
 head, exporter version and content fingerprints. Appends do not extend a grant.
@@ -214,7 +217,12 @@ writing while it is locked.
 Grant lookups use on-disk B-tree indexes, requiring O(log N) database work and
 one decoded grant per operation. The service does not retain O(N) grant state.
 Complete bounded source-view fingerprint checks still run on each `Read`;
-that selected range is loaded temporarily. tape-go's `TapeStorage` interface
+that selected range is loaded temporarily. SHA-256 fingerprints reuse the JSON
+bytes already produced by entry validation, avoiding a second serialization of
+the complete view. Request retries and state transitions compare protobuf requests and decisions
+with `proto.Equal`, without marshaling or hashing. Journal-only scalar metadata
+is compared directly. Persisted fingerprint values retain their existing
+format. tape-go's `TapeStorage` interface
 has no keyed grant lookup or shared transaction API, so the journal uses the
 bbolt handle directly rather than a finder.
 

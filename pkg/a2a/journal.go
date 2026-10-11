@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 
 	bolt "go.etcd.io/bbolt"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -47,7 +48,7 @@ func (s *Service) journalBuckets(tx *bolt.Tx, create bool) (*bolt.Bucket, error)
 		if err != nil {
 			return nil, err
 		}
-		data, err := json.Marshal(s.config.Source)
+		data, err := json.Marshal(storeSource(s.config.Source))
 		if err != nil {
 			return nil, err
 		}
@@ -60,8 +61,8 @@ func (s *Service) journalBuckets(tx *bolt.Tx, create bool) (*bolt.Bucket, error)
 			}
 		}
 	}
-	var source Source
-	if decode(b.Get(sourceKey), &source) != nil || source != s.config.Source {
+	var source storedSource
+	if decode(b.Get(sourceKey), &source) != nil || !proto.Equal(source.message(), s.config.Source) {
 		return nil, ErrStorage
 	}
 	for _, name := range [][]byte{requestBucket, viewBucket, historyBucket} {
@@ -73,20 +74,16 @@ func (s *Service) journalBuckets(tx *bolt.Tx, create bool) (*bolt.Bucket, error)
 }
 
 func (s *Service) validateRecord(r grantRecord) error {
-	if r.Schema != journalKind || r.Source != s.config.Source || r.Requester == "" || r.Request.validate() != nil || r.Decision.RequestID != r.Request.RequestID {
+	if r.Schema != journalKind || !proto.Equal(r.Source, s.config.Source) || r.Requester == "" || validateMessage(r.Request) != nil || validateDecision(r.Decision, r.Request.GetRequestId()) != nil {
 		return ErrStorage
 	}
 	switch r.Decision.Status {
 	case Granted:
 		v := r.Decision.View
-		if v == nil || v.ID == "" || v.Source != r.Source || len(v.Ranges) > 1 || v.ExpiresAt.IsZero() || r.Codec == "" || r.HeadHash == "" || r.EntryHash == "" {
+		if v == nil || v.ViewId == "" || !proto.Equal(v.Source, r.Source) || len(v.Ranges) > 1 || v.ExpiresAt.AsTime().IsZero() || r.Codec == "" || r.HeadHash == "" || r.EntryHash == "" {
 			return ErrStorage
 		}
-		for _, b := range v.Ranges {
-			if !validRange(b, v.SnapshotHead) {
-				return ErrStorage
-			}
-		}
+
 	case Denied, Pending:
 		if r.Decision.View != nil || r.Closed {
 			return ErrStorage
@@ -112,10 +109,10 @@ func (s *Service) loadRecord(b *bolt.Bucket, k []byte) (grantRecord, bool, error
 	if err := s.validateRecord(r); err != nil {
 		return r, false, err
 	}
-	if !bytes.Equal(k, []byte(key(r.Requester, r.Request.RequestID))) {
+	if !bytes.Equal(k, []byte(key(r.Requester, r.Request.RequestId))) {
 		return r, false, ErrStorage
 	}
-	if r.Decision.View != nil && !bytes.Equal(b.Bucket(viewBucket).Get([]byte(r.Decision.View.ID)), k) {
+	if r.Decision.View != nil && !bytes.Equal(b.Bucket(viewBucket).Get([]byte(r.Decision.View.ViewId)), k) {
 		return r, false, ErrStorage
 	}
 	return r, true, nil
@@ -156,7 +153,7 @@ func (s *Service) viewGrant(ctx context.Context, p, vid string) (r grantRecord, 
 		if err != nil {
 			return err
 		}
-		if !found || r.Decision.View == nil || r.Decision.View.ID != vid {
+		if !found || r.Decision.View == nil || r.Decision.View.ViewId != vid {
 			return ErrStorage
 		}
 		found = r.Requester == p
@@ -190,18 +187,18 @@ func (s *Service) append(ctx context.Context, r grantRecord, previous *grantReco
 		if err != nil {
 			return err
 		}
-		k := []byte(key(r.Requester, r.Request.RequestID))
+		k := []byte(key(r.Requester, r.Request.RequestId))
 		current, found, err := s.loadRecord(b, k)
 		if err != nil {
 			return err
 		}
-		if (previous == nil && found) || (previous != nil && (!found || hash(current) != hash(*previous))) {
+		if (previous == nil && found) || (previous != nil && (!found || !sameGrant(current, *previous))) {
 			return ErrConflict
 		}
 		if found {
 			unclosed := r
 			unclosed.Closed = false
-			if hash(current.Request) != hash(r.Request) || current.Closed || (current.Decision.Status != Pending && (hash(current) != hash(unclosed) || !r.Closed)) {
+			if !proto.Equal(current.Request, r.Request) || current.Closed || (current.Decision.Status != Pending && (!sameGrant(current, unclosed) || !r.Closed)) {
 				return ErrConflict
 			}
 		} else if r.Closed {
@@ -209,7 +206,7 @@ func (s *Service) append(ctx context.Context, r grantRecord, previous *grantReco
 		}
 		views := b.Bucket(viewBucket)
 		if r.Decision.View != nil {
-			vid := []byte(r.Decision.View.ID)
+			vid := []byte(r.Decision.View.ViewId)
 			if prior := views.Get(vid); prior != nil && !bytes.Equal(prior, k) {
 				return ErrConflict
 			}
@@ -242,4 +239,8 @@ func (s *Service) append(ctx context.Context, r grantRecord, previous *grantReco
 		return storageError(err)
 	}
 	return nil
+}
+
+func sameGrant(a, b grantRecord) bool {
+	return a.Schema == b.Schema && proto.Equal(a.Source, b.Source) && a.Requester == b.Requester && a.Session == b.Session && a.HeadHash == b.HeadHash && a.EntryHash == b.EntryHash && a.Codec == b.Codec && a.Closed == b.Closed && proto.Equal(a.Request, b.Request) && proto.Equal(a.Decision, b.Decision)
 }

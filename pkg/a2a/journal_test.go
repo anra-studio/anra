@@ -3,12 +3,14 @@ package a2a_test
 import (
 	"context"
 	"errors"
+	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	"math"
 	"path/filepath"
 	"testing"
 
 	a "github.com/scbizu/anra/pkg/a2a"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
+	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -45,17 +47,17 @@ func TestGrantQueriesDoNotReplayAtStartupOrRuntime(t *testing.T) {
 		t.Fatal("constructor touched journal data")
 	}
 	for i := 0; i < 10; i++ {
-		if _, err := s.Get(t.Context(), "borrower", request().RequestID); err != nil {
+		if _, err := s.Get(t.Context(), "borrower", request().RequestId); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Read(t.Context(), "borrower", a.ReadRequest{ViewID: d.View.ID}); err != nil {
+		if _, err := s.Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.Release(t.Context(), "borrower", d.View.ID); err != nil {
+	if err := s.Release(t.Context(), "borrower", d.View.ViewId); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service(t, cfg).Read(t.Context(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := service(t, cfg).Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("closed read = %v", err)
 	}
 }
@@ -70,18 +72,18 @@ func TestGrantDecisionIsIsolatedFromCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vid := d.View.ID
-	for _, get := range []func() (a.Decision, error){
-		func() (a.Decision, error) { return s.Get(t.Context(), "borrower", request().RequestID) },
-		func() (a.Decision, error) { return s.Borrow(t.Context(), "borrower", request()) },
+	vid := d.View.ViewId
+	for _, get := range []func() (*pb.Decision, error){
+		func() (*pb.Decision, error) { return s.Get(t.Context(), "borrower", request().RequestId) },
+		func() (*pb.Decision, error) { return s.Borrow(t.Context(), "borrower", request()) },
 	} {
 		d, err := get()
 		if err != nil {
 			t.Fatal(err)
 		}
-		d.View.ID = "mutated"
-		d.View.Ranges[0].SeqE = seq(100)
-		page, err := s.Read(t.Context(), "borrower", a.ReadRequest{ViewID: vid})
+		d.View.ViewId = "mutated"
+		d.View.Ranges[0].SeqE = "100"
+		page, err := s.Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: vid})
 		if err != nil || len(page.Entries) != 1 {
 			t.Fatalf("persisted view mutated: %#v %v", page, err)
 		}
@@ -106,11 +108,11 @@ func TestGrantAppendRollsBackStateAndIndexWithHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := request()
-	req.RequestID = "rollback"
+	req.RequestId = "rollback"
 	if _, err := s.Borrow(t.Context(), "borrower", req); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("append error = %v", err)
 	}
-	if _, err := s.Get(t.Context(), "borrower", req.RequestID); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := s.Get(t.Context(), "borrower", req.RequestId); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("failed grant persisted: %v", err)
 	}
 	if err := journal.Update(func(tx *bolt.Tx) error {
@@ -139,18 +141,18 @@ func TestGrantIndexCorruptionFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := journal.Update(func(tx *bolt.Tx) error {
-		return journalOwner(tx).Bucket([]byte("views")).Put([]byte(d.View.ID), []byte("missing-request"))
+		return journalOwner(tx).Bucket([]byte("views")).Put([]byte(d.View.ViewId), []byte("missing-request"))
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Read(t.Context(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrStorage) {
+	if _, err := s.Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("bad view index = %v", err)
 	}
-	if _, err := s.Get(t.Context(), "borrower", request().RequestID); !errors.Is(err, a.ErrStorage) {
+	if _, err := s.Get(t.Context(), "borrower", request().RequestId); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("bad request index = %v", err)
 	}
-	cfg.Source.TapeID = "replacement"
-	if _, err := service(t, cfg).Get(t.Context(), "borrower", request().RequestID); !errors.Is(err, a.ErrStorage) {
+	cfg.Source.TapeId = "replacement"
+	if _, err := service(t, cfg).Get(t.Context(), "borrower", request().RequestId); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("source replacement = %v", err)
 	}
 }
@@ -160,7 +162,7 @@ func TestGrantAppendFailureDoesNotReturnDecision(t *testing.T) {
 	tape := openTape(t, filepath.Join(root, "source"), "local")
 	path := filepath.Join(root, "journal")
 	journal := openJournal(t, path)
-	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, a.BorrowRequest, te.Seq) (a.Selection, error) {
+	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a.Selection, error) {
 		if err := journal.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +172,7 @@ func TestGrantAppendFailureDoesNotReturnDecision(t *testing.T) {
 		t.Fatalf("closed db append = %v", err)
 	}
 	cfg.Journal = openJournal(t, path)
-	if _, err := service(t, cfg).Get(t.Context(), "borrower", request().RequestID); !errors.Is(err, a.ErrUnavailable) {
+	if _, err := service(t, cfg).Get(t.Context(), "borrower", request().RequestId); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("failed append persisted: %v", err)
 	}
 }
@@ -180,7 +182,7 @@ func TestGrantWriteRejectsStaleConcurrentPolicyDecision(t *testing.T) {
 	tape := openTape(t, filepath.Join(root, "source"), "local")
 	journal := openJournal(t, filepath.Join(root, "journal"))
 	entered, resume := make(chan struct{}), make(chan struct{})
-	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, a.BorrowRequest, te.Seq) (a.Selection, error) {
+	cfg := config(tape, journal, a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a.Selection, error) {
 		close(entered)
 		<-resume
 		return a.Selection{Status: a.Pending}, nil
@@ -189,7 +191,7 @@ func TestGrantWriteRejectsStaleConcurrentPolicyDecision(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { _, err := first.Borrow(context.Background(), "borrower", request()); result <- err }()
 	<-entered
-	cfg.Policy = a.PolicyFunc(func(context.Context, string, a.BorrowRequest, te.Seq) (a.Selection, error) {
+	cfg.Policy = a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a.Selection, error) {
 		return a.Selection{Status: a.Denied}, nil
 	})
 	second := service(t, cfg)
@@ -201,7 +203,7 @@ func TestGrantWriteRejectsStaleConcurrentPolicyDecision(t *testing.T) {
 	if err := <-result; !errors.Is(err, a.ErrConflict) {
 		t.Fatalf("stale writer = %v", err)
 	}
-	d, err := first.Get(t.Context(), "borrower", request().RequestID)
+	d, err := first.Get(t.Context(), "borrower", request().RequestId)
 	if err != nil || d.Status != a.Denied {
 		t.Fatalf("committed decision overwritten: %#v %v", d, err)
 	}
@@ -226,5 +228,27 @@ func TestLegacyTapeJournalIsNotSilentlyIgnored(t *testing.T) {
 	s := service(t, config(tape, journal, grantPolicy(1, 2)))
 	if _, err := s.Get(t.Context(), "borrower", "request"); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("legacy journal = %v", err)
+	}
+}
+
+func TestBorrowRetryComparesBoundsByValue(t *testing.T) {
+	root := t.TempDir()
+	tape := openTape(t, filepath.Join(root, "source"), "local")
+	journal := openJournal(t, filepath.Join(root, "journal"))
+	s := service(t, config(tape, journal, a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a.Selection, error) {
+		return a.Selection{Status: a.Denied}, nil
+	})))
+	req := request()
+	req.Bounds = pbRange(tv.EntryRange{SeqS: seq(1), SeqE: seq(3)})
+	if _, err := s.Borrow(t.Context(), "borrower", req); err != nil {
+		t.Fatal(err)
+	}
+	req.Bounds = &pb.EntryRange{SeqS: req.Bounds.SeqS, SeqE: req.Bounds.SeqE}
+	if _, err := s.Borrow(t.Context(), "borrower", req); err != nil {
+		t.Fatalf("equal bounds rejected: %v", err)
+	}
+	req.Bounds.SeqE = "4"
+	if _, err := s.Borrow(t.Context(), "borrower", req); !errors.Is(err, a.ErrConflict) {
+		t.Fatalf("changed bounds = %v", err)
 	}
 }

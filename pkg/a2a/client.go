@@ -17,6 +17,8 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	runner "github.com/scbizu/tape-go/pkg/runner"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 func Discover(ctx context.Context, h *http.Client, cardURL string) (*sdk.AgentCard, error) {
@@ -55,31 +57,6 @@ func readBody(r io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("response exceeds size limit")
 	}
 	return b, nil
-}
-
-func validateDecision(d Decision, id string) error {
-	if d.RequestID != id {
-		return ErrInvalidParams
-	}
-	switch d.Status {
-	case Granted:
-		v := d.View
-		if v == nil || v.ID == "" || v.Source.AgentID == "" || v.Source.TapeID == "" || len(v.Ranges) > 1 {
-			return ErrInvalidParams
-		}
-		for _, r := range v.Ranges {
-			if !validRange(r, v.SnapshotHead) {
-				return ErrInvalidParams
-			}
-		}
-	case Pending, Denied:
-		if d.View != nil {
-			return ErrInvalidParams
-		}
-	default:
-		return ErrInvalidParams
-	}
-	return nil
 }
 
 // Peer describes a previously vetted card. Optional directories can supply
@@ -130,40 +107,55 @@ func (t BorrowTool) Spec() runner.ToolSpec {
 }
 
 func (t BorrowTool) Execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-	var req BorrowRequest
-	if err := decode(args, &req); err != nil {
-		return nil, err
+	req := &pb.BorrowRequest{}
+	if err := protojson.Unmarshal(args, req); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidParams, err)
 	}
 	d, err := t.Client.Borrow(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	result := struct {
-		Decision Decision `json:"decision"`
-		Context  []Page   `json:"context,omitempty"`
-	}{Decision: d}
+		Decision json.RawMessage   `json:"decision"`
+		Context  []json.RawMessage `json:"context,omitempty"`
+	}{}
+	result.Decision, err = protojson.Marshal(d)
+	if err != nil {
+		return nil, err
+	}
 	if d.Status == Granted {
 		v := d.View
-		var expected te.Seq
+		var expected, end te.Seq
 		if len(v.Ranges) > 0 {
-			expected = v.Ranges[0].SeqS
+			expected, err = te.ParseSeq(v.Ranges[0].SeqS)
+			if err != nil {
+				return nil, ErrInvalidParams
+			}
+			end, err = te.ParseSeq(v.Ranges[0].SeqE)
+			if err != nil {
+				return nil, ErrInvalidParams
+			}
 		}
 		cursor := ""
 		for {
-			p, err := t.Client.Read(ctx, ReadRequest{ViewID: v.ID, Cursor: cursor, PageSize: MaxPageSize})
+			p, err := t.Client.Read(ctx, &pb.ReadRequest{ViewId: v.ViewId, Cursor: cursor, PageSize: MaxPageSize})
 			if err != nil {
 				return nil, err
 			}
-			if p.ViewID != v.ID || p.Source != v.Source || p.SnapshotHead != v.SnapshotHead {
+			if p.ViewId != v.ViewId || !proto.Equal(p.Source, v.Source) || p.SnapshotHead != v.SnapshotHead {
 				return nil, ErrInvalidParams
 			}
 			for _, e := range p.Entries {
-				if len(v.Ranges) != 1 || e.Seq != expected || e.Seq.Cmp(v.Ranges[0].SeqE) >= 0 {
+				if len(v.Ranges) != 1 || e.Seq != expected.String() || expected.Cmp(end) >= 0 {
 					return nil, ErrInvalidParams
 				}
 				expected = expected.Next()
 			}
-			result.Context = append(result.Context, p)
+			encoded, err := protojson.Marshal(p)
+			if err != nil {
+				return nil, err
+			}
+			result.Context = append(result.Context, encoded)
 			if p.NextCursor == "" {
 				break
 			}
@@ -173,14 +165,14 @@ func (t BorrowTool) Execute(ctx context.Context, args json.RawMessage) (json.Raw
 			}
 			cursor = p.NextCursor
 		}
-		if len(v.Ranges) > 0 && expected != v.Ranges[0].SeqE {
+		if len(v.Ranges) > 0 && expected.String() != v.Ranges[0].SeqE {
 			return nil, ErrInvalidParams
 		}
 	}
 	return json.Marshal(result)
 }
 
-// Client uses generated, typed RPC bindings, preserving the domain API.
+// Client uses generated protobuf messages directly.
 // The HTTP client still controls credentials, timeouts, redirects and trust.
 type Client struct {
 	rpc tapev1connect.TapeViewServiceClient
@@ -248,38 +240,40 @@ func checkConnectResponse(info *connect.CallInfo, err error) error {
 	return nil
 }
 
-func (c *Client) Borrow(ctx context.Context, r BorrowRequest) (Decision, error) {
+func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision, error) {
+	if err := validateMessage(r); err != nil {
+		return nil, err
+	}
 	ctx, info := connectContext(ctx)
-	req := &pb.BorrowRequest{RequestId: r.RequestID, Purpose: r.Purpose, Query: r.Query}
-	if r.Bounds != nil {
-		req.Bounds = rangeToProto(*r.Bounds)
-	}
-	res, err := c.rpc.Borrow(ctx, req)
+	res, err := c.rpc.Borrow(ctx, r)
 	if err := checkConnectResponse(info, err); err != nil {
-		return Decision{}, err
+		return nil, err
 	}
-	return decisionFromProto(res.GetDecision(), r.RequestID)
+	d := res.GetDecision()
+	return d, validateDecision(d, r.RequestId)
 }
 
-func (c *Client) Get(ctx context.Context, id string) (Decision, error) {
+func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {
 	ctx, info := connectContext(ctx)
 	res, err := c.rpc.Get(ctx, &pb.GetRequest{RequestId: id})
 	if err := checkConnectResponse(info, err); err != nil {
-		return Decision{}, err
+		return nil, err
 	}
-	return decisionFromProto(res.GetDecision(), id)
+	d := res.GetDecision()
+	return d, validateDecision(d, id)
 }
 
-func (c *Client) Read(ctx context.Context, r ReadRequest) (Page, error) {
-	if r.PageSize < 0 || r.PageSize > MaxPageSize {
-		return Page{}, ErrInvalidParams
+func (c *Client) Read(ctx context.Context, r *pb.ReadRequest) (*pb.Page, error) {
+	if err := validateMessage(r); err != nil {
+		return nil, err
 	}
 	ctx, info := connectContext(ctx)
-	res, err := c.rpc.Read(ctx, &pb.ReadRequest{ViewId: r.ViewID, Cursor: r.Cursor, PageSize: int32(r.PageSize)})
+	res, err := c.rpc.Read(ctx, r)
 	if err := checkConnectResponse(info, err); err != nil {
-		return Page{}, err
+		return nil, err
 	}
-	return pageFromProto(res.GetPage())
+	p := res.GetPage()
+	return p, validatePage(p)
 }
 
 func (c *Client) Release(ctx context.Context, id string) error {

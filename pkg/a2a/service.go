@@ -2,20 +2,21 @@ package a2a
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
+	"uuid"
 
+	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	bolt "go.etcd.io/bbolt"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const journalKind = "anra:tape-view-grant/v1"
@@ -23,16 +24,16 @@ const journalKind = "anra:tape-view-grant/v1"
 // Selection is the lender's permission decision, made before reading/exporting
 // entries. One best permitted anchor range may be selected in v1.
 type Selection struct {
-	Status Status
+	Status pb.DecisionStatus
 	Range  *tv.EntryRange
 	TTL    time.Duration
 }
 type Policy interface {
-	Select(context.Context, string, BorrowRequest, te.Seq) (Selection, error)
+	Select(context.Context, string, *pb.BorrowRequest, te.Seq) (Selection, error)
 }
-type PolicyFunc func(context.Context, string, BorrowRequest, te.Seq) (Selection, error)
+type PolicyFunc func(context.Context, string, *pb.BorrowRequest, te.Seq) (Selection, error)
 
-func (f PolicyFunc) Select(c context.Context, p string, r BorrowRequest, h te.Seq) (Selection, error) {
+func (f PolicyFunc) Select(c context.Context, p string, r *pb.BorrowRequest, h te.Seq) (Selection, error) {
 	return f(c, p, r, h)
 }
 
@@ -40,28 +41,28 @@ func (f PolicyFunc) Select(c context.Context, p string, r BorrowRequest, h te.Se
 // and must not export arbitrary CustomEntry.Extensions. Its Name is persisted.
 type Exporter interface {
 	Name() string
-	Export(te.EntryLike) (ExportedEntry, error)
+	Export(te.EntryLike) (*pb.ExportedEntry, error)
 }
 type TextExporter struct{}
 
 func (TextExporter) Name() string { return "anra:text-summary/v1" }
-func (TextExporter) Export(e te.EntryLike) (ExportedEntry, error) {
+func (TextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
 	switch e.GetKind() {
 	case te.EntryUser, te.EntryAssistant:
 	default:
-		return ExportedEntry{}, ErrUnsupported
+		return nil, ErrUnsupported
 	}
 	data, err := json.Marshal(e.GetSummary())
 	if err != nil {
-		return ExportedEntry{}, err
+		return nil, err
 	}
-	return ExportedEntry{ProjectedEntry: tv.ProjectedEntry{Seq: e.GetID(), Kind: e.GetKind(), Summary: e.GetSummary()}, Timestamp: e.GetTimestamp(), Payload: &Payload{MediaType: TextMediaType, Data: data}}, nil
+	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Summary: e.GetSummary(), Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: TextMediaType, JsonData: data}}, nil
 }
 
 // Config uses an initialized bbolt source tape and an open bbolt grant database.
 // The caller owns their lifetime.
 type Config struct {
-	Source Source       `validate:"required"`
+	Source *pb.Source   `validate:"required,structonly"`
 	Owner  string       `validate:"required"`
 	Tape   *bbolt.Bbolt `validate:"required,structonly"`
 	// Journal holds indexed grant state and audit records, separate from the source.
@@ -80,22 +81,26 @@ type Service struct {
 }
 
 type grantRecord struct {
-	Schema    string        `json:"schema"`
-	Source    Source        `json:"source"`
-	Requester string        `json:"requester"`
-	Request   BorrowRequest `json:"request"`
-	Decision  Decision      `json:"decision"`
-	Session   string        `json:"session,omitempty"`
-	HeadHash  string        `json:"headHash,omitempty"`
-	EntryHash string        `json:"entryHash,omitempty"`
-	Codec     string        `json:"codec,omitempty"`
-	Closed    bool          `json:"closed,omitempty"`
+	Schema    string            `json:"schema"`
+	Source    *pb.Source        `json:"source"`
+	Requester string            `json:"requester"`
+	Request   *pb.BorrowRequest `json:"request"`
+	Decision  *pb.Decision      `json:"decision"`
+	Session   string            `json:"session,omitempty"`
+	HeadHash  string            `json:"headHash,omitempty"`
+	EntryHash string            `json:"entryHash,omitempty"`
+	Codec     string            `json:"codec,omitempty"`
+	Closed    bool              `json:"closed,omitempty"`
 }
 
 func NewService(c Config) (*Service, error) {
 	if err := validateStruct(c); err != nil {
 		return nil, err
 	}
+	if err := validateStruct(storeSource(c.Source)); err != nil {
+		return nil, err
+	}
+	c.Source = proto.Clone(c.Source).(*pb.Source)
 	if c.Exporter == nil {
 		c.Exporter = TextExporter{}
 	}
@@ -121,58 +126,46 @@ func (s *Service) head(ctx context.Context) (tv.TapeView, error) {
 	}
 	return v, nil
 }
-func hash(v any) string {
-	b, _ := json.Marshal(v)
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
-}
-func id() (string, error) {
-	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-func (s *Service) Borrow(ctx context.Context, p string, req BorrowRequest) (Decision, error) {
+func (s *Service) Borrow(ctx context.Context, p string, req *pb.BorrowRequest) (*pb.Decision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if p == "" {
-		return Decision{}, ErrUnavailable
+		return nil, ErrUnavailable
 	}
-	if err := req.validate(); err != nil {
-		return Decision{}, err
+	if err := validateMessage(req); err != nil {
+		return nil, err
 	}
-	r, ok, err := s.requestGrant(ctx, p, req.RequestID)
+	r, ok, err := s.requestGrant(ctx, p, req.RequestId)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	if ok {
-		if hash(r.Request) != hash(req) {
-			return Decision{}, ErrConflict
+		if !proto.Equal(r.Request, req) {
+			return nil, ErrConflict
 		}
 		return r.Decision, nil
 	}
 	h, err := s.head(ctx)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	head := h.Scope.SeqE
-	sel, err := s.config.Policy.Select(ctx, p, req, head)
+	sel, err := s.config.Policy.Select(ctx, p, proto.Clone(req).(*pb.BorrowRequest), head)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	r, err = s.decide(ctx, p, req, sel, h)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	if err := s.append(ctx, r, nil); err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	return r.Decision, nil
 }
-func (s *Service) decide(ctx context.Context, p string, req BorrowRequest, sel Selection, h tv.TapeView) (grantRecord, error) {
+func (s *Service) decide(ctx context.Context, p string, req *pb.BorrowRequest, sel Selection, h tv.TapeView) (grantRecord, error) {
 	head := h.Scope.SeqE
-	r := grantRecord{Schema: journalKind, Source: s.config.Source, Requester: p, Request: req, Decision: Decision{RequestID: req.RequestID, Status: sel.Status}}
+	r := grantRecord{Schema: journalKind, Source: proto.Clone(s.config.Source).(*pb.Source), Requester: p, Request: proto.Clone(req).(*pb.BorrowRequest), Decision: &pb.Decision{RequestId: req.RequestId, Status: sel.Status}}
 	if sel.Status == Pending || sel.Status == Denied {
 		if sel.Range != nil {
 			return r, ErrInvalidParams
@@ -182,33 +175,33 @@ func (s *Service) decide(ctx context.Context, p string, req BorrowRequest, sel S
 	if sel.Status != Granted || sel.TTL <= 0 || sel.TTL > 24*time.Hour {
 		return r, ErrInvalidParams
 	}
-	ranges := []tv.EntryRange{}
+	ranges := []*pb.EntryRange{}
 	if sel.Range != nil {
 		b := *sel.Range
 		if !validRange(b, head) {
 			return r, ErrInvalidParams
 		}
-		if req.Bounds != nil && (b.SeqS.Cmp(req.Bounds.SeqS) < 0 || b.SeqE.Cmp(req.Bounds.SeqE) > 0) {
-			return r, ErrInvalidParams
+		if req.Bounds != nil {
+			bounds, err := rangeFromProto(req.Bounds)
+			if err != nil || b.SeqS.Cmp(bounds.SeqS) < 0 || b.SeqE.Cmp(bounds.SeqE) > 0 {
+				return r, ErrInvalidParams
+			}
 		}
-		ranges = append(ranges, b)
+		ranges = append(ranges, rangeToProto(b))
 	}
-	vid, err := id()
-	if err != nil {
-		return r, err
-	}
-	r.Decision.View = &View{ID: vid, Source: r.Source, SnapshotHead: head, Ranges: ranges, ExpiresAt: s.config.Now().UTC().Add(sel.TTL)}
+	r.Decision.View = &pb.View{ViewId: uuid.New().String(), Source: proto.Clone(r.Source).(*pb.Source), SnapshotHead: head.String(), Ranges: ranges, ExpiresAt: timestamppb.New(s.config.Now().UTC().Add(sel.TTL))}
 	r.Session = h.SessionID
 	r.Codec = s.config.Exporter.Name()
-	r.HeadHash, err = s.headHash(ctx, head)
+	headHash, err := s.headHash(ctx, head)
 	if err != nil {
 		return r, err
 	}
-	entries, err := s.entries(ctx, r.Decision.View)
+	r.HeadHash = headHash
+	_, entryHash, err := s.entries(ctx, r.Decision.View)
 	if err != nil {
 		return r, err
 	}
-	r.EntryHash = hash(entries)
+	r.EntryHash = entryHash
 	// Recheck metadata and head contents after selection/export, before committing.
 	if err := s.checkSource(ctx, r); err != nil {
 		return r, err
@@ -217,7 +210,7 @@ func (s *Service) decide(ctx context.Context, p string, req BorrowRequest, sel S
 }
 func (s *Service) headHash(ctx context.Context, head te.Seq) (string, error) {
 	if head.IsZero() {
-		return hash("empty"), nil
+		return fingerprint([]byte(`"empty"`)), nil
 	}
 	v, err := s.config.Tape.Range(s.tapeCtx(ctx), tv.EntryRange{SeqS: head, SeqE: head.Next()})
 	if err != nil {
@@ -227,44 +220,60 @@ func (s *Service) headHash(ctx context.Context, head te.Seq) (string, error) {
 		return "", ErrStorage
 	}
 	e := v.Raw[0]
-	return hash(struct {
+	encoded, err := json.Marshal(struct {
 		Seq  te.Seq
 		Kind string
 		Text string
 		Time time.Time
-	}{head, string(e.GetKind()), e.GetSummary(), e.GetTimestamp()}), nil
+	}{head, string(e.GetKind()), e.GetSummary(), e.GetTimestamp()})
+	if err != nil {
+		return "", storageError(err)
+	}
+	return fingerprint(encoded), nil
 }
-func (s *Service) entries(ctx context.Context, v *View) ([]ExportedEntry, error) {
-	out := []ExportedEntry{}
-	for _, b := range v.Ranges {
+func (s *Service) entries(ctx context.Context, v *pb.View) ([]*pb.ExportedEntry, string, error) {
+	out := []*pb.ExportedEntry{}
+	digest := newEntryFingerprint()
+	for _, bounds := range v.Ranges {
+		b, err := rangeFromProto(bounds)
+		if err != nil {
+			return nil, "", err
+		}
 		raw, err := s.config.Tape.Range(s.tapeCtx(ctx), b)
 		if err != nil {
-			return nil, storageError(err)
+			return nil, "", storageError(err)
 		}
 		expected := b.SeqS
 		for _, e := range raw.Raw {
 			if e == nil || expected.Cmp(b.SeqE) >= 0 || e.GetOwner() != s.config.Owner || e.GetID() != expected {
-				return nil, ErrStorage
+				return nil, "", ErrStorage
 			}
 			x, err := s.config.Exporter.Export(e)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
-			if x.Seq != e.GetID() || x.Kind != e.GetKind() || !x.Timestamp.Equal(e.GetTimestamp()) || (x.Payload != nil && (x.Payload.MediaType == "" || !json.Valid(x.Payload.Data))) {
-				return nil, ErrUnsupported
+			if x == nil || validateEntry(x) != nil || x.Seq != e.GetID().String() || x.Kind != string(e.GetKind()) || !x.Timestamp.AsTime().Equal(e.GetTimestamp()) {
+				return nil, "", ErrUnsupported
 			}
-			encoded, err := json.Marshal(x)
+			stored, err := storeEntry(x)
+			if err != nil {
+				return nil, "", err
+			}
+			// Preserve the original tape timestamp representation in legacy fingerprints.
+			stored.Timestamp = e.GetTimestamp()
+			encoded, err := json.Marshal(stored)
 			if err != nil || len(encoded) > MaxEntryBytes {
-				return nil, ErrUnsupported
+				return nil, "", ErrUnsupported
 			}
+			digest.add(encoded)
 			out = append(out, x)
 			expected = expected.Next()
 		}
 		if expected != b.SeqE {
-			return nil, ErrStorage
+			return nil, "", ErrStorage
 		}
 	}
-	return out, nil
+	return out, digest.sum(), nil
 }
 func (s *Service) checkSource(ctx context.Context, r grantRecord) error {
 	h, err := s.head(ctx)
@@ -272,10 +281,14 @@ func (s *Service) checkSource(ctx context.Context, r grantRecord) error {
 		return err
 	}
 	head := h.Scope.SeqE
-	if h.SessionID != r.Session || head.Cmp(r.Decision.View.SnapshotHead) < 0 || r.Codec != s.config.Exporter.Name() {
+	snapshot, err := te.ParseSeq(r.Decision.View.SnapshotHead)
+	if err != nil {
+		return ErrStorage
+	}
+	if h.SessionID != r.Session || head.Cmp(snapshot) < 0 || r.Codec != s.config.Exporter.Name() {
 		return ErrUnavailable
 	}
-	hh, err := s.headHash(ctx, r.Decision.View.SnapshotHead)
+	hh, err := s.headHash(ctx, snapshot)
 	if err != nil {
 		return err
 	}
@@ -284,44 +297,44 @@ func (s *Service) checkSource(ctx context.Context, r grantRecord) error {
 	}
 	return nil
 }
-func (s *Service) Get(ctx context.Context, p, requestID string) (Decision, error) {
+func (s *Service) Get(ctx context.Context, p, requestID string) (*pb.Decision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok, err := s.requestGrant(ctx, p, requestID)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	if p == "" || !ok {
-		return Decision{}, ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	return r.Decision, nil
 }
 
 // Resolve is a local policy operation, deliberately absent from the peer RPC.
-func (s *Service) Resolve(ctx context.Context, p, requestID string, sel Selection) (Decision, error) {
+func (s *Service) Resolve(ctx context.Context, p, requestID string, sel Selection) (*pb.Decision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok, err := s.requestGrant(ctx, p, requestID)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	if !ok {
-		return Decision{}, ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	if r.Decision.Status != Pending {
-		return Decision{}, ErrConflict
+		return nil, ErrConflict
 	}
 	h, err := s.head(ctx)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	previous := r
 	r, err = s.decide(ctx, p, r.Request, sel, h)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	if err := s.append(ctx, r, &previous); err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 	return r.Decision, nil
 }
@@ -332,51 +345,52 @@ type cursor struct {
 	Offset int    `json:"offset"`
 }
 
-func (s *Service) Read(ctx context.Context, p string, req ReadRequest) (Page, error) {
+func (s *Service) Read(ctx context.Context, p string, req *pb.ReadRequest) (*pb.Page, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := req.validate(); err != nil {
-		return Page{}, err
+	if err := validateMessage(req); err != nil {
+		return nil, err
 	}
-	if req.PageSize == 0 {
-		req.PageSize = 32
+	pageSize := req.PageSize
+	if pageSize == 0 {
+		pageSize = 32
 	}
-	r, ok, err := s.viewGrant(ctx, p, req.ViewID)
+	r, ok, err := s.viewGrant(ctx, p, req.ViewId)
 	if err != nil {
-		return Page{}, err
+		return nil, err
 	}
-	if p == "" || !ok || r.Closed || !s.config.Now().Before(r.Decision.View.ExpiresAt) {
-		return Page{}, ErrUnavailable
+	if p == "" || !ok || r.Closed || !s.config.Now().Before(r.Decision.View.ExpiresAt.AsTime()) {
+		return nil, ErrUnavailable
 	}
 	if err := s.checkSource(ctx, r); err != nil {
-		return Page{}, err
+		return nil, err
 	}
-	entries, err := s.entries(ctx, r.Decision.View)
+	entries, entryHash, err := s.entries(ctx, r.Decision.View)
 	if err != nil {
-		return Page{}, err
+		return nil, err
 	}
-	if hash(entries) != r.EntryHash {
-		return Page{}, ErrUnavailable
+	if entryHash != r.EntryHash {
+		return nil, ErrUnavailable
 	}
 	offset := 0
 	if req.Cursor != "" {
 		if len(req.Cursor) > 1024 {
-			return Page{}, ErrInvalidParams
+			return nil, ErrInvalidParams
 		}
 		b, err := base64.RawURLEncoding.DecodeString(req.Cursor)
 		if err != nil {
-			return Page{}, ErrInvalidParams
+			return nil, ErrInvalidParams
 		}
 		var c cursor
-		if decode(b, &c) != nil || c.ViewID != req.ViewID || c.Head != r.Decision.View.SnapshotHead || c.Offset < 1 || c.Offset >= len(entries) {
-			return Page{}, ErrInvalidParams
+		if decode(b, &c) != nil || c.ViewID != req.ViewId || c.Head.String() != r.Decision.View.SnapshotHead || c.Offset < 1 || c.Offset >= len(entries) {
+			return nil, ErrInvalidParams
 		}
 		offset = c.Offset
 	}
-	end := min(offset+req.PageSize, len(entries))
-	page := Page{ViewID: req.ViewID, Source: r.Source, SnapshotHead: r.Decision.View.SnapshotHead, Entries: entries[offset:end]}
+	end := min(offset+int(pageSize), len(entries))
+	page := &pb.Page{ViewId: req.ViewId, Source: proto.Clone(r.Source).(*pb.Source), SnapshotHead: r.Decision.View.SnapshotHead, Entries: entries[offset:end]}
 	if end < len(entries) {
-		b, _ := json.Marshal(cursor{req.ViewID, page.SnapshotHead, end})
+		b, _ := json.Marshal(cursor{req.ViewId, te.MustParseSeq(page.SnapshotHead), end})
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(b)
 	}
 	return page, nil

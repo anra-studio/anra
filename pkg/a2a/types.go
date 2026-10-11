@@ -9,8 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"time"
 
+	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -31,72 +31,14 @@ var (
 	ErrUnsupported   = errors.New("unsupported entry representation")
 )
 
-type Source struct {
-	AgentID string `json:"agentId" validate:"required"`
-	TapeID  string `json:"tapeId" validate:"required"`
-}
+const (
+	Granted = pb.DecisionStatus_DECISION_STATUS_GRANTED
+	Denied  = pb.DecisionStatus_DECISION_STATUS_DENIED
+	Pending = pb.DecisionStatus_DECISION_STATUS_PENDING
+)
 
 func validRange(r tv.EntryRange, head te.Seq) bool {
 	return !r.SeqS.IsZero() && r.SeqS.Cmp(r.SeqE) < 0 && r.SeqE.Cmp(head.Next()) <= 0
-}
-
-type View struct {
-	ID           string          `json:"viewId"`
-	Source       Source          `json:"source"`
-	SnapshotHead te.Seq          `json:"snapshotHead"`
-	Ranges       []tv.EntryRange `json:"ranges"`
-	ExpiresAt    time.Time       `json:"expiresAt"`
-}
-type BorrowRequest struct {
-	RequestID string         `json:"requestId" validate:"required,maxbytes=256"`
-	Purpose   string         `json:"purpose" validate:"required,maxbytes=8192"`
-	Query     string         `json:"query" validate:"required,maxbytes=8192"`
-	Bounds    *tv.EntryRange `json:"bounds,omitempty" validate:"omitempty"`
-}
-
-func (r BorrowRequest) validate() error {
-	return validateStruct(r)
-}
-
-type Status string
-
-const (
-	Granted Status = "granted"
-	Denied  Status = "denied"
-	Pending Status = "pending"
-)
-
-type Decision struct {
-	RequestID string `json:"requestId"`
-	Status    Status `json:"status"`
-	View      *View  `json:"view,omitempty"`
-}
-type Payload struct {
-	MediaType string          `json:"mediaType"`
-	Data      json.RawMessage `json:"data"`
-}
-
-// ExportedEntry adds transport metadata to tape-go's public entry projection.
-// It contains no owner identity or CustomEntry extensions.
-type ExportedEntry struct {
-	tv.ProjectedEntry
-	Timestamp time.Time `json:"timestamp"`
-	Payload   *Payload  `json:"payload,omitempty"`
-}
-type ReadRequest struct {
-	ViewID   string `json:"viewId" validate:"required"`
-	Cursor   string `json:"cursor,omitempty"`
-	PageSize int    `json:"pageSize,omitempty" validate:"gte=0,lte=100"`
-}
-
-func (r ReadRequest) validate() error { return validateStruct(r) }
-
-type Page struct {
-	ViewID       string          `json:"viewId"`
-	Source       Source          `json:"source"`
-	SnapshotHead te.Seq          `json:"snapshotHead"`
-	Entries      []ExportedEntry `json:"entries"`
-	NextCursor   string          `json:"nextCursor,omitempty"`
 }
 
 func decode(data []byte, dst any) error {

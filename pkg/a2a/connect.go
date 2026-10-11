@@ -50,19 +50,11 @@ func connectPeer(ctx context.Context) string {
 }
 
 func (h *connectViews) Borrow(ctx context.Context, req *pb.BorrowRequest) (*pb.BorrowResponse, error) {
-	r := BorrowRequest{RequestID: req.RequestId, Purpose: req.Purpose, Query: req.Query}
-	if req.Bounds != nil {
-		bounds, err := rangeFromProto(req.Bounds)
-		if err != nil {
-			return nil, connectError(err)
-		}
-		r.Bounds = &bounds
-	}
-	d, err := h.service.Borrow(ctx, connectPeer(ctx), r)
+	d, err := h.service.Borrow(ctx, connectPeer(ctx), req)
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return &pb.BorrowResponse{Decision: decisionToProto(d)}, nil
+	return &pb.BorrowResponse{Decision: d}, nil
 }
 
 func (h *connectViews) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
@@ -70,15 +62,15 @@ func (h *connectViews) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResp
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return &pb.GetResponse{Decision: decisionToProto(d)}, nil
+	return &pb.GetResponse{Decision: d}, nil
 }
 
 func (h *connectViews) Read(ctx context.Context, req *pb.ReadRequest) (*pb.ReadResponse, error) {
-	p, err := h.service.Read(ctx, connectPeer(ctx), ReadRequest{ViewID: req.ViewId, Cursor: req.Cursor, PageSize: int(req.PageSize)})
+	p, err := h.service.Read(ctx, connectPeer(ctx), req)
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return &pb.ReadResponse{Page: pageToProto(p)}, nil
+	return &pb.ReadResponse{Page: p}, nil
 }
 
 func (h *connectViews) Release(ctx context.Context, req *pb.ReleaseRequest) (*pb.ReleaseResponse, error) {

@@ -12,7 +12,8 @@ directly as `*bbolt.Bbolt`.
 Peer communication and permissioned tape borrowing are implemented in `pkg/a2a`.
 See [A2A integration](docs/a2a-integration.md) for setup, wire contract, and limits.
 The tape-view API has [protobuf and Connect bindings](proto/README.md), generated
-with pinned mise/Buf tools. Run `mise install`, `mise run proto-generate`, and
+with pinned mise/Buf tools. Service and Client use the generated protobuf
+messages directly. Run `mise install`, `mise run proto-generate`, and
 `mise run test` from the repository root.
 
 See [Agent team design](docs/agent-team.md) for the runtime and collaboration boundaries.
