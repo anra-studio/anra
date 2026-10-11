@@ -6,8 +6,8 @@ Anra is another multi-agent (or agent team) implementation upon the [tape-go](ht
 
 Anra uses tape-go's bbolt backend for runtime history and a bbolt database for
 indexed grant state and audit records. Grant queries run on demand without
-startup replay or an in-memory grant projection. Source storage decorators may
-wrap bbolt; other backends are rejected at startup.
+startup replay or an in-memory grant projection. Source storage is passed
+directly as `*bbolt.Bbolt`.
 
 Peer communication and permissioned tape borrowing are implemented in `pkg/a2a`.
 See [A2A integration](docs/a2a-integration.md) for setup, wire contract, and limits.

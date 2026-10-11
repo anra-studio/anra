@@ -13,7 +13,6 @@ import (
 	a "github.com/scbizu/anra/pkg/a2a"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
-	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	bolt "go.etcd.io/bbolt"
@@ -32,7 +31,7 @@ func openTape(t *testing.T, path, principal string) *bbolt.Bbolt {
 	return tape
 }
 
-func appendText(t *testing.T, tape storage.TapeStorage, principal, text string) {
+func appendText(t *testing.T, tape *bbolt.Bbolt, principal, text string) {
 	t.Helper()
 	if _, err := tape.Store(owner.WithOwnerId(context.Background(), principal), te.NewEntry(te.WithEntryKind(te.EntryUser), te.WithEntryOwner(principal), te.WithEntryContent(text))); err != nil {
 		t.Fatal(err)
@@ -43,7 +42,7 @@ func grantPolicy(start, end uint64) a.Policy {
 		return a.Selection{Status: a.Granted, Range: &tv.EntryRange{SeqS: seq(start), SeqE: seq(end)}, TTL: time.Hour}, nil
 	})
 }
-func config(tape storage.TapeStorage, journal *bolt.DB, policy a.Policy) a.Config {
+func config(tape *bbolt.Bbolt, journal *bolt.DB, policy a.Policy) a.Config {
 	return a.Config{Source: a.Source{AgentID: "researcher", TapeID: "opaque-incarnation-1"}, Owner: "local", Tape: tape, Journal: journal, JournalOwner: "grants", Policy: policy}
 }
 func service(t *testing.T, c a.Config) *a.Service {
@@ -57,12 +56,10 @@ func service(t *testing.T, c a.Config) *a.Service {
 func request() a.BorrowRequest {
 	return a.BorrowRequest{RequestID: "request-1", Purpose: "debug storage", Query: "bbolt"}
 }
-func closeTape(t *testing.T, tape storage.TapeStorage) {
+func closeTape(t *testing.T, tape *bbolt.Bbolt) {
 	t.Helper()
-	if b, ok := tape.(*bbolt.Bbolt); ok {
-		if err := b.Close(); err != nil {
-			t.Fatal(err)
-		}
+	if err := tape.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -251,42 +248,42 @@ func TestBorrowPreservesLargeSequences(t *testing.T) {
 	}
 }
 
-type changedTape struct {
-	storage.TapeStorage
-	changed bool
-	gapped  bool
-}
-
-func (s *changedTape) Range(c context.Context, r tv.EntryRange, opts ...storage.RangeBy) (tv.EntryView, error) {
-	v, err := s.TapeStorage.Range(c, r, opts...)
-	if s.changed && len(v.Raw) > 0 {
-		e := v.Raw[0]
-		v.Raw[0] = te.NewEntry(te.WithEntryID(e.GetID()), te.WithEntryOwner(e.GetOwner()), te.WithEntryKind(e.GetKind()), te.WithEntryContent("replaced"), te.WithEntryTimestamp(e.GetTimestamp()))
-	}
-	if s.gapped && len(v.Raw) > 0 {
-		v.Raw = v.Raw[1:]
-	}
-	return v, err
-}
 func TestFailClosedOnCorruptionAndSourceReplacement(t *testing.T) {
-	tape := openTape(t, filepath.Join(t.TempDir(), "source"), "local")
+	sourcePath := filepath.Join(t.TempDir(), "source")
+	tape := openTape(t, sourcePath, "local")
 	journal := openJournal(t, filepath.Join(t.TempDir(), "journal"))
 	appendText(t, tape, "local", "secret")
+	appendText(t, tape, "local", "snapshot head")
 	cfg := config(tape, journal, grantPolicy(1, 2))
-	source := &changedTape{TapeStorage: tape}
-	cfg.Tape = source
 	s := service(t, cfg)
-	d, err := s.Borrow(context.Background(), "borrower", request())
+	d, err := s.Borrow(t.Context(), "borrower", request())
 	if err != nil {
 		t.Fatal(err)
 	}
-	source.changed = true
-	if _, err := s.Read(context.Background(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrUnavailable) {
+	// Replace selected content without changing the snapshot head entry.
+	_, err = tape.Store(owner.WithOwnerId(t.Context(), "local"), te.NewEntry(te.WithEntryID(seq(1)), te.WithEntryOwner("local"), te.WithEntryKind(te.EntryUser), te.WithEntryContent("replaced")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Read(t.Context(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrUnavailable) {
 		t.Fatalf("source replacement = %v", err)
 	}
-	source.changed = false
-	source.gapped = true
-	if _, err := s.Read(context.Background(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrStorage) {
+	// Inject a real storage gap, then reopen the source with the same identity.
+	closeTape(t, tape)
+	raw := openJournal(t, sourcePath)
+	if err := raw.Update(func(tx *bolt.Tx) error {
+		entries := tx.Bucket([]byte("entries")).Bucket([]byte("local")).Bucket([]byte("session"))
+		k, _ := entries.Cursor().First()
+		return entries.Delete(k)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Tape = openTape(t, sourcePath, "local")
+	s = service(t, cfg)
+	if _, err := s.Read(t.Context(), "borrower", a.ReadRequest{ViewID: d.View.ID}); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("missing source entry = %v", err)
 	}
 	if err := journal.Update(func(tx *bolt.Tx) error {
@@ -296,10 +293,9 @@ func TestFailClosedOnCorruptionAndSourceReplacement(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Get(context.Background(), "borrower", request().RequestID); !errors.Is(err, a.ErrStorage) {
+	if _, err := s.Get(t.Context(), "borrower", request().RequestID); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("corrupt grant = %v", err)
 	}
-
 }
 func TestExportDoesNotLeakExtensionsAndRejectsUnsupportedKinds(t *testing.T) {
 	tape := openTape(t, filepath.Join(t.TempDir(), "source"), "local")
@@ -418,8 +414,6 @@ func TestBorrowKeepsCompleteSelectedView(t *testing.T) {
 		t.Fatalf("read %d entries, want complete view of %d", count, viewSize)
 	}
 }
-
-func (s *changedTape) Unwrap() storage.TapeStorage { return s.TapeStorage }
 
 func openJournal(t *testing.T, path string) *bolt.DB {
 	t.Helper()

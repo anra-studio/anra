@@ -7,9 +7,8 @@ another member's Tape view when authorized.
 ## Member runtime
 
 `agent.New(principal, storage, options...)` configures a member. Storage must
-be an initialized tape-go `*bbolt.Bbolt`, or a decorator implementing
-`storage.Unwrapper` whose underlying backend is bbolt. Other backends are
-rejected. The caller owns initialization and closure.
+be an initialized tape-go `*bbolt.Bbolt`. The constructor accepts that concrete
+type directly. The caller owns initialization and closure.
 `Run(ctx, input)` stores the user message and calls tape-go's neutral
 `Runner.RunTurn`. The Runner returns either final output or tool calls. Tool
 calls and results are stored on Tape before the next turn. Subsequent runs

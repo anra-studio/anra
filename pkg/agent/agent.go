@@ -2,28 +2,25 @@ package agent
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 
-	"github.com/scbizu/anra/internal/tapestorage"
-	"github.com/scbizu/tape-go/pkg/tape/storage"
+	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 )
 
 type Anra struct {
 	mu        sync.Mutex
 	principal string
-	tape      storage.TapeStorage
+	tape      *bbolt.Bbolt
 	runtime   runtimeConfig
 }
 
-// New requires an initialized bbolt tape. Storage decorators must implement
-// storage.Unwrapper and ultimately wrap bbolt. The caller closes the tape.
-func New(principal string, tape storage.TapeStorage, opts ...Option) (*Anra, error) {
+// New requires an initialized bbolt tape. The caller closes the tape.
+func New(principal string, tape *bbolt.Bbolt, opts ...Option) (*Anra, error) {
 	if principal == "" {
 		return nil, errors.New("agent: empty principal")
 	}
-	if err := tapestorage.RequireBbolt(tape); err != nil {
-		return nil, fmt.Errorf("agent: %w", err)
+	if tape == nil {
+		return nil, errors.New("agent: nil tape")
 	}
 	anra := &Anra{
 		principal: principal,

@@ -10,7 +10,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	a "github.com/scbizu/anra/pkg/a2a"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
-	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
+	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
 
@@ -62,7 +62,7 @@ func TestServiceStructValidationRejectsMissingDependencies(t *testing.T) {
 		func(c *a.Config) { c.Owner = "" },
 		func(c *a.Config) { c.JournalOwner = c.Owner },
 		func(c *a.Config) { c.Tape = nil },
-		func(c *a.Config) { var tape *changedTape; c.Tape = tape },
+		func(c *a.Config) { var tape *bbolt.Bbolt; c.Tape = tape },
 		func(c *a.Config) { c.Journal = nil },
 		func(c *a.Config) { c.Policy = nil },
 		func(c *a.Config) { var policy *a.BestRangePolicy; c.Policy = policy },
@@ -79,23 +79,5 @@ func assertStructValidation(t *testing.T, err error) {
 	var fields validator.ValidationErrors
 	if !errors.Is(err, a.ErrInvalidParams) || !errors.As(err, &fields) {
 		t.Fatalf("want ErrInvalidParams and field validation errors, got %v", err)
-	}
-}
-
-func TestServiceRejectsNonBboltStorage(t *testing.T) {
-	tape := openTape(t, filepath.Join(t.TempDir(), "source"), "local")
-	journal := openJournal(t, filepath.Join(t.TempDir(), "journal"))
-	unsupported, err := jsonl.NewJSONLStorage("session", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, change := range []func(*a.Config){
-		func(c *a.Config) { c.Tape = unsupported },
-	} {
-		cfg := config(tape, journal, grantPolicy(1, 2))
-		change(&cfg)
-		if _, err := a.NewService(cfg); !errors.Is(err, a.ErrInvalidParams) {
-			t.Fatalf("unsupported backend = %v", err)
-		}
 	}
 }

@@ -14,8 +14,8 @@ create A2A tasks.
 
 Initialize the source tape under the lender's **local** owner using tape-go's
 bbolt backend, then open a dedicated bbolt database for grants. `Config.Tape`
-accepts bbolt or decorators whose `storage.Unwrapper` chain ends in
-`*bbolt.Bbolt`; `Config.Journal` is an open `*bolt.DB` from `go.etcd.io/bbolt`.
+is an initialized `*bbolt.Bbolt`; `Config.Journal` is an open `*bolt.DB` from
+`go.etcd.io/bbolt`.
 `JournalOwner` namespaces grant buckets and is server configuration, never a
 value from a peer request body. The caller initializes/closes the source tape
 and opens/closes the grant database.

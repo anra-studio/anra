@@ -8,7 +8,6 @@ import (
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
-	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
 )
 
 func TestNewRejectsInvalidConfiguration(t *testing.T) {
@@ -36,14 +35,4 @@ func newStore(t *testing.T, principal string) *bbolt.Bbolt {
 		t.Fatal(err)
 	}
 	return store
-}
-
-func TestNewRejectsNonBboltStorage(t *testing.T) {
-	tape, err := jsonl.NewJSONLStorage("session", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := agent.New("p1", tape); err == nil {
-		t.Fatal("New() accepted JSONL storage")
-	}
 }

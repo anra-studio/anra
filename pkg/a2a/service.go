@@ -11,10 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/scbizu/anra/internal/tapestorage"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
-	"github.com/scbizu/tape-go/pkg/tape/storage"
+	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	bolt "go.etcd.io/bbolt"
 )
@@ -60,11 +59,11 @@ func (TextExporter) Export(e te.EntryLike) (ExportedEntry, error) {
 }
 
 // Config uses an initialized bbolt source tape and an open bbolt grant database.
-// The caller owns their lifetime. Source tape decorators may wrap bbolt.
+// The caller owns their lifetime.
 type Config struct {
-	Source Source              `validate:"required"`
-	Owner  string              `validate:"required"`
-	Tape   storage.TapeStorage `validate:"required,structonly"`
+	Source Source       `validate:"required"`
+	Owner  string       `validate:"required"`
+	Tape   *bbolt.Bbolt `validate:"required,structonly"`
 	// Journal holds indexed grant state and audit records, separate from the source.
 	Journal      *bolt.DB         `validate:"required,structonly"`
 	JournalOwner string           `validate:"required,nefield=Owner"`
@@ -96,9 +95,6 @@ type grantRecord struct {
 func NewService(c Config) (*Service, error) {
 	if err := validateStruct(c); err != nil {
 		return nil, err
-	}
-	if err := tapestorage.RequireBbolt(c.Tape); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidParams, err)
 	}
 	if c.Exporter == nil {
 		c.Exporter = TextExporter{}
