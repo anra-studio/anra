@@ -225,8 +225,12 @@ advertises `/anra.a2a.tape.v1.TapeViewService` as its single Connect service
 endpoint; `/a2a` remains the SDK's core endpoint. The integration pins the official Go SDK at v2.5.0.
 
 Grants and decisions are persisted in a dedicated indexed bbolt journal, separate from
-source context. Source identity is provisioned by the application and pinned
-with session/head/content fingerprints. The default exporter shares only
+source context. Source identity is provisioned by the application; a grant
+references the tape by that identity, snapshot head and range. The tape is
+append-only, so the reference identifies the content and grants carry no
+session, exporter or content fingerprints. The journal holds three record kinds:
+a grant (immutable), request state (pending or denied) and a release. The
+default exporter shares only
 user/assistant summaries; other payloads require a deterministic typed exporter.
 Limits and error codes are fixed in the integration contract linked above.
 

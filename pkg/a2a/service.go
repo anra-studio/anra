@@ -4,22 +4,21 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 	"uuid"
 
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	"github.com/scbizu/anra/pkg/model/journal"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	bolt "go.etcd.io/bbolt"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-const journalKind = "anra:tape-view-grant/v1"
 
 // Selection is the lender's permission decision, made before reading/exporting
 // entries. One best permitted anchor range may be selected in v1.
@@ -38,14 +37,14 @@ func (f PolicyFunc) Select(c context.Context, p string, r *pb.BorrowRequest, h t
 }
 
 // Exporter defines an explicitly allowed representation. It must be deterministic
-// and must not export arbitrary CustomEntry.Extensions. Its Name is persisted.
+// and must not export arbitrary CustomEntry.Extensions. It is service
+// configuration, not part of a grant: a grant references tape ranges, and each
+// read projects them with the exporter configured at the time.
 type Exporter interface {
-	Name() string
 	Export(te.EntryLike) (*pb.ExportedEntry, error)
 }
 type TextExporter struct{}
 
-func (TextExporter) Name() string { return "anra:text-summary/v1" }
 func (TextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
 	switch e.GetKind() {
 	case te.EntryUser, te.EntryAssistant:
@@ -59,18 +58,46 @@ func (TextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
 	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Summary: e.GetSummary(), Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: TextMediaType, JsonData: data}}, nil
 }
 
-// Config uses an initialized bbolt source tape and an open bbolt grant database.
-// The caller owns their lifetime.
+// Journal is the durable grant store a Service publishes to. *journal.Store is
+// the bundled bbolt implementation; a store on a server database implements the
+// same contract.
+//
+// An implementation must apply Decide and Release atomically, comparing previous
+// inside that transaction, and must report a concurrent change as
+// journal.ErrConflict and a storage failure as journal.ErrStorage, which a
+// Service maps onto its public errors.
+type Journal interface {
+	// Source is the tape identity the store is bound to.
+	Source() *pb.Source
+	// RequestGrant loads the current outcome of one request.
+	RequestGrant(ctx context.Context, requester, requestID string) (journal.State, bool, error)
+	// ViewGrant loads the grant that issued viewID and whether requester holds it.
+	ViewGrant(ctx context.Context, requester, viewID string) (journal.State, bool, error)
+	// Decide records a request's outcome, or fails with ErrConflict.
+	Decide(ctx context.Context, requester string, req *pb.BorrowRequest, d *pb.Decision, previous *journal.State) error
+	// Release ends the grant held by st.
+	Release(ctx context.Context, st journal.State) error
+}
+
+// The bbolt store in pkg/model/journal is the reference implementation.
+var _ Journal = (*journal.Store)(nil)
+
+// Config uses an initialized bbolt source tape and a grant journal. Configure
+// the journal either as a path this service opens, or as an already open store
+// it shares; the source tape and a shared store stay the caller's to close.
 type Config struct {
 	Source *pb.Source   `validate:"required,structonly"`
 	Owner  string       `validate:"required"`
 	Tape   *bbolt.Bbolt `validate:"required,structonly"`
-	// Journal holds indexed grant state and audit records, separate from the source.
-	Journal      *bolt.DB         `validate:"required,structonly"`
-	JournalOwner string           `validate:"required,nefield=Owner"`
-	Policy       Policy           `validate:"required,structonly"`
-	Exporter     Exporter         `validate:"-"`
-	Now          func() time.Time `validate:"-"`
+	// JournalPath opens a journal database file and binds it to Source. The
+	// service owns that file; Close releases it.
+	JournalPath string `validate:"excluded_with=Journal"`
+	// Journal is an open store bound to Source, shared with other services and
+	// owned by the caller, which closes it.
+	Journal  Journal          `validate:"required_without=JournalPath,excluded_with=JournalPath"`
+	Policy   Policy           `validate:"required,structonly"`
+	Exporter Exporter         `validate:"-"`
+	Now      func() time.Time `validate:"-"`
 }
 
 // Service queries durable grant indexes on demand; no journal entries or grant
@@ -78,44 +105,75 @@ type Config struct {
 type Service struct {
 	mu     sync.Mutex
 	config Config
-}
-
-type grantRecord struct {
-	Schema    string            `json:"schema"`
-	Source    *pb.Source        `json:"source"`
-	Requester string            `json:"requester"`
-	Request   *pb.BorrowRequest `json:"request"`
-	Decision  *pb.Decision      `json:"decision"`
-	Session   string            `json:"session,omitempty"`
-	HeadHash  string            `json:"headHash,omitempty"`
-	EntryHash string            `json:"entryHash,omitempty"`
-	Codec     string            `json:"codec,omitempty"`
-	Closed    bool              `json:"closed,omitempty"`
+	// closeJournal releases a journal database this service opened from a path.
+	closeJournal func() error
 }
 
 func NewService(c Config) (*Service, error) {
 	if err := validateStruct(c); err != nil {
 		return nil, err
 	}
-	if err := validateStruct(storeSource(c.Source)); err != nil {
+	if err := validateMessage(c.Source); err != nil {
+		return nil, err
+	}
+	store, closer, err := openJournal(c)
+	if err != nil {
 		return nil, err
 	}
 	c.Source = proto.Clone(c.Source).(*pb.Source)
+	c.Journal = store
 	if c.Exporter == nil {
 		c.Exporter = TextExporter{}
-	}
-	if c.Exporter.Name() == "" {
-		return nil, ErrInvalidParams
 	}
 	if c.Now == nil {
 		c.Now = time.Now
 	}
-	return &Service{config: c}, nil
+	return &Service{config: c, closeJournal: closer}, nil
+}
+
+// openJournal resolves the grant journal: a supplied store is shared and stays
+// the caller's, a path opens a file this service closes.
+func openJournal(c Config) (Journal, func() error, error) {
+	if c.Journal != nil {
+		if !proto.Equal(c.Journal.Source(), c.Source) {
+			return nil, nil, fmt.Errorf("%w: journal is bound to another source tape", ErrInvalidParams)
+		}
+		return c.Journal, nil, nil
+	}
+	store, err := journal.Open(c.JournalPath, c.Source)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, store.Close, nil
+}
+
+// Close releases the journal database this service opened from Config.JournalPath.
+// A store supplied in Config.Journal is left open: the caller owns it.
+func (s *Service) Close() error {
+	if s.closeJournal == nil {
+		return nil
+	}
+	return s.closeJournal()
 }
 func (s *Service) tapeCtx(ctx context.Context) context.Context {
 	return owner.WithOwnerId(ctx, s.config.Owner)
 }
 func storageError(err error) error { return fmt.Errorf("%w: %v", ErrStorage, err) }
+
+// journalFailure maps the journal's error contract onto this package's, so
+// callers keep seeing only the public error categories.
+func journalFailure(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, journal.ErrConflict):
+		return ErrConflict
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return err
+	default:
+		return storageError(err)
+	}
+}
 func (s *Service) head(ctx context.Context) (tv.TapeView, error) {
 	v, err := s.config.Tape.Get(s.tapeCtx(ctx))
 	if err != nil {
@@ -135,15 +193,15 @@ func (s *Service) Borrow(ctx context.Context, p string, req *pb.BorrowRequest) (
 	if err := validateMessage(req); err != nil {
 		return nil, err
 	}
-	r, ok, err := s.requestGrant(ctx, p, req.RequestId)
+	st, ok, err := s.config.Journal.RequestGrant(ctx, p, req.RequestId)
 	if err != nil {
-		return nil, err
+		return nil, journalFailure(err)
 	}
 	if ok {
-		if !proto.Equal(r.Request, req) {
+		if !proto.Equal(st.Request, req) {
 			return nil, ErrConflict
 		}
-		return r.Decision, nil
+		return st.Decision, nil
 	}
 	h, err := s.head(ctx)
 	if err != nil {
@@ -154,155 +212,95 @@ func (s *Service) Borrow(ctx context.Context, p string, req *pb.BorrowRequest) (
 	if err != nil {
 		return nil, err
 	}
-	r, err = s.decide(ctx, p, req, sel, h)
+	d, err := s.decide(ctx, req, sel, head)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.append(ctx, r, nil); err != nil {
-		return nil, err
+	if err := s.config.Journal.Decide(ctx, p, req, d, nil); err != nil {
+		return nil, journalFailure(err)
 	}
-	return r.Decision, nil
+	return d, nil
 }
-func (s *Service) decide(ctx context.Context, p string, req *pb.BorrowRequest, sel Selection, h tv.TapeView) (grantRecord, error) {
-	head := h.Scope.SeqE
-	r := grantRecord{Schema: journalKind, Source: proto.Clone(s.config.Source).(*pb.Source), Requester: p, Request: proto.Clone(req).(*pb.BorrowRequest), Decision: &pb.Decision{RequestId: req.RequestId, Status: sel.Status}}
+
+// decide validates a policy selection against the tape and builds its decision.
+func (s *Service) decide(ctx context.Context, req *pb.BorrowRequest, sel Selection, head te.Seq) (*pb.Decision, error) {
+	d := &pb.Decision{RequestId: req.RequestId, Status: sel.Status}
 	if sel.Status == Pending || sel.Status == Denied {
 		if sel.Range != nil {
-			return r, ErrInvalidParams
+			return nil, ErrInvalidParams
 		}
-		return r, nil
+		return d, nil
 	}
 	if sel.Status != Granted || sel.TTL <= 0 || sel.TTL > 24*time.Hour {
-		return r, ErrInvalidParams
+		return nil, ErrInvalidParams
 	}
 	ranges := []*pb.EntryRange{}
 	if sel.Range != nil {
 		b := *sel.Range
 		if !validRange(b, head) {
-			return r, ErrInvalidParams
+			return nil, ErrInvalidParams
 		}
 		if req.Bounds != nil {
 			bounds, err := rangeFromProto(req.Bounds)
 			if err != nil || b.SeqS.Cmp(bounds.SeqS) < 0 || b.SeqE.Cmp(bounds.SeqE) > 0 {
-				return r, ErrInvalidParams
+				return nil, ErrInvalidParams
 			}
 		}
 		ranges = append(ranges, rangeToProto(b))
 	}
-	r.Decision.View = &pb.View{ViewId: uuid.New().String(), Source: proto.Clone(r.Source).(*pb.Source), SnapshotHead: head.String(), Ranges: ranges, ExpiresAt: timestamppb.New(s.config.Now().UTC().Add(sel.TTL))}
-	r.Session = h.SessionID
-	r.Codec = s.config.Exporter.Name()
-	headHash, err := s.headHash(ctx, head)
-	if err != nil {
-		return r, err
+	d.View = &pb.View{ViewId: uuid.New().String(), Source: proto.Clone(s.config.Source).(*pb.Source), SnapshotHead: head.String(), Ranges: ranges, ExpiresAt: timestamppb.New(s.config.Now().UTC().Add(sel.TTL))}
+	// The selected range must exist and be exportable now; Read exports it again.
+	if _, err := s.entries(ctx, d.View); err != nil {
+		return nil, err
 	}
-	r.HeadHash = headHash
-	_, entryHash, err := s.entries(ctx, r.Decision.View)
-	if err != nil {
-		return r, err
-	}
-	r.EntryHash = entryHash
-	// Recheck metadata and head contents after selection/export, before committing.
-	if err := s.checkSource(ctx, r); err != nil {
-		return r, err
-	}
-	return r, nil
+	return d, nil
 }
-func (s *Service) headHash(ctx context.Context, head te.Seq) (string, error) {
-	if head.IsZero() {
-		return fingerprint([]byte(`"empty"`)), nil
-	}
-	v, err := s.config.Tape.Range(s.tapeCtx(ctx), tv.EntryRange{SeqS: head, SeqE: head.Next()})
-	if err != nil {
-		return "", storageError(err)
-	}
-	if len(v.Raw) != 1 || v.Raw[0].GetID() != head || v.Raw[0].GetOwner() != s.config.Owner {
-		return "", ErrStorage
-	}
-	e := v.Raw[0]
-	encoded, err := json.Marshal(struct {
-		Seq  te.Seq
-		Kind string
-		Text string
-		Time time.Time
-	}{head, string(e.GetKind()), e.GetSummary(), e.GetTimestamp()})
-	if err != nil {
-		return "", storageError(err)
-	}
-	return fingerprint(encoded), nil
-}
-func (s *Service) entries(ctx context.Context, v *pb.View) ([]*pb.ExportedEntry, string, error) {
+func (s *Service) entries(ctx context.Context, v *pb.View) ([]*pb.ExportedEntry, error) {
 	out := []*pb.ExportedEntry{}
-	digest := newEntryFingerprint()
 	for _, bounds := range v.Ranges {
 		b, err := rangeFromProto(bounds)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		raw, err := s.config.Tape.Range(s.tapeCtx(ctx), b)
 		if err != nil {
-			return nil, "", storageError(err)
+			return nil, storageError(err)
 		}
 		expected := b.SeqS
 		for _, e := range raw.Raw {
 			if e == nil || expected.Cmp(b.SeqE) >= 0 || e.GetOwner() != s.config.Owner || e.GetID() != expected {
-				return nil, "", ErrStorage
+				return nil, ErrStorage
 			}
 			x, err := s.config.Exporter.Export(e)
 			if err != nil {
-				return nil, "", err
+				return nil, err
 			}
 			if x == nil || validateEntry(x) != nil || x.Seq != e.GetID().String() || x.Kind != string(e.GetKind()) || !x.Timestamp.AsTime().Equal(e.GetTimestamp()) {
-				return nil, "", ErrUnsupported
+				return nil, ErrUnsupported
 			}
 			stored, err := storeEntry(x)
 			if err != nil {
-				return nil, "", err
+				return nil, err
 			}
-			// Preserve the original tape timestamp representation in legacy fingerprints.
-			stored.Timestamp = e.GetTimestamp()
 			encoded, err := json.Marshal(stored)
 			if err != nil || len(encoded) > MaxEntryBytes {
-				return nil, "", ErrUnsupported
+				return nil, ErrUnsupported
 			}
-			digest.add(encoded)
 			out = append(out, x)
 			expected = expected.Next()
 		}
 		if expected != b.SeqE {
-			return nil, "", ErrStorage
+			return nil, ErrStorage
 		}
 	}
-	return out, digest.sum(), nil
-}
-func (s *Service) checkSource(ctx context.Context, r grantRecord) error {
-	h, err := s.head(ctx)
-	if err != nil {
-		return err
-	}
-	head := h.Scope.SeqE
-	snapshot, err := te.ParseSeq(r.Decision.View.SnapshotHead)
-	if err != nil {
-		return ErrStorage
-	}
-	if h.SessionID != r.Session || head.Cmp(snapshot) < 0 || r.Codec != s.config.Exporter.Name() {
-		return ErrUnavailable
-	}
-	hh, err := s.headHash(ctx, snapshot)
-	if err != nil {
-		return err
-	}
-	if hh != r.HeadHash {
-		return ErrUnavailable
-	}
-	return nil
+	return out, nil
 }
 func (s *Service) Get(ctx context.Context, p, requestID string) (*pb.Decision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok, err := s.requestGrant(ctx, p, requestID)
+	r, ok, err := s.config.Journal.RequestGrant(ctx, p, requestID)
 	if err != nil {
-		return nil, err
+		return nil, journalFailure(err)
 	}
 	if p == "" || !ok {
 		return nil, ErrUnavailable
@@ -314,9 +312,9 @@ func (s *Service) Get(ctx context.Context, p, requestID string) (*pb.Decision, e
 func (s *Service) Resolve(ctx context.Context, p, requestID string, sel Selection) (*pb.Decision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok, err := s.requestGrant(ctx, p, requestID)
+	r, ok, err := s.config.Journal.RequestGrant(ctx, p, requestID)
 	if err != nil {
-		return nil, err
+		return nil, journalFailure(err)
 	}
 	if !ok {
 		return nil, ErrUnavailable
@@ -328,15 +326,14 @@ func (s *Service) Resolve(ctx context.Context, p, requestID string, sel Selectio
 	if err != nil {
 		return nil, err
 	}
-	previous := r
-	r, err = s.decide(ctx, p, r.Request, sel, h)
+	d, err := s.decide(ctx, r.Request, sel, h.Scope.SeqE)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.append(ctx, r, &previous); err != nil {
-		return nil, err
+	if err := s.config.Journal.Decide(ctx, p, r.Request, d, &r); err != nil {
+		return nil, journalFailure(err)
 	}
-	return r.Decision, nil
+	return d, nil
 }
 
 type cursor struct {
@@ -355,22 +352,16 @@ func (s *Service) Read(ctx context.Context, p string, req *pb.ReadRequest) (*pb.
 	if pageSize == 0 {
 		pageSize = 32
 	}
-	r, ok, err := s.viewGrant(ctx, p, req.ViewId)
+	r, ok, err := s.config.Journal.ViewGrant(ctx, p, req.ViewId)
 	if err != nil {
-		return nil, err
+		return nil, journalFailure(err)
 	}
-	if p == "" || !ok || r.Closed || !s.config.Now().Before(r.Decision.View.ExpiresAt.AsTime()) {
+	if p == "" || !ok || r.Released || !s.config.Now().Before(r.Decision.View.ExpiresAt.AsTime()) {
 		return nil, ErrUnavailable
 	}
-	if err := s.checkSource(ctx, r); err != nil {
-		return nil, err
-	}
-	entries, entryHash, err := s.entries(ctx, r.Decision.View)
+	entries, err := s.entries(ctx, r.Decision.View)
 	if err != nil {
 		return nil, err
-	}
-	if entryHash != r.EntryHash {
-		return nil, ErrUnavailable
 	}
 	offset := 0
 	if req.Cursor != "" {
@@ -388,7 +379,7 @@ func (s *Service) Read(ctx context.Context, p string, req *pb.ReadRequest) (*pb.
 		offset = c.Offset
 	}
 	end := min(offset+int(pageSize), len(entries))
-	page := &pb.Page{ViewId: req.ViewId, Source: proto.Clone(r.Source).(*pb.Source), SnapshotHead: r.Decision.View.SnapshotHead, Entries: entries[offset:end]}
+	page := &pb.Page{ViewId: req.ViewId, Source: proto.Clone(r.Decision.View.Source).(*pb.Source), SnapshotHead: r.Decision.View.SnapshotHead, Entries: entries[offset:end]}
 	if end < len(entries) {
 		b, _ := json.Marshal(cursor{req.ViewId, te.MustParseSeq(page.SnapshotHead), end})
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(b)
@@ -396,23 +387,21 @@ func (s *Service) Read(ctx context.Context, p string, req *pb.ReadRequest) (*pb.
 	return page, nil
 }
 
-// Release and Revoke persist the same terminal grant closure; only Release is
+// Release and Revoke persist the same terminal grant release; only Release is
 // available to the authenticated borrower over RPC.
 func (s *Service) Release(ctx context.Context, p, vid string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok, err := s.viewGrant(ctx, p, vid)
+	r, ok, err := s.config.Journal.ViewGrant(ctx, p, vid)
 	if err != nil {
-		return err
+		return journalFailure(err)
 	}
 	if p == "" || !ok {
 		return ErrUnavailable
 	}
-	if r.Closed {
+	if r.Released {
 		return nil
 	}
-	previous := r
-	r.Closed = true
-	return s.append(ctx, r, &previous)
+	return journalFailure(s.config.Journal.Release(ctx, r))
 }
 func (s *Service) Revoke(ctx context.Context, p, vid string) error { return s.Release(ctx, p, vid) }

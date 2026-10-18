@@ -18,8 +18,8 @@ service TapeViewService {
 }
 
 message Source {
-  string agent_id = 1;
-  string tape_id = 2;
+  string agent_id = 1 [(buf.validate.field).string.min_bytes = 1];
+  string tape_id = 2 [(buf.validate.field).string.min_bytes = 1];
 }
 
 // Sequences are canonical unsigned decimal strings of arbitrary precision.
@@ -35,12 +35,12 @@ message EntryRange {
 }
 
 message View {
-  string view_id = 1;
-  Source source = 2;
-  string snapshot_head = 3;
+  string view_id = 1 [(buf.validate.field).string.min_bytes = 1];
+  Source source = 2 [(buf.validate.field).required = true];
+  string snapshot_head = 3 [(buf.validate.field).string.pattern = "^(0|[1-9][0-9]*)$"];
   // A grant currently contains at most one bounded range.
-  repeated EntryRange ranges = 4;
-  google.protobuf.Timestamp expires_at = 5;
+  repeated EntryRange ranges = 4 [(buf.validate.field).repeated.max_items = 1];
+  google.protobuf.Timestamp expires_at = 5 [(buf.validate.field).required = true];
 }
 
 enum DecisionStatus {
@@ -51,8 +51,19 @@ enum DecisionStatus {
 }
 
 message Decision {
-  string request_id = 1;
-  DecisionStatus status = 2;
+  option (buf.validate.message).cel = {
+    id: "decision.view_presence"
+    message: "view must be present exactly when status is granted"
+    expression: "(this.status == 1) == has(this.view)"
+  };
+  string request_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+  }];
+  DecisionStatus status = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
   // Present only for granted decisions.
   View view = 3;
 }
@@ -74,7 +85,7 @@ message BorrowRequest {
 }
 
 message BorrowResponse {
-  Decision decision = 1;
+  Decision decision = 1 [(buf.validate.field).required = true];
 }
 
 message GetRequest {
@@ -85,7 +96,7 @@ message GetRequest {
 }
 
 message GetResponse {
-  Decision decision = 1;
+  Decision decision = 1 [(buf.validate.field).required = true];
 }
 
 message ReadRequest {
@@ -100,29 +111,29 @@ message ReadRequest {
 
 // Payload preserves the exact JSON representation without numeric coercion.
 message Payload {
-  string media_type = 1;
-  bytes json_data = 2;
+  string media_type = 1 [(buf.validate.field).string.min_bytes = 1];
+  bytes json_data = 2 [(buf.validate.field).bytes.min_len = 1];
 }
 
 // Only public projections are exported; no local owner or custom extensions.
 message ExportedEntry {
-  string seq = 1;
+  string seq = 1 [(buf.validate.field).string.pattern = "^(0|[1-9][0-9]*)$"];
   string kind = 2;
   string summary = 3;
-  google.protobuf.Timestamp timestamp = 4;
+  google.protobuf.Timestamp timestamp = 4 [(buf.validate.field).required = true];
   Payload payload = 5;
 }
 
 message Page {
-  string view_id = 1;
-  Source source = 2;
-  string snapshot_head = 3;
+  string view_id = 1 [(buf.validate.field).string.min_bytes = 1];
+  Source source = 2 [(buf.validate.field).required = true];
+  string snapshot_head = 3 [(buf.validate.field).string.pattern = "^(0|[1-9][0-9]*)$"];
   repeated ExportedEntry entries = 4;
   string next_cursor = 5;
 }
 
 message ReadResponse {
-  Page page = 1;
+  Page page = 1 [(buf.validate.field).required = true];
 }
 
 message ReleaseRequest {

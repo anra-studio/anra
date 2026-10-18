@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strings"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -15,17 +14,6 @@ import (
 type Authenticate func(*http.Request) (string, error)
 
 const CorePath = "/a2a"
-
-func activated(h http.Header) bool {
-	for _, v := range h.Values(ExtensionHeader) {
-		for _, uri := range strings.Split(v, ",") {
-			if strings.TrimSpace(uri) == ExtensionURI {
-				return true
-			}
-		}
-	}
-	return false
-}
 
 // Advertise adds the optional tape-view extension without replacing core SDK
 // types or changing other capabilities. The endpoint must be a Connect service URL.

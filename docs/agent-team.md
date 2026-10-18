@@ -30,6 +30,25 @@ permissioned Tape borrowing belong to `pkg/a2a`; members need no shared team
 Tape or mandatory coordinator. A coordinating member can use tools to request
 work from peers.
 
+## Trust model
+
+An Anra team is a set of trusted members. Tape is not opened to external
+parties, so A2A responses from a member are treated as well-formed and honest.
+The tape-view client checks only what it needs to proceed and does not defend
+against a hostile peer:
+
+- Responses are checked against the protobuf schema (Protovalidate) and nothing
+  more. Decision correlation, timestamp and range validity, payload JSON syntax,
+  and the `view_id`, `source` and `snapshot_head` echoed on each page are not
+  re-validated.
+- `ReadView` still checks entry order and range coverage, because it needs them
+  to assemble the granted range and to stop paging.
+- The service still authenticates the requester and enforces grants, expiry and
+  export limits. Trust in peers does not widen what a member may read.
+
+External or untrusted tapes would need these client checks restored, together
+with per-peer credentials and redirect handling. That is out of scope today.
+
 Tape storage, View handling, and memory checkpointing/retrieval belong to
 tape-go. Its decision extension can be configured at the storage boundary;
 Anra does not duplicate its memory policy or index.

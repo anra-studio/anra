@@ -922,27 +922,30 @@ var File_anra_a2a_tape_v1_tape_proto protoreflect.FileDescriptor
 
 const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\n" +
-	"\x1banra/a2a/tape/v1/tape.proto\x12\x10anra.a2a.tape.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"<\n" +
-	"\x06Source\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
-	"\atape_id\x18\x02 \x01(\tR\x06tapeId\"\x85\x02\n" +
+	"\x1banra/a2a/tape/v1/tape.proto\x12\x10anra.a2a.tape.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"N\n" +
+	"\x06Source\x12\"\n" +
+	"\bagent_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\aagentId\x12 \n" +
+	"\atape_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06tapeId\"\x85\x02\n" +
 	"\n" +
 	"EntryRange\x12)\n" +
 	"\x05seq_s\x18\x01 \x01(\tB\x14\xbaH\x11r\x0f2\r^[1-9][0-9]*$R\x04seqS\x12)\n" +
 	"\x05seq_e\x18\x02 \x01(\tB\x14\xbaH\x11r\x0f2\r^[1-9][0-9]*$R\x04seqE:\xa0\x01\xbaH\x9c\x01\x1a\x99\x01\n" +
-	"\x13entry_range.ordered\x12\x18seq_s must precede seq_e\x1ahsize(this.seq_s) < size(this.seq_e) || (size(this.seq_s) == size(this.seq_e) && this.seq_s < this.seq_e)\"\xe7\x01\n" +
-	"\x04View\x12\x17\n" +
-	"\aview_id\x18\x01 \x01(\tR\x06viewId\x120\n" +
-	"\x06source\x18\x02 \x01(\v2\x18.anra.a2a.tape.v1.SourceR\x06source\x12#\n" +
-	"\rsnapshot_head\x18\x03 \x01(\tR\fsnapshotHead\x124\n" +
-	"\x06ranges\x18\x04 \x03(\v2\x1c.anra.a2a.tape.v1.EntryRangeR\x06ranges\x129\n" +
+	"\x13entry_range.ordered\x12\x18seq_s must precede seq_e\x1ahsize(this.seq_s) < size(this.seq_e) || (size(this.seq_s) == size(this.seq_e) && this.seq_s < this.seq_e)\"\xa4\x02\n" +
+	"\x04View\x12 \n" +
+	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\x128\n" +
+	"\x06source\x18\x02 \x01(\v2\x18.anra.a2a.tape.v1.SourceB\x06\xbaH\x03\xc8\x01\x01R\x06source\x12=\n" +
+	"\rsnapshot_head\x18\x03 \x01(\tB\x18\xbaH\x15r\x132\x11^(0|[1-9][0-9]*)$R\fsnapshotHead\x12>\n" +
+	"\x06ranges\x18\x04 \x03(\v2\x1c.anra.a2a.tape.v1.EntryRangeB\b\xbaH\x05\x92\x01\x02\x10\x01R\x06ranges\x12A\n" +
 	"\n" +
-	"expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"\x8f\x01\n" +
-	"\bDecision\x12\x1d\n" +
+	"expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\texpiresAt\"\xa1\x02\n" +
+	"\bDecision\x12)\n" +
 	"\n" +
-	"request_id\x18\x01 \x01(\tR\trequestId\x128\n" +
-	"\x06status\x18\x02 \x01(\x0e2 .anra.a2a.tape.v1.DecisionStatusR\x06status\x12*\n" +
-	"\x04view\x18\x03 \x01(\v2\x16.anra.a2a.tape.v1.ViewR\x04view\"\xb8\x01\n" +
+	"request_id\x18\x01 \x01(\tB\n" +
+	"\xbaH\ar\x05 \x01(\x80\x02R\trequestId\x12D\n" +
+	"\x06status\x18\x02 \x01(\x0e2 .anra.a2a.tape.v1.DecisionStatusB\n" +
+	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06status\x12*\n" +
+	"\x04view\x18\x03 \x01(\v2\x16.anra.a2a.tape.v1.ViewR\x04view:x\xbaHu\x1as\n" +
+	"\x16decision.view_presence\x123view must be present exactly when status is granted\x1a$(this.status == 1) == has(this.view)\"\xb8\x01\n" +
 	"\rBorrowRequest\x12)\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tB\n" +
@@ -951,39 +954,39 @@ const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\xbaH\ar\x05 \x01(\x80@R\apurpose\x12 \n" +
 	"\x05query\x18\x03 \x01(\tB\n" +
 	"\xbaH\ar\x05 \x01(\x80@R\x05query\x124\n" +
-	"\x06bounds\x18\x04 \x01(\v2\x1c.anra.a2a.tape.v1.EntryRangeR\x06bounds\"H\n" +
-	"\x0eBorrowResponse\x126\n" +
-	"\bdecision\x18\x01 \x01(\v2\x1a.anra.a2a.tape.v1.DecisionR\bdecision\"7\n" +
+	"\x06bounds\x18\x04 \x01(\v2\x1c.anra.a2a.tape.v1.EntryRangeR\x06bounds\"P\n" +
+	"\x0eBorrowResponse\x12>\n" +
+	"\bdecision\x18\x01 \x01(\v2\x1a.anra.a2a.tape.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"7\n" +
 	"\n" +
 	"GetRequest\x12)\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tB\n" +
-	"\xbaH\ar\x05 \x01(\x80\x02R\trequestId\"E\n" +
-	"\vGetResponse\x126\n" +
-	"\bdecision\x18\x01 \x01(\v2\x1a.anra.a2a.tape.v1.DecisionR\bdecision\"o\n" +
+	"\xbaH\ar\x05 \x01(\x80\x02R\trequestId\"M\n" +
+	"\vGetResponse\x12>\n" +
+	"\bdecision\x18\x01 \x01(\v2\x1a.anra.a2a.tape.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"o\n" +
 	"\vReadRequest\x12 \n" +
 	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\x12\x16\n" +
 	"\x06cursor\x18\x02 \x01(\tR\x06cursor\x12&\n" +
-	"\tpage_size\x18\x03 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x00R\bpageSize\"E\n" +
-	"\aPayload\x12\x1d\n" +
+	"\tpage_size\x18\x03 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x00R\bpageSize\"W\n" +
+	"\aPayload\x12&\n" +
 	"\n" +
-	"media_type\x18\x01 \x01(\tR\tmediaType\x12\x1b\n" +
-	"\tjson_data\x18\x02 \x01(\fR\bjsonData\"\xbe\x01\n" +
-	"\rExportedEntry\x12\x10\n" +
-	"\x03seq\x18\x01 \x01(\tR\x03seq\x12\x12\n" +
+	"media_type\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\tmediaType\x12$\n" +
+	"\tjson_data\x18\x02 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\bjsonData\"\xe0\x01\n" +
+	"\rExportedEntry\x12*\n" +
+	"\x03seq\x18\x01 \x01(\tB\x18\xbaH\x15r\x132\x11^(0|[1-9][0-9]*)$R\x03seq\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x18\n" +
-	"\asummary\x18\x03 \x01(\tR\asummary\x128\n" +
-	"\ttimestamp\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x123\n" +
-	"\apayload\x18\x05 \x01(\v2\x19.anra.a2a.tape.v1.PayloadR\apayload\"\xd2\x01\n" +
-	"\x04Page\x12\x17\n" +
-	"\aview_id\x18\x01 \x01(\tR\x06viewId\x120\n" +
-	"\x06source\x18\x02 \x01(\v2\x18.anra.a2a.tape.v1.SourceR\x06source\x12#\n" +
-	"\rsnapshot_head\x18\x03 \x01(\tR\fsnapshotHead\x129\n" +
+	"\asummary\x18\x03 \x01(\tR\asummary\x12@\n" +
+	"\ttimestamp\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\ttimestamp\x123\n" +
+	"\apayload\x18\x05 \x01(\v2\x19.anra.a2a.tape.v1.PayloadR\apayload\"\xfd\x01\n" +
+	"\x04Page\x12 \n" +
+	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\x128\n" +
+	"\x06source\x18\x02 \x01(\v2\x18.anra.a2a.tape.v1.SourceB\x06\xbaH\x03\xc8\x01\x01R\x06source\x12=\n" +
+	"\rsnapshot_head\x18\x03 \x01(\tB\x18\xbaH\x15r\x132\x11^(0|[1-9][0-9]*)$R\fsnapshotHead\x129\n" +
 	"\aentries\x18\x04 \x03(\v2\x1f.anra.a2a.tape.v1.ExportedEntryR\aentries\x12\x1f\n" +
 	"\vnext_cursor\x18\x05 \x01(\tR\n" +
-	"nextCursor\":\n" +
-	"\fReadResponse\x12*\n" +
-	"\x04page\x18\x01 \x01(\v2\x16.anra.a2a.tape.v1.PageR\x04page\"2\n" +
+	"nextCursor\"B\n" +
+	"\fReadResponse\x122\n" +
+	"\x04page\x18\x01 \x01(\v2\x16.anra.a2a.tape.v1.PageB\x06\xbaH\x03\xc8\x01\x01R\x04page\"2\n" +
 	"\x0eReleaseRequest\x12 \n" +
 	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\"-\n" +
 	"\x0fReleaseResponse\x12\x1a\n" +

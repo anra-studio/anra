@@ -3,13 +3,15 @@ module github.com/scbizu/anra
 go 1.27.0
 
 require (
-	buf.build/go/protovalidate v1.4.0
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
+	buf.build/go/protovalidate v1.4.0
 	connectrpc.com/connect/v2 v2.0.0-rc.1
 	connectrpc.com/validate v0.8.0-rc.1
 	github.com/a2aproject/a2a-go/v2 v2.5.0
 	github.com/go-playground/validator/v10 v10.30.5
+	github.com/samber/lo v1.53.0
 	github.com/scbizu/tape-go v0.2.0-anra.2
+	github.com/timshannon/bolthold v0.0.0-20240314194003-30aac6950928
 	go.etcd.io/bbolt v1.5.0
 	google.golang.org/protobuf v1.36.12
 )
@@ -23,8 +25,6 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
-	github.com/simonfrey/jsonl v0.0.0-20240904112901-935399b9a740 // indirect
-	github.com/spf13/afero v1.15.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260820142414-ca536658362e // indirect

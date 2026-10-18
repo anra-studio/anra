@@ -60,13 +60,11 @@ func TestServiceStructValidationRejectsMissingDependencies(t *testing.T) {
 	journal := openJournal(t, filepath.Join(t.TempDir(), "journal"))
 	for _, change := range []func(*a.Config){
 		func(c *a.Config) { c.Source = nil },
-		func(c *a.Config) { c.Source.AgentId = "" },
-		func(c *a.Config) { c.Source.TapeId = "" },
 		func(c *a.Config) { c.Owner = "" },
-		func(c *a.Config) { c.JournalOwner = c.Owner },
 		func(c *a.Config) { c.Tape = nil },
 		func(c *a.Config) { var tape *bbolt.Bbolt; c.Tape = tape },
 		func(c *a.Config) { c.Journal = nil },
+		func(c *a.Config) { c.JournalPath = filepath.Join(t.TempDir(), "journal") },
 		func(c *a.Config) { c.Policy = nil },
 		func(c *a.Config) { var policy *a.BestRangePolicy; c.Policy = policy },
 	} {
@@ -102,5 +100,16 @@ func TestLocalProtobufRequestsRejectNil(t *testing.T) {
 	}
 	if _, err := s.Read(t.Context(), "borrower", nil); !errors.Is(err, a.ErrInvalidParams) {
 		t.Fatalf("nil Read = %v", err)
+	}
+}
+
+func TestServiceValidatesSourceWithProtobufRules(t *testing.T) {
+	tape := openTape(t, filepath.Join(t.TempDir(), "source"), "local")
+	journal := openJournal(t, filepath.Join(t.TempDir(), "journal"))
+	for _, source := range []*pb.Source{{}, {AgentId: "peer"}, {TapeId: "tape"}} {
+		c := config(tape, journal, grantPolicy(1, 2))
+		c.Source = source
+		_, err := a.NewService(c)
+		assertMessageValidation(t, err)
 	}
 }

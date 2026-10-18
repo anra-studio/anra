@@ -85,14 +85,19 @@ Absent bounds and page size zero remain valid.
 Invalid requests return `invalid_argument` with field violation details before
 the service handler or permission policy runs. The domain client preserves
 `errors.Is(err, ErrInvalidParams)` and the original Connect error/details.
-Validation applies to requests only. Service authorization, snapshot bounds,
-journal integrity, export policy and client provenance checks remain separate.
-Local `Config`, `BorrowRequest`, and `ReadRequest` use go-playground/validator/v10
-tags through a shared validator initialized before concurrent use. A `maxbytes`
-rule matches the protobuf byte limits, and a struct-level EntryRange rule uses
-tape-go's arbitrary-precision sequence comparison. Configuration checks include
-required dependencies and distinct source/journal owners. Local validation
-errors support `errors.Is(err, ErrInvalidParams)` and `errors.As` to retrieve
+Structural rules for requests and responses live in `tape.proto`: required
+identifiers and nested messages, canonical sequences, valid decision statuses,
+one-range limits, and the relationship between status and view presence.
+Protovalidate executes these rules from generated protobuf descriptors; no
+separate validation-code generator is needed. Direct Service calls, peer
+responses, and persisted grant messages use the same rules.
+
+Go retains checks for JSON syntax and Timestamp seconds/nanos validity, plus
+request correlation, authorization, snapshot bounds, journal integrity, export
+policy, and client provenance. Non-protobuf `Config` dependencies and distinct
+source/journal owners use `go-playground/validator/v10`; `Config.Source` uses its
+protobuf rules. Validation errors support `errors.Is(err, ErrInvalidParams)`
+and `errors.As` for `protovalidate.ValidationError` or configuration
 `validator.ValidationErrors`.
 
 HTTP transport limits encoded/decompressed RPC messages to 1 MiB. Borrowed pages
@@ -127,5 +132,5 @@ exclusively; `ViewPath` names the generated service path. Re-advertise peer card
 with `publicBaseURL + ViewPath`. Old `/tape-views` endpoints are rejected by the
 client; there is no compatibility fallback. The intermediate `ConnectClient`,
 `NewConnectClient`, `AdvertiseConnect`, `connectEndpoint`, and `ConnectViewPath`
-names are removed in favor of the single API. Grant journals and local tool
-result encoding are unchanged. Core A2A still uses the official SDK transport.
+names are removed in favor of the single API. Grant journal encoding remains compatible. Tool decisions and pages use
+ProtoJSON. Core A2A still uses the official SDK transport.

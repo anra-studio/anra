@@ -13,6 +13,7 @@ import (
 	"time"
 
 	a "github.com/scbizu/anra/pkg/a2a"
+	"github.com/scbizu/anra/pkg/model/journal"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
@@ -44,8 +45,15 @@ func grantPolicy(start, end uint64) a.Policy {
 		return a.Selection{Status: a.Granted, Range: &tv.EntryRange{SeqS: seq(start), SeqE: seq(end)}, TTL: time.Hour}, nil
 	})
 }
-func config(tape *bbolt.Bbolt, journal *bolt.DB, policy a.Policy) a.Config {
-	return a.Config{Source: &pb.Source{AgentId: "researcher", TapeId: "opaque-incarnation-1"}, Owner: "local", Tape: tape, Journal: journal, JournalOwner: "grants", Policy: policy}
+func config(tape *bbolt.Bbolt, journal *journal.Store, policy a.Policy) a.Config {
+	c := a.Config{Source: source(), Owner: "local", Tape: tape, Policy: policy}
+	if journal != nil {
+		c.Journal = journal
+	}
+	return c
+}
+func source() *pb.Source {
+	return &pb.Source{AgentId: "researcher", TapeId: "opaque-incarnation-1"}
 }
 func service(t *testing.T, c a.Config) *a.Service {
 	t.Helper()
@@ -250,7 +258,7 @@ func TestBorrowPreservesLargeSequences(t *testing.T) {
 	}
 }
 
-func TestFailClosedOnCorruptionAndSourceReplacement(t *testing.T) {
+func TestFailClosedOnCorruptionAndMissingSourceEntry(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source")
 	tape := openTape(t, sourcePath, "local")
 	journal := openJournal(t, filepath.Join(t.TempDir(), "journal"))
@@ -262,17 +270,9 @@ func TestFailClosedOnCorruptionAndSourceReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Replace selected content without changing the snapshot head entry.
-	_, err = tape.Store(owner.WithOwnerId(t.Context(), "local"), te.NewEntry(te.WithEntryID(seq(1)), te.WithEntryOwner("local"), te.WithEntryKind(te.EntryUser), te.WithEntryContent("replaced")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrUnavailable) {
-		t.Fatalf("source replacement = %v", err)
-	}
 	// Inject a real storage gap, then reopen the source with the same identity.
 	closeTape(t, tape)
-	raw := openJournal(t, sourcePath)
+	raw := openDB(t, sourcePath)
 	if err := raw.Update(func(tx *bolt.Tx) error {
 		entries := tx.Bucket([]byte("entries")).Bucket([]byte("local")).Bucket([]byte("session"))
 		k, _ := entries.Cursor().First()
@@ -287,16 +287,6 @@ func TestFailClosedOnCorruptionAndSourceReplacement(t *testing.T) {
 	s = service(t, cfg)
 	if _, err := s.Read(t.Context(), "borrower", &pb.ReadRequest{ViewId: d.View.ViewId}); !errors.Is(err, a.ErrStorage) {
 		t.Fatalf("missing source entry = %v", err)
-	}
-	if err := journal.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("anra:grant-journal/v2")).Bucket([]byte("grants")).Bucket([]byte("requests"))
-		k, _ := json.Marshal([]string{"borrower", request().RequestId})
-		return b.Put(k, []byte("corrupt grant"))
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Get(t.Context(), "borrower", request().RequestId); !errors.Is(err, a.ErrStorage) {
-		t.Fatalf("corrupt grant = %v", err)
 	}
 }
 func TestExportDoesNotLeakExtensionsAndRejectsUnsupportedKinds(t *testing.T) {
@@ -417,7 +407,17 @@ func TestBorrowKeepsCompleteSelectedView(t *testing.T) {
 	}
 }
 
-func openJournal(t *testing.T, path string) *bolt.DB {
+func openJournal(t *testing.T, path string) *journal.Store {
+	t.Helper()
+	store, err := journal.Open(path, source())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+func openDB(t *testing.T, path string) *bolt.DB {
 	t.Helper()
 	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: time.Second})
 	if err != nil {

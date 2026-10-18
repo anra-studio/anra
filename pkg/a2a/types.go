@@ -6,7 +6,6 @@ package a2a
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 
@@ -21,15 +20,6 @@ const TextMediaType = "text/plain"
 const MaxPageSize = 100
 const MaxBodyBytes = 1 << 20
 const MaxEntryBytes = 8 << 10
-
-var (
-	ErrInvalidParams = errors.New("invalid parameters")
-	ErrConflict      = errors.New("request ID conflict")
-	ErrUnavailable   = errors.New("view unavailable")
-	ErrStorage       = errors.New("tape storage failure")
-	ErrInactive      = errors.New("tape-view extension inactive")
-	ErrUnsupported   = errors.New("unsupported entry representation")
-)
 
 const (
 	Granted = pb.DecisionStatus_DECISION_STATUS_GRANTED

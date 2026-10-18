@@ -13,32 +13,38 @@ create A2A tasks.
 ## Lender setup
 
 Initialize the source tape under the lender's **local** owner using tape-go's
-bbolt backend, then open a dedicated bbolt database for grants. `Config.Tape`
-is an initialized `*bbolt.Bbolt`; `Config.Journal` is an open `*bolt.DB` from
-`go.etcd.io/bbolt`.
-`JournalOwner` namespaces grant buckets and is server configuration, never a
-value from a peer request body. The caller initializes/closes the source tape
-and opens/closes the grant database.
+bbolt backend, then configure a dedicated grant journal. `Config.Tape` is an
+initialized `*bbolt.Bbolt`; `Config.Journal` is an `a2a.Journal` — the storage
+contract — and `*journal.Store` from `pkg/model/journal` is the bundled bbolt
+implementation, which owns its own database file. The journal is bound to the
+source tape identity and is server configuration, never a value from a peer
+request body. The caller initializes and closes the source tape, and either
+opens the journal itself or lets the service do it.
 
-The example imports `tapev1 "github.com/scbizu/anra/gen/anra/a2a/tape/v1"`.
+Set either `Journal` or `JournalPath`, never both: `JournalPath` lets the
+service open the file and `Service.Close` release it, while `Journal` shares one
+store between services and leaves it the caller's to close.
+
+The example imports `tapev1 "github.com/scbizu/anra/gen/anra/a2a/tape/v1"` and
+`"github.com/scbizu/anra/pkg/model/journal"`.
 
 ```go
 researcherTape, err := bbolt.NewBboltStorage("researcher-session", "researcher.db")
 // Check err, then defer researcherTape.Close().
 err = researcherTape.Init(owner.WithOwnerId(ctx, "researcher-local"))
-grantJournal, err := bolt.Open("grants.db", 0600, &bolt.Options{Timeout: time.Second})
+source := &tapev1.Source{AgentId: "researcher", TapeId: persistentTapeIncarnationID}
+grantJournal, err := journal.Open("grants.db", source)
 // Check err, then defer grantJournal.Close().
 // Keep the source session ID stable across restarts and check initialization errors.
 views, err := a2a.NewService(a2a.Config{
-    Source: &tapev1.Source{AgentId: "researcher", TapeId: persistentTapeIncarnationID},
-    Owner: "researcher-local",
-    Tape: researcherTape,
+    Source:  source,
+    Owner:   "researcher-local",
+    Tape:    researcherTape,
     Journal: grantJournal,
-    JournalOwner: "researcher-grants",
     Policy: a2a.BestRangePolicy{
         Eligible: permittedAnchorCandidates,
-        Ranker: decisionProvider,
-        TTL: time.Hour,
+        Ranker:   decisionProvider,
+        TTL:      time.Hour,
     },
 })
 // Check err after each constructor/configuration call.
@@ -137,8 +143,14 @@ are enforced by `Service` separately from request validation.
 from `gen/anra/a2a/tape/v1` directly. Local requests use the same Protovalidate
 rules as Connect requests; validation errors retain `ErrInvalidParams` and
 expose `protovalidate.ValidationError`. Configuration uses
-`go-playground/validator/v10`. Conversion is limited to tape-go ranges and the
-private journal representation, whose existing JSON format remains compatible.
+`go-playground/validator/v10` for dependencies; `Config.Source` uses protobuf
+rules. Structural response rules also live in `tape.proto`, including source
+identifiers, canonical sequences, required timestamps, range counts, and the
+relationship between decision status and view presence. Go retains JSON syntax,
+Timestamp validity, request correlation, and authorization/integrity checks.
+Conversion is limited to tape-go ranges and the
+journal's own record types. Journal records are JSON, independent of the proto
+wire encoding, and keep unexported storage shapes private to `pkg/model/journal`.
 
 | Method | Parameters | Result |
 | --- | --- | --- |
@@ -157,9 +169,11 @@ allowed payload metadata, never local owner IDs or CustomEntry extensions.
 `Payload.json_data` preserves raw JSON bytes and is base64 in ProtoJSON. The borrowing tool also uses ProtoJSON for decisions and pages. Journal JSON
 retains its independent storage format.
 
-Bounds can only narrow selection. Grants capture source identity, tape session,
-head, exporter version and content fingerprints. Appends do not extend a grant.
-Each read verifies the requester, closure, expiry, source and granted content.
+Bounds can only narrow selection. A grant references the source identity, the
+snapshot head and the granted range. The tape is append-only, so that reference
+identifies the content: grants carry no session, exporter name or content
+fingerprints. Appends do not extend a grant. Each read verifies the requester,
+release, expiry and source.
 A cursor is an opaque encoding of the grant ID, snapshot and offset; it can only
 page within an independently authorized grant, never expand its range.
 
@@ -178,14 +192,15 @@ The default `TextExporter` exports user/assistant readable summaries as typed
 anchor, lifecycle and other custom entries require an explicit deterministic
 `Exporter`; unsupported entry kinds fail the whole grant. If using another
 exporter, update the advertised `entryMediaTypes` to its actual supported types.
-Changing exporter behavior requires a new exporter name.
+The exporter is service configuration, not part of a grant; reads project the
+granted range with the exporter configured at the time.
 
 | Connect code | Meaning |
 | --- | --- |
 | `invalid_argument` | Malformed message or invalid parameters |
 | `failed_precondition` | Extension inactive |
 | `already_exists` | Request ID reused with different input |
-| `not_found` | View unavailable (unknown, wrong requester, closed, expired or changed source) |
+| `not_found` | View unavailable (unknown, wrong requester, released or expired) |
 | `internal` | Storage failure or masked internal/provider failure |
 | `unimplemented` | Unknown RPC or unsupported entry representation |
 | `unauthenticated` | Peer authentication failed |
@@ -198,46 +213,55 @@ longer part of the tape-view API.
 
 ## Persistence and operations
 
-`Service` retains configuration and database handles, with no in-memory grant
-projection. Construction performs no journal reads, and restart requires no
-replay. `Borrow`/`Get` look up the requester/request-ID key; `Read`/`Release`
-resolve a view-ID key to its current grant. Each lookup validates only the
-addressed record, its index and source identity. Unrelated records and the
-audit history are not scanned on access.
+`Service` retains configuration and the journal store, with no in-memory grant
+projection. The journal's records, indexes and transactions live in
+`pkg/model/journal`, which uses [bolthold](https://github.com/timshannon/bolthold)
+on bbolt; `Service` owns policy selection, export and RPC error mapping.
+Construction performs no journal reads, and restart requires no replay.
+`Borrow`/`Get` look up the requester/request-ID key; `Read`/`Release` resolve
+view ID through the view index. Each lookup validates only the addressed record,
+its key and source identity. Unrelated records and the audit trail are not
+scanned on access.
 
-Each update atomically commits the current record, view-ID index and an
-append-only audit record in one bbolt transaction, before responding. It checks
-the previous state inside that transaction, rejecting stale decisions or
-closures with `ErrConflict`. Pending/denied/granted decisions, request-ID
-idempotency and revocations persist across restart. The service serializes its
-local policy operations; services sharing an open database use transactional
-state comparisons. Separate processes cannot open the same bbolt file for
-writing while it is locked.
+The journal keeps a current state per request: pending, denied or granted. A
+granted record is never rewritten; resolving a pending request replaces the
+state, and a release is its own record keyed by view ID. Each update atomically
+commits the state, its indexed view ID (or the release mark) and an append-only
+audit record in one bbolt transaction, before responding. It checks the previous
+state inside that transaction, rejecting stale decisions or releases with
+`ErrConflict`. Pending/denied/granted decisions, request-ID idempotency and
+revocations persist across restart. The service serializes its local policy
+operations; services sharing a journal store use transactional state comparisons.
+Separate processes cannot open the same journal file for writing while it is
+locked.
 
-Grant lookups use on-disk B-tree indexes, requiring O(log N) database work and
-one decoded grant per operation. The service does not retain O(N) grant state.
-Complete bounded source-view fingerprint checks still run on each `Read`;
-that selected range is loaded temporarily. SHA-256 fingerprints reuse the JSON
-bytes already produced by entry validation, avoiding a second serialization of
-the complete view. Request retries and state transitions compare protobuf requests and decisions
-with `proto.Equal`, without marshaling or hashing. Journal-only scalar metadata
-is compared directly. Persisted fingerprint values retain their existing
-format. tape-go's `TapeStorage` interface
-has no keyed grant lookup or shared transaction API, so the journal uses the
-bbolt handle directly rather than a finder.
+Grant lookups use bolthold's on-disk index on the view ID, requiring O(log N)
+database work and one decoded record per operation. The service does not retain
+O(N) grant state. Each `Read` loads the selected range temporarily to export and
+size-check it. Request retries and state transitions compare protobuf requests
+and decisions with `proto.Equal`, without marshaling or hashing. tape-go's
+`TapeStorage` interface has no keyed grant lookup or shared transaction API, so
+the journal keeps its own database instead of using a finder.
 
-The indexed journal uses the `anra:grant-journal/v2` bucket with per-owner
-`requests`, `views`, and `history` sub-buckets. This changes `Config.Journal`
-from a tape-go storage interface to `*bolt.DB`. Existing tape-format grant
-journals are rejected on access; they must be explicitly migrated before use,
-rather than silently losing saved decisions or revocations.
+A journal file is a bolthold store of a few record types, one bucket each:
+`sourceBinding` (source tape identity and audit sequence), `requestState` (with
+an index on `ViewID`), `grantRelease` and `auditEntry`. `Config.Journal` is an
+`a2a.Journal`; the caller either opens the bundled `*journal.Store` with
+`journal.Open`, which binds it to the configured source tape, or sets
+`Config.JournalPath` and lets the service open and close that file. Another
+implementation of the interface (for a server database) must apply decisions and
+releases atomically and report conflicts and storage failures as
+`journal.ErrConflict` and `journal.ErrStorage`. Files from the earlier layouts
+(`anra:grant-journal/v2` buckets, or a tape-go tape journal with an `entries`
+bucket) are rejected on access so saved decisions are never silently dropped;
+start a fresh journal.
 
 Provision `AgentID` and the opaque tape incarnation ID durably. Keep them across
 normal restart; rotate the incarnation ID and start a fresh journal when replacing
-or resetting a source tape. Session, head and content checks detect missing or
-changed source entries; a byte-identical copy with the same configured identity
-cannot be distinguished through tape-go's current storage interface. Already
-delivered context cannot be recalled by closing a grant.
+or resetting a source tape. Grants rely on the append-only tape and perform no
+content fingerprint checks, so a changed source tape with the same configured
+identity is not detected; a missing entry in the granted range still fails the
+read. Already delivered context cannot be recalled by closing a grant.
 
 Run `go test ./pkg/a2a` for the executable two-peer workflow, official SDK core
 and streaming compatibility, model consumption/replay, bbolt restart,

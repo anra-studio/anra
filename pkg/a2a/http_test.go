@@ -344,8 +344,8 @@ func TestClientAcceptsAdditionalResponseFields(t *testing.T) {
 	}
 }
 
-func TestClientRejectsMissingAcknowledgementAndMismatchedProvenance(t *testing.T) {
-	for _, mode := range []string{"inactive", "wrong provenance", "wrong view", "wrong snapshot", "missing entries", "out of range", "no progress", "repeated page"} {
+func TestClientRejectsMissingAcknowledgementAndBadPages(t *testing.T) {
+	for _, mode := range []string{"inactive", "missing entries", "out of range", "no progress", "repeated page"} {
 		t.Run(mode, func(t *testing.T) {
 			reads := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -364,15 +364,6 @@ func TestClientRejectsMissingAcknowledgementAndMismatchedProvenance(t *testing.T
 					p := &pb.Page{ViewId: "view", Source: &pb.Source{AgentId: "peer", TapeId: "tape"}, SnapshotHead: "1"}
 					reads++
 					switch mode {
-					case "wrong provenance":
-						p.Entries = []*pb.ExportedEntry{{Seq: "1", Timestamp: timestamppb.New(now)}}
-						p.Source.AgentId = "different"
-					case "wrong view":
-						p.Entries = []*pb.ExportedEntry{{Seq: "1", Timestamp: timestamppb.New(now)}}
-						p.ViewId = "different"
-					case "wrong snapshot":
-						p.Entries = []*pb.ExportedEntry{{Seq: "1", Timestamp: timestamppb.New(now)}}
-						p.SnapshotHead = "2"
 					case "out of range":
 						p.Entries = []*pb.ExportedEntry{{Seq: "2", Timestamp: timestamppb.New(now)}}
 					case "no progress":

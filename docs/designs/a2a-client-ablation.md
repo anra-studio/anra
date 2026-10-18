@@ -2,7 +2,9 @@
 
 Historical study of the removed handwritten tape-view JSON-RPC client. The
 current client uses generated protobuf/Connect bindings; the page-provenance
-and bounded-reconstruction experiments below remain covered by Connect tests.
+and bounded-reconstruction experiments below were run before page provenance
+checks were dropped for trusted teams; bounded reconstruction remains covered by
+Connect tests.
 See [current API contract](../../proto/README.md).
 
 The client duplicated service-side request validation and checked returned entries
@@ -34,12 +36,14 @@ all malformed responses.
 - Service validates request parameters and enforces sharing, expiry, and export limits.
 - Client handles HTTP/RPC errors, response IDs, extension acknowledgement, and
   the response-body size limit. JSON decoding accepts additional fields.
-- Borrow/Get check decision correlation and the usable grant shape. Read returns
-  the decoded page; direct Read callers now own their page-content validation.
-- BorrowTool checks page provenance, snapshot identity, ordered sequences inside
-  the grant, and complete reconstruction. Nonempty continuation pages advance
-  through the finite selected grant range, so a cursor cache and total counter
-  do not add a termination guarantee.
+- Borrow/Get and Read validate only the protobuf schema. Decision correlation,
+  timestamp and range validity, and page provenance are no longer checked,
+  because tape is shared only inside a trusted team (see
+  [agent team](../agent-team.md#trust-model)).
+- `Client.ReadView` checks ordered sequences inside the grant and complete
+  reconstruction. Nonempty continuation pages advance through the finite
+  selected grant range, so a cursor cache and total counter do not add a
+  termination guarantee.
 - Entry kind, timestamps, payload metadata, per-entry size, page-size limits,
   and expiry metadata are no longer revalidated by the client. The service still
   applies its export and request limits. No authorization checks were removed

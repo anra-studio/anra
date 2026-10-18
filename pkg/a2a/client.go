@@ -18,7 +18,6 @@ import (
 	runner "github.com/scbizu/tape-go/pkg/runner"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
 func Discover(ctx context.Context, h *http.Client, cardURL string) (*sdk.AgentCard, error) {
@@ -37,7 +36,7 @@ func Discover(ctx context.Context, h *http.Client, cardURL string) (*sdk.AgentCa
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("card discovery: HTTP %d", resp.StatusCode)
 	}
-	b, err := readBody(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -46,17 +45,6 @@ func Discover(ctx context.Context, h *http.Client, cardURL string) (*sdk.AgentCa
 		return nil, err
 	}
 	return &card, nil
-}
-
-func readBody(r io.Reader) ([]byte, error) {
-	b, err := io.ReadAll(io.LimitReader(r, MaxBodyBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > MaxBodyBytes {
-		return nil, fmt.Errorf("response exceeds size limit")
-	}
-	return b, nil
 }
 
 // Peer describes a previously vetted card. Optional directories can supply
@@ -106,6 +94,14 @@ func (t BorrowTool) Spec() runner.ToolSpec {
 	return runner.ToolSpec{Name: name, Description: description, InputSchema: json.RawMessage(`{"type":"object","properties":{"requestId":{"type":"string"},"purpose":{"type":"string"},"query":{"type":"string"}},"required":["requestId","purpose","query"],"additionalProperties":false}`)}
 }
 
+// borrowToolResult is the local tool-result envelope, not a protocol message.
+// Decision comes from Borrow and Context holds the pages read from the granted
+// view. Each element is protojson-encoded to keep the canonical proto JSON form.
+type borrowToolResult struct {
+	Decision json.RawMessage   `json:"decision"`
+	Context  []json.RawMessage `json:"context,omitempty"`
+}
+
 func (t BorrowTool) Execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 	req := &pb.BorrowRequest{}
 	if err := protojson.Unmarshal(args, req); err != nil {
@@ -115,59 +111,24 @@ func (t BorrowTool) Execute(ctx context.Context, args json.RawMessage) (json.Raw
 	if err != nil {
 		return nil, err
 	}
-	result := struct {
-		Decision json.RawMessage   `json:"decision"`
-		Context  []json.RawMessage `json:"context,omitempty"`
-	}{}
+	result := borrowToolResult{}
 	result.Decision, err = protojson.Marshal(d)
 	if err != nil {
 		return nil, err
 	}
-	if d.Status == Granted {
-		v := d.View
-		var expected, end te.Seq
-		if len(v.Ranges) > 0 {
-			expected, err = te.ParseSeq(v.Ranges[0].SeqS)
-			if err != nil {
-				return nil, ErrInvalidParams
-			}
-			end, err = te.ParseSeq(v.Ranges[0].SeqE)
-			if err != nil {
-				return nil, ErrInvalidParams
-			}
+	if d.Status != Granted {
+		return json.Marshal(result)
+	}
+	pages, err := t.Client.ReadView(ctx, d.View)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range pages {
+		encoded, err := protojson.Marshal(p)
+		if err != nil {
+			return nil, err
 		}
-		cursor := ""
-		for {
-			p, err := t.Client.Read(ctx, &pb.ReadRequest{ViewId: v.ViewId, Cursor: cursor, PageSize: MaxPageSize})
-			if err != nil {
-				return nil, err
-			}
-			if p.ViewId != v.ViewId || !proto.Equal(p.Source, v.Source) || p.SnapshotHead != v.SnapshotHead {
-				return nil, ErrInvalidParams
-			}
-			for _, e := range p.Entries {
-				if len(v.Ranges) != 1 || e.Seq != expected.String() || expected.Cmp(end) >= 0 {
-					return nil, ErrInvalidParams
-				}
-				expected = expected.Next()
-			}
-			encoded, err := protojson.Marshal(p)
-			if err != nil {
-				return nil, err
-			}
-			result.Context = append(result.Context, encoded)
-			if p.NextCursor == "" {
-				break
-			}
-			// Nonempty pages must advance within the selected range; no cursor cache is needed.
-			if len(p.Entries) == 0 {
-				return nil, ErrInvalidParams
-			}
-			cursor = p.NextCursor
-		}
-		if len(v.Ranges) > 0 && expected.String() != v.Ranges[0].SeqE {
-			return nil, ErrInvalidParams
-		}
+		result.Context = append(result.Context, encoded)
 	}
 	return json.Marshal(result)
 }
@@ -178,17 +139,19 @@ type Client struct {
 	rpc tapev1connect.TapeViewServiceClient
 }
 
+// connectBaseURL returns the Connect base URL for an advertised endpoint. The
+// endpoint is the full service URL, so it must be absolute and end in ViewPath;
+// the generated client appends the service and method itself.
 func connectBaseURL(endpoint string) (string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return "", err
 	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !strings.HasSuffix(u.Path, ViewPath) {
+	base, ok := strings.CutSuffix(endpoint, ViewPath)
+	if !ok || !u.IsAbs() || u.Host == "" {
 		return "", ErrInvalidParams
 	}
-	u.Path = strings.TrimSuffix(u.Path, ViewPath)
-	u.RawPath = ""
-	return strings.TrimRight(u.String(), "/"), nil
+	return base, nil
 }
 
 func NewClient(h *http.Client, card *sdk.AgentCard) (*Client, error) {
@@ -227,14 +190,7 @@ func checkConnectResponse(info *connect.CallInfo, err error) error {
 	if err != nil {
 		return fromConnectError(err)
 	}
-	headers := make(http.Header)
-	for name, values := range info.ResponseHeader().All() {
-		headers[name] = values
-	}
-	for name, values := range info.ResponseTrailer().All() {
-		headers[name] = append(headers[name], values...)
-	}
-	if !activated(headers) {
+	if !extensionActive(info.ResponseHeader()) {
 		return ErrInactive
 	}
 	return nil
@@ -250,7 +206,7 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 		return nil, err
 	}
 	d := res.GetDecision()
-	return d, validateDecision(d, r.RequestId)
+	return d, validateMessage(d)
 }
 
 func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {
@@ -260,7 +216,7 @@ func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {
 		return nil, err
 	}
 	d := res.GetDecision()
-	return d, validateDecision(d, id)
+	return d, validateMessage(d)
 }
 
 func (c *Client) Read(ctx context.Context, r *pb.ReadRequest) (*pb.Page, error) {
@@ -273,7 +229,53 @@ func (c *Client) Read(ctx context.Context, r *pb.ReadRequest) (*pb.Page, error) 
 		return nil, err
 	}
 	p := res.GetPage()
-	return p, validatePage(p)
+	return p, validateMessage(p)
+}
+
+// ReadView reads every page of a granted view. A view that fits in one page
+// costs one Read call. The peer is trusted to echo the view's provenance, so only
+// the entry sequence is checked: together the pages must cover the granted range
+// exactly once, in order.
+func (c *Client) ReadView(ctx context.Context, v *pb.View) ([]*pb.Page, error) {
+	var expected, end te.Seq
+	var err error
+	if len(v.Ranges) > 0 {
+		if expected, err = te.ParseSeq(v.Ranges[0].SeqS); err != nil {
+			return nil, ErrInvalidParams
+		}
+		if end, err = te.ParseSeq(v.Ranges[0].SeqE); err != nil {
+			return nil, ErrInvalidParams
+		}
+	}
+	var pages []*pb.Page
+	var cursor string
+	for {
+		p, err := c.Read(ctx, &pb.ReadRequest{ViewId: v.ViewId, Cursor: cursor, PageSize: MaxPageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range p.Entries {
+			// Entries must be exactly the next sequence in the granted range. A grant
+			// without a range (the schema allows at most one) has nothing to read.
+			if len(v.Ranges) == 0 || e.Seq != expected.String() || expected.Cmp(end) >= 0 {
+				return nil, ErrInvalidParams
+			}
+			expected = expected.Next()
+		}
+		pages = append(pages, p)
+		if p.NextCursor == "" {
+			break
+		}
+		// Nonempty pages must advance within the selected range; no cursor cache is needed.
+		if len(p.Entries) == 0 {
+			return nil, ErrInvalidParams
+		}
+		cursor = p.NextCursor
+	}
+	if expected.Cmp(end) != 0 {
+		return nil, ErrInvalidParams
+	}
+	return pages, nil
 }
 
 func (c *Client) Release(ctx context.Context, id string) error {
