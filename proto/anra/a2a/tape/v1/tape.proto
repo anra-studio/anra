@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+package anra.a2a.tape.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/scbizu/anra/gen/anra/a2a/tape/v1;tapev1";
+
+// TapeViewService is the optional urn:anra:a2a:tape-view:v1 extension.
+// All methods require authenticated peer identity and A2A-Extensions opt-in.
+// Resolve and Revoke are lender-local operations, never remote APIs.
+service TapeViewService {
+  rpc Borrow(BorrowRequest) returns (BorrowResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Read(ReadRequest) returns (ReadResponse);
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+}
+
+message Source {
+  string agent_id = 1 [(buf.validate.field).string.min_bytes = 1];
+  string tape_id = 2 [(buf.validate.field).string.min_bytes = 1];
+}
+
+// Sequences are canonical unsigned decimal strings of arbitrary precision.
+// Ranges are half-open: [seq_s, seq_e). Never narrow sequences to uint64.
+message EntryRange {
+  option (buf.validate.message).cel = {
+    id: "entry_range.ordered"
+    message: "seq_s must precede seq_e"
+    expression: "size(this.seq_s) < size(this.seq_e) || (size(this.seq_s) == size(this.seq_e) && this.seq_s < this.seq_e)"
+  };
+  string seq_s = 1 [(buf.validate.field).string.pattern = "^[1-9][0-9]*$"];
+  string seq_e = 2 [(buf.validate.field).string.pattern = "^[1-9][0-9]*$"];
+}
+
+message View {
+  string view_id = 1 [(buf.validate.field).string.min_bytes = 1];
+  Source source = 2 [(buf.validate.field).required = true];
+  string snapshot_head = 3 [(buf.validate.field).string.pattern = "^(0|[1-9][0-9]*)$"];
+  // A grant currently contains at most one bounded range.
+  repeated EntryRange ranges = 4 [(buf.validate.field).repeated.max_items = 1];
+  google.protobuf.Timestamp expires_at = 5 [(buf.validate.field).required = true];
+}
+
+enum DecisionStatus {
+  DECISION_STATUS_UNSPECIFIED = 0;
+  DECISION_STATUS_GRANTED = 1;
+  DECISION_STATUS_DENIED = 2;
+  DECISION_STATUS_PENDING = 3;
+}
+
+message Decision {
+  option (buf.validate.message).cel = {
+    id: "decision.view_presence"
+    message: "view must be present exactly when status is granted"
+    expression: "(this.status == 1) == has(this.view)"
+  };
+  string request_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+  }];
+  DecisionStatus status = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  // Present only for granted decisions.
+  View view = 3;
+}
+
+message BorrowRequest {
+  string request_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+  }];
+  string purpose = 2 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 8192
+  }];
+  string query = 3 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 8192
+  }];
+  EntryRange bounds = 4;
+}
+
+message BorrowResponse {
+  Decision decision = 1 [(buf.validate.field).required = true];
+}
+
+message GetRequest {
+  string request_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+  }];
+}
+
+message GetResponse {
+  Decision decision = 1 [(buf.validate.field).required = true];
+}
+
+message ReadRequest {
+  string view_id = 1 [(buf.validate.field).string.min_bytes = 1];
+  string cursor = 2;
+  // Zero uses the service default. Maximum is 100.
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+}
+
+// Payload preserves the exact JSON representation without numeric coercion.
+message Payload {
+  string media_type = 1 [(buf.validate.field).string.min_bytes = 1];
+  bytes json_data = 2 [(buf.validate.field).bytes.min_len = 1];
+}
+
+// Only public projections are exported; no local owner or custom extensions.
+message ExportedEntry {
+  string seq = 1 [(buf.validate.field).string.pattern = "^(0|[1-9][0-9]*)$"];
+  string kind = 2;
+  string summary = 3;
+  google.protobuf.Timestamp timestamp = 4 [(buf.validate.field).required = true];
+  Payload payload = 5;
+}
+
+message Page {
+  string view_id = 1 [(buf.validate.field).string.min_bytes = 1];
+  Source source = 2 [(buf.validate.field).required = true];
+  string snapshot_head = 3 [(buf.validate.field).string.pattern = "^(0|[1-9][0-9]*)$"];
+  repeated ExportedEntry entries = 4;
+  string next_cursor = 5;
+}
+
+message ReadResponse {
+  Page page = 1 [(buf.validate.field).required = true];
+}
+
+message ReleaseRequest {
+  string view_id = 1 [(buf.validate.field).string.min_bytes = 1];
+}
+
+message ReleaseResponse {
+  bool released = 1;
+}

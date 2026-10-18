@@ -1,0 +1,39 @@
+[tools]
+go = "1.27.1"
+buf = "1.61.0"
+"go:google.golang.org/protobuf/cmd/protoc-gen-go" = "v1.36.12"
+"go:connectrpc.com/connect/v2/cmd/protoc-gen-connect-go" = "v2.0.0-rc.1"
+
+[tasks.proto-lint]
+run = "buf lint"
+
+[tasks.proto-build]
+run = "buf build"
+
+[tasks.proto-deps]
+description = "Refresh the locked Protovalidate schema dependency"
+run = "buf dep update"
+
+[tasks.proto-generate]
+description = "Generate tape-view protobuf messages and Connect v2 bindings"
+run = "buf generate"
+
+[tasks.proto-breaking]
+run = 'buf breaking --against "${AGAINST:-.git#branch=main}"'
+
+[tasks.proto-check-generated]
+description = "Check committed bindings match the schema and pinned generators"
+run = '''
+set -eu
+generated_dir=$(mktemp -d)
+trap 'rm -rf "$generated_dir"' EXIT
+buf generate --output "$generated_dir"
+diff -ru gen "$generated_dir/gen"
+'''
+
+[tasks.build]
+run = "go build ./..."
+
+[tasks.test]
+depends = ["proto-lint", "proto-build", "proto-check-generated"]
+run = "go test ./..."
