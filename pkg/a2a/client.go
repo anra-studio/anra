@@ -54,7 +54,10 @@ type Peer struct {
 	Card    *sdk.AgentCard
 }
 
-func BestPeer(ctx context.Context, ranker Ranker, query string, peers []Peer) (*Peer, error) {
+// RankPeers returns the peers the ranker considers worth visiting for the
+// query, best first. The ranker decides how many (top-N or threshold); an
+// empty result means no match.
+func RankPeers(ctx context.Context, ranker Ranker, query string, peers []Peer) ([]Peer, error) {
 	descriptions := make([]string, len(peers))
 	for i, p := range peers {
 		if p.Card == nil {
@@ -65,12 +68,15 @@ func BestPeer(ctx context.Context, ranker Ranker, query string, peers []Peer) (*
 			descriptions[i] += "\n" + skill.Name + ": " + skill.Description
 		}
 	}
-	i, err := best(ctx, ranker, query, descriptions)
-	if err != nil || i < 0 {
+	order, err := rank(ctx, ranker, query, descriptions)
+	if err != nil {
 		return nil, err
 	}
-	p := peers[i]
-	return &p, nil
+	ranked := make([]Peer, len(order))
+	for n, i := range order {
+		ranked[n] = peers[i]
+	}
+	return ranked, nil
 }
 
 // BorrowTool implements agent.Tool. Anra persists its structured result as a

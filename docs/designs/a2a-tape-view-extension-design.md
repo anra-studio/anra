@@ -107,12 +107,23 @@ checkpoint decision, not a registration or access decision.
 
 The current `decision.Finder.FindAll` selects only the single best anchor,
 despite its plural name. This matches the initial borrowing selection policy;
-no multi-candidate finder change is required. Both discovery and borrowing
-select by highest score, then highest confidence, with stable candidate order
-breaking exact ties. An empty classification result means no match. Selecting
-multiple peers or context ranges is deferred. Scores are comparable within a
-classifier call; they are not assumed comparable across directories or separate
-calls.
+no multi-candidate finder change is required.
+
+`Ranker` owns relevance ordering and the cut-off. It returns candidate indexes,
+best first, omitting candidates that are not relevant enough; scores are an
+internal detail of score-based implementations. `ScoreRanker` adapts a scoring
+decision API: highest score, then highest confidence, with stable candidate
+order breaking exact ties, then an optional `MinScore` threshold and `Limit`
+(top-N). Discovery (`RankPeers`) returns the whole short list, since a borrower
+need not visit every discovered peer. Borrowing grants only the first-ranked
+context range; granting multiple ranges is deferred. An empty result means no
+match. `Ranker` and `Scorer` are trusted to return in-range, unique indexes and
+finite scores; the client that owns a vendor protocol (for example the JEV
+client, which derives indexes from its own request) parses the vendor response
+into that shape. Indexes only select among candidates already permitted, so a
+faulty ranker cannot reach unpermitted context. Scores are
+comparable within a classifier call; they are not assumed comparable across
+directories or separate calls, so a threshold needs a calibrated scorer.
 
 Provider failures remain errors or pending decisions according to the owning
 peer's policy; they do not widen permissions or substitute arbitrary context.
