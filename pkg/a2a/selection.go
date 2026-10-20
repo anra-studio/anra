@@ -2,7 +2,7 @@ package a2a
 
 import (
 	"context"
-	"math"
+	"sort"
 	"time"
 
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
@@ -10,45 +10,98 @@ import (
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-// Score addresses a candidate by index. Adapter implementations may call JEV
-// or any decision API; the provider receives only already permitted summaries.
+// Ranker owns relevance ordering and the cut-off. It returns the indexes of the
+// candidates worth considering for the query, best first, each at most once.
+// Candidates it omits are not relevant enough (a top-N limit or a threshold is
+// the Ranker's own policy); an empty result means no match. Scores, if the
+// implementation has any, are an internal detail and never cross this interface.
+//
+// A Ranker is trusted to honor that contract; callers do not re-validate it.
+// Vendor responses are parsed by the client that owns the vendor protocol, which
+// returns well-formed indexes. Indexes
+// can only select among candidates Eligible already permitted, so a faulty
+// Ranker can pick a worse permitted candidate but never an unpermitted one.
+type Ranker interface {
+	Rank(ctx context.Context, query string, candidates []string) ([]int, error)
+}
+type RankerFunc func(context.Context, string, []string) ([]int, error)
+
+func (f RankerFunc) Rank(c context.Context, q string, v []string) ([]int, error) { return f(c, q, v) }
+
+// rank ranks candidates, short-circuiting when there is nothing to rank.
+func rank(ctx context.Context, r Ranker, q string, candidates []string) ([]int, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	if r == nil {
+		return nil, ErrInvalidParams
+	}
+	return r.Rank(ctx, q, candidates)
+}
+
+// Score is the intermediate result of a scoring decision API, addressing a
+// candidate by index.
 type Score struct {
 	Index      int
 	Score      float64
 	Confidence float64
 }
-type Ranker interface {
-	Rank(context.Context, string, []string) ([]Score, error)
-}
-type RankerFunc func(context.Context, string, []string) ([]Score, error)
 
-func (f RankerFunc) Rank(c context.Context, q string, v []string) ([]Score, error) { return f(c, q, v) }
-func best(ctx context.Context, r Ranker, q string, candidates []string) (int, error) {
-	if len(candidates) == 0 {
-		return -1, nil
+// Scorer is implemented by decision APIs that score candidates, such as the
+// decision classifier. Use ScoreRanker to turn one into a Ranker. Like Ranker,
+// a Scorer is trusted: each Index addresses a candidate, at most once, and
+// scores are finite. Parsing a vendor response into that shape is the job of the
+// client that owns the vendor protocol (for example the JEV client, which derives
+// indexes from its own request), not of the layers above it.
+type Scorer interface {
+	Score(ctx context.Context, query string, candidates []string) ([]Score, error)
+}
+type ScorerFunc func(context.Context, string, []string) ([]Score, error)
+
+func (f ScorerFunc) Score(c context.Context, q string, v []string) ([]Score, error) {
+	return f(c, q, v)
+}
+
+// ScoreRanker ranks by a Scorer's output: highest score first, then highest
+// confidence, then original candidate order. Scores are comparable only within
+// one call, so MinScore is meaningful only for scorers with calibrated scores.
+type ScoreRanker struct {
+	Scorer Scorer
+	// Limit keeps at most this many best candidates; zero or less keeps all.
+	Limit int
+	// MinScore drops candidates scoring below it; nil applies no threshold.
+	MinScore *float64
+}
+
+func (r ScoreRanker) Rank(ctx context.Context, q string, candidates []string) ([]int, error) {
+	if r.Scorer == nil {
+		return nil, ErrInvalidParams
 	}
-	if r == nil {
-		return -1, ErrInvalidParams
-	}
-	scores, err := r.Rank(ctx, q, candidates)
+	scores, err := r.Scorer.Score(ctx, q, candidates)
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
-	selected := -1
-	var value, confidence float64
-	seen := map[int]bool{}
+	sort.SliceStable(scores, func(i, j int) bool {
+		a, b := scores[i], scores[j]
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.Confidence != b.Confidence {
+			return a.Confidence > b.Confidence
+		}
+		return a.Index < b.Index
+	})
+	order := make([]int, 0, len(scores))
 	for _, s := range scores {
-		if s.Index < 0 || s.Index >= len(candidates) || seen[s.Index] || math.IsNaN(s.Score) || math.IsInf(s.Score, 0) || math.IsNaN(s.Confidence) || math.IsInf(s.Confidence, 0) {
-			return -1, ErrInvalidParams
+		if r.MinScore != nil && s.Score < *r.MinScore {
+			break
 		}
-		seen[s.Index] = true
-		if selected < 0 || s.Score > value || (s.Score == value && (s.Confidence > confidence || (s.Confidence == confidence && s.Index < selected))) {
-			selected = s.Index
-			value = s.Score
-			confidence = s.Confidence
+		if r.Limit > 0 && len(order) == r.Limit {
+			break
 		}
+		order = append(order, s.Index)
 	}
-	return selected, nil
+	return order, nil
 }
 
 type Candidate struct {
@@ -57,7 +110,10 @@ type Candidate struct {
 }
 
 // Eligible must check sharing permission and exportability before returning
-// candidate summaries. Ranking never grants permission by itself.
+// candidate summaries, and must honor req.Bounds: it returns only valid ranges
+// within the head that lie inside the requested bounds, because only its output
+// is submitted to the Ranker. Ranking never grants permission by itself, and
+// Service re-checks the selected range regardless of the Policy in use.
 type Eligible func(context.Context, string, *pb.BorrowRequest, te.Seq) ([]Candidate, error)
 type BestRangePolicy struct {
 	Eligible Eligible
@@ -66,37 +122,24 @@ type BestRangePolicy struct {
 }
 
 func (p BestRangePolicy) Select(ctx context.Context, requester string, req *pb.BorrowRequest, head te.Seq) (Selection, error) {
-	if p.Eligible == nil || validateMessage(req) != nil {
+	if p.Eligible == nil {
 		return Selection{}, ErrInvalidParams
 	}
 	cs, err := p.Eligible(ctx, requester, req, head)
 	if err != nil {
 		return Selection{}, err
 	}
-	permitted := make([]Candidate, 0, len(cs))
-	summaries := make([]string, 0, len(cs))
-	for _, c := range cs {
-		if !validRange(c.Range, head) {
-			return Selection{}, ErrInvalidParams
-		}
-		if req.Bounds != nil {
-			bounds, err := rangeFromProto(req.Bounds)
-			if err != nil {
-				return Selection{}, err
-			}
-			if c.Range.SeqS.Cmp(bounds.SeqS) < 0 || c.Range.SeqE.Cmp(bounds.SeqE) > 0 {
-				continue
-			}
-		}
-		permitted = append(permitted, c)
-		summaries = append(summaries, c.Summary)
+	summaries := make([]string, len(cs))
+	for i, c := range cs {
+		summaries[i] = c.Summary
 	}
-	index, err := best(ctx, p.Ranker, req.Query, summaries)
+	order, err := rank(ctx, p.Ranker, req.Query, summaries)
 	if err != nil {
 		return Selection{}, err
 	}
-	if index < 0 {
+	if len(order) == 0 {
 		return Selection{Status: Denied}, nil
 	}
-	return Selection{Status: Granted, Range: &permitted[index].Range, TTL: p.TTL}, nil
+	// A grant covers a single range: the best-ranked one.
+	return Selection{Status: Granted, Range: &cs[order[0]].Range, TTL: p.TTL}, nil
 }

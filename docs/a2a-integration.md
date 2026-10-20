@@ -71,17 +71,19 @@ scheme. Authentication establishes identity; `Policy` separately decides who
 may borrow which context.
 
 `Eligible` returns only permitted, exportable candidate anchor summaries and
-source ranges. `Ranker` receives those summaries and the query. It can adapt JEV
-or another decision API to `[]Score{Index, Score, Confidence}`. Highest score wins,
-then highest confidence, then original candidate order. Empty results deny;
-provider errors propagate without selecting fallback private context. This local adapter seam can wrap tape-go's decision classifier; A2A permission
+source ranges inside the request's `Bounds`. `Ranker` receives those summaries and the query and returns the indexes worth
+considering, best first; it owns ordering and any cut-off (top-N or threshold).
+The grant covers the first. An empty result denies; provider errors propagate
+without selecting fallback private context. A decision API that returns scores
+can be wrapped in `ScoreRanker{Scorer, Limit, MinScore}`: highest score, then
+highest confidence, then original candidate order. This local adapter seam can wrap tape-go's decision classifier; A2A permission
 policy remains in Anra.
 
 ## Borrower setup and model consumption
 
 Discover configured, trusted peer card URLs. An optional directory can provide
-these same references. `BestPeer` ranks visible native card skill descriptions
-and returns one best peer or no match. This release does not implement a network
+these same references. `RankPeers` ranks visible native card skill descriptions
+and returns the peers worth visiting, best first, or no match. This release does not implement a network
 registry or automatic registration.
 
 ```go
