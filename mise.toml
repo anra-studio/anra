@@ -41,3 +41,7 @@ run = "go test -count=1 -v ./tests/e2e"
 [tasks.test]
 description = "Check the API contract, build all packages, and run BDD E2E scenarios"
 depends = ["proto-lint", "proto-build", "proto-check-generated", "build", "e2e"]
+
+[tasks.e2e-report]
+description = "Run BDD scenarios and generate a local HTML investigation report"
+run = "npm run e2e:report"

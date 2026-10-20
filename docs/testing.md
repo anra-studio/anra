@@ -18,9 +18,42 @@ go test -count=1 -v ./tests/e2e
 go test -count=1 -v ./tests/e2e -run 'TestFeatures/A_grant_keeps_its_original_snapshot'
 ```
 
+## Investigating in the browser
+
+Install the optional reporter with Node.js 22 or newer and npm:
+
+```sh
+npm ci
+mise run e2e-report
+# Equivalent command, with optional Go test arguments:
+npm run e2e:report
+npm run e2e:report -- -run 'TestFeatures/A_grant_keeps_its_original_snapshot'
+# Open the latest report on macOS:
+open reports/e2e/latest.html
+```
+
+The [Cucumber HTML Reporter](https://github.com/gkushang/cucumber-html-reporter)
+shows features, scenarios, Given/When/Then results, durations, and failure
+details. Reports are generated after failed test runs too, and the command
+still exits with the test failure. A Go build failure cannot produce scenario
+results; check the console output in that case.
+
+Each run writes `reports/e2e/<timestamp>/index.html` and its `cucumber.json`.
+`reports/e2e/latest.html` opens the newest report; older reports remain available.
+On scenario failure, its closed database files and a `failure.json` snapshot
+are saved under that run's `artifacts/scenario-*/` directory. The snapshot
+includes the scenario name, error, model request, borrow request, decision, and
+first page when available. These are separate files to inspect alongside the
+HTML report; HTTP traffic is not captured automatically.
+
+Dependencies and generated reports are ignored by Git. Delete `reports/e2e/`
+when you no longer need its run history. Routine `mise run test` and `mise run e2e`
+continue to work with Go alone; Node is used only for HTML reporting.
+
 Scenarios use real Anra agents, tape-go bbolt storage, the grant journal,
 discovery, the official A2A SDK, and Connect over localhost HTTP. Each scenario
 gets its own temporary files and servers, with cleanup after success or failure.
+Reporting runs preserve a copy of failed scenarios' files before cleanup.
 Restart steps close and reopen the database files and rebuild the server on a
 new port. Pagination checks include a view larger than one full page. Expiry
 uses a controlled clock rather than sleeps.
