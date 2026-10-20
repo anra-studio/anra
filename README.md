@@ -9,3 +9,4 @@ Agents can communicate with peers and share relevant context with permission.
 - [Agent team design](docs/agent-team.md)
 - [Peer integration](docs/a2a-integration.md)
 - [API and development workflow](proto/README.md)
+- [BDD end-to-end scenarios and testing policy](docs/testing.md)
