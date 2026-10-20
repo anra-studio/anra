@@ -66,13 +66,18 @@ func initializeScenario(sc *godog.ScenarioContext) {
 		s.clock.Store(time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC).UnixNano())
 		return s.ctx, nil
 	})
-	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+	sc.After(func(ctx context.Context, sc *godog.Scenario, scenarioErr error) (context.Context, error) {
 		err := s.stopPeer()
 		if s.localTape != nil {
 			err = errors.Join(err, s.localTape.Close())
 		}
 		if s.cancel != nil {
 			s.cancel()
+		}
+		if failure := errors.Join(scenarioErr, err); failure != nil && os.Getenv("ANRA_E2E_ARTIFACTS") != "" {
+			if saveErr := s.saveFailure(sc.Name, failure); saveErr != nil {
+				return ctx, errors.Join(err, saveErr)
+			}
 		}
 		return ctx, errors.Join(err, os.RemoveAll(s.root))
 	})
@@ -118,6 +123,30 @@ func initializeScenario(sc *godog.ScenarioContext) {
 		}
 		return nil
 	})
+}
+
+// Called after closing the databases so the saved files can be reopened safely.
+func (s *scenario) saveFailure(name string, failure error) error {
+	parent := os.Getenv("ANRA_E2E_ARTIFACTS")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("save failure artifacts (original files at %s): %w", s.root, err)
+	}
+	dir, err := os.MkdirTemp(parent, "scenario-")
+	if err == nil {
+		err = os.CopyFS(dir, os.DirFS(s.root))
+	}
+	if err != nil {
+		return fmt.Errorf("save failure artifacts (original files at %s): %w", s.root, err)
+	}
+	data, err := json.MarshalIndent(map[string]any{
+		"scenario": name, "error": failure.Error(), "answer": s.answer,
+		"model_request": s.lastRequest, "borrow_request": s.request,
+		"decision": s.decision, "first_page": s.firstPage,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "failure.json"), data, 0o644)
 }
 
 type modelFunc func(context.Context, runner.Request) (runner.Response, error)
