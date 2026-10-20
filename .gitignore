@@ -1,2 +1,6 @@
 .worktrees/
 coverage.out
+
+# Unit tests are temporary local agent checks; only BDD E2E tests are shared.
+*_test.go
+!/tests/e2e/**/*_test.go

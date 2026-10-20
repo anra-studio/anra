@@ -34,7 +34,9 @@ AGAINST='.git#branch=main' mise run proto-breaking
 
 `proto-check-generated` generates into a temporary directory and compares it
 with `gen/`, without modifying the checkout. `test` includes lint, schema build,
-generation consistency, and all Go tests. Installation and the first schema
+generation consistency, a build of all packages, and the BDD end-to-end suite.
+Run `mise run e2e` for just the executable acceptance scenarios. See the
+[testing policy](../docs/testing.md) for local unit checks. Installation and the first schema
 build need network access. Generators run locally; Protovalidate's BSR schema
 dependency is pinned by the checked-in `buf.lock` and then cached. `proto-deps`
 intentionally refreshes that lock; it is not part of routine generation.
