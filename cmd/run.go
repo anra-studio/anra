@@ -6,9 +6,10 @@ import (
 
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-func newRunCommand(common *agentOptions) *cobra.Command {
+func newRunCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 	var model modelOptions
 	var timeout time.Duration
 	command := &cobra.Command{
@@ -19,7 +20,7 @@ func newRunCommand(common *agentOptions) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(command.Context(), timeout)
 			defer cancel()
-			modelRunner, err := newRunner(*common, model)
+			modelRunner, err := newRunner(*common, model, settings.GetString("deepseek-api-key"))
 			if err != nil {
 				return err
 			}

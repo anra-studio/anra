@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	tapeagent "github.com/scbizu/tape-go/pkg/agent"
@@ -23,12 +22,11 @@ func (o *modelOptions) flags(command *cobra.Command) {
 	command.Flags().StringVar(&o.system, "system", "", "system instruction for the model")
 }
 
-func newRunner(agent agentOptions, o modelOptions) (runner.Runner, error) {
+func newRunner(agent agentOptions, o modelOptions, key string) (runner.Runner, error) {
 	switch o.runner {
 	case "echo":
 		return echoRunner{id: agent.id}, nil
 	case "deepseek":
-		key := os.Getenv("DEEPSEEK_API_KEY")
 		if strings.TrimSpace(key) == "" {
 			return nil, errors.New("DEEPSEEK_API_KEY is required for --runner deepseek; use --runner echo for a local demo")
 		}

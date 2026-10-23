@@ -39,11 +39,13 @@ type cliScenario struct {
 	done                   chan error
 	peer, serverID, output string
 	err                    error
+	env                    map[string]string
 }
 
 func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 	c := &cliScenario{s: s}
 	initializeConfig(sc, c)
+	initializeEnvironment(sc, c)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		*c = cliScenario{s: s}
 		return ctx, nil
@@ -126,16 +128,24 @@ func (c *cliScenario) dataDir() string { return filepath.Join(c.s.root, "cli") }
 func cliEnv(token string) []string {
 	var env []string
 	for _, value := range os.Environ() {
-		if !strings.HasPrefix(value, "DEEPSEEK_API_KEY=") && !strings.HasPrefix(value, "ANRA_PEER_TOKEN=") {
+		if !strings.HasPrefix(value, "DEEPSEEK_API_KEY=") && !strings.HasPrefix(value, "ANRA_") {
 			env = append(env, value)
 		}
 	}
 	return append(env, "ANRA_PEER_TOKEN="+token)
 }
 
+func (c *cliScenario) environment(token string) []string {
+	env := cliEnv(token)
+	for key, value := range c.env {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
 func (c *cliScenario) execute(token string, args ...string) {
 	cmd := exec.CommandContext(c.s.ctx, cliBinary, args...)
-	cmd.Env = cliEnv(token)
+	cmd.Env = c.environment(token)
 	output, err := cmd.CombinedOutput()
 	c.output, c.err = string(output), err
 }
@@ -156,7 +166,7 @@ func (c *cliScenario) start(id string) error {
 
 func (c *cliScenario) startProcess(id string, args ...string) error {
 	cmd := exec.CommandContext(c.s.ctx, cliBinary, args...)
-	cmd.Env = cliEnv("e2e-peer-token")
+	cmd.Env = c.environment("e2e-peer-token")
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return err

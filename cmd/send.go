@@ -16,9 +16,10 @@ import (
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/scbizu/tape-go/pkg/runner"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-func newSendCommand(common *agentOptions) *cobra.Command {
+func newSendCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 	var peer string
 	var timeout time.Duration
 	command := &cobra.Command{
@@ -29,7 +30,7 @@ func newSendCommand(common *agentOptions) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(command.Context(), timeout)
 			defer cancel()
-			modelRunner, err := newPeerRunner(ctx, peer)
+			modelRunner, err := newPeerRunner(ctx, peer, settings)
 			if err != nil {
 				return err
 			}
@@ -56,12 +57,12 @@ func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 type peerRunner struct{ client *a2aclient.Client }
 
-func newPeerRunner(ctx context.Context, base string) (runner.Runner, error) {
+func newPeerRunner(ctx context.Context, base string, settings *viper.Viper) (runner.Runner, error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("--peer must be an HTTP(S) base URL, for example http://127.0.0.1:8080")
 	}
-	token, err := peerToken()
+	token, err := peerToken(settings)
 	if err != nil {
 		return nil, err
 	}

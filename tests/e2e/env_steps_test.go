@@ -1,0 +1,75 @@
+package e2e_test
+
+import (
+	"fmt"
+	"path/filepath"
+
+	"github.com/cucumber/godog"
+)
+
+func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario) {
+	sc.Step(`^CLI environment settings for agent "([^"]*)"$`, c.agentEnvironment)
+	sc.Step(`^I run the CLI using environment settings with "([^"]*)"$`, func(text string) error {
+		c.execute("", "run", text)
+		return c.err
+	})
+	sc.Step(`^the environment selects configured agent "([^"]*)" in session "([^"]*)"$`, func(id, session string) {
+		c.env = map[string]string{"ANRA_CONFIG": c.configPath(), "ANRA_AGENT": id, "ANRA_SESSION": session}
+	})
+	sc.Step(`^I override the environment with agent "([^"]*)" and session "([^"]*)"$`, func(id, session string) error {
+		c.execute("", "run", "--agent", id, "--session", session, "hello "+id)
+		return c.err
+	})
+	sc.Step(`^the environment has an invalid runner and timeout$`, func() {
+		c.env["ANRA_RUNNER"] = "invalid"
+		c.env["ANRA_TIMEOUT"] = "soon"
+	})
+	sc.Step(`^I run the CLI with explicit echo runner and timeout flags$`, func() error {
+		c.execute("", "run", "--runner", "echo", "--timeout", "1m", "hello")
+		return c.err
+	})
+	sc.Step(`^the CLI agent is serving using environment settings$`, func() error {
+		c.env["ANRA_LISTEN"] = "127.0.0.1:0"
+		return c.startProcess(c.env["ANRA_AGENT"], "serve")
+	})
+	sc.Step(`^agent "([^"]*)" sends "([^"]*)" using environment settings$`, func(id, text string) error {
+		c.agentEnvironment(id)
+		c.env["ANRA_PEER"] = c.peer
+		c.execute("e2e-peer-token", "send", text)
+		return c.err
+	})
+	sc.Step(`^I run the CLI with environment problem "([^"]*)"$`, func(problem string) error {
+		c.agentEnvironment("alice")
+		args := []string{"run", "hello"}
+		switch problem {
+		case "invalid agent":
+			c.env["ANRA_AGENT"] = "../outside"
+		case "unknown runner":
+			c.env["ANRA_RUNNER"] = "invalid"
+		case "invalid duration":
+			c.env["ANRA_TIMEOUT"] = "soon"
+		case "zero timeout":
+			c.env["ANRA_TIMEOUT"] = "0s"
+		case "empty session":
+			c.env["ANRA_SESSION"] = ""
+		case "missing config":
+			c.env["ANRA_CONFIG"] = filepath.Join(c.s.root, "missing.toml")
+		case "empty peer token":
+			c.env["ANRA_PEER_TOKEN"] = ""
+			args = []string{"serve"}
+		case "missing model key":
+			c.env["ANRA_RUNNER"] = "deepseek"
+		default:
+			return fmt.Errorf("unknown environment problem %q", problem)
+		}
+		c.execute("", args...)
+		return nil
+	})
+}
+
+func (c *cliScenario) agentEnvironment(id string) {
+	c.env = map[string]string{
+		"ANRA_AGENT": id, "ANRA_DATA_DIR": c.dataDir(), "ANRA_SESSION": "default",
+		"ANRA_RUNNER": "echo", "ANRA_TIMEOUT": "2s",
+	}
+}

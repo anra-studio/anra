@@ -49,5 +49,6 @@ ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml serve --agent bob
 ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml send "hello from alice"
 ```
 
-Explicit flags override the TOML settings. See [command line usage](docs/cli.md)
-for the configuration format and precedence.
+Viper also accepts environment settings such as `ANRA_CONFIG`, `ANRA_AGENT`,
+and `ANRA_RUNNER`. Precedence is flags, environment, agent TOML settings, shared
+defaults, then built-in defaults. See [command line usage](docs/cli.md).

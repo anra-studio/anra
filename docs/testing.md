@@ -4,8 +4,9 @@ The repository keeps BDD end-to-end scenarios as its shared acceptance contract.
 Read the [agent features](../tests/e2e/features/agent.feature) and
 [peer features](../tests/e2e/features/peers.feature), plus the
 [CLI features](../tests/e2e/features/cli.feature) and
-[TOML configuration features](../tests/e2e/features/config.feature), to review
-what Anra promises.
+[TOML configuration features](../tests/e2e/features/config.feature), plus the
+[environment features](../tests/e2e/features/env.feature), to review what Anra
+promises.
 The same Given/When/Then steps execute with
 [Godog](https://github.com/cucumber/godog/tree/v0.15.1), so the specifications
 and checks stay together. Undefined and pending steps fail the suite.
@@ -68,9 +69,11 @@ a real model's answer quality. Library scenarios use public Go APIs and peer
 HTTP endpoints. CLI scenarios build `cmd/anra` once per suite and launch real
 processes with the explicit echo runner, temporary disk storage, and localhost
 HTTP. They check local persistence, two-agent messaging, receiver restart,
-authentication failure, TOML agent selection, configuration precedence, and
-invalid configuration. Each subprocess has model
-credentials removed from its environment. The suite does not exercise an
+authentication failure, TOML agent selection, Viper environment settings,
+configuration precedence, and invalid configuration. Each subprocess has
+inherited `ANRA_` settings and model credentials removed from its environment;
+scenario fixtures supply only deterministic settings and peer tokens.
+The suite does not exercise an
 application UI.
 
 ## Temporary unit checks

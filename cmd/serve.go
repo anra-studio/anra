@@ -15,9 +15,10 @@ import (
 	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-func newServeCommand(common *agentOptions) *cobra.Command {
+func newServeCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 	var model modelOptions
 	var listen string
 	command := &cobra.Command{
@@ -25,11 +26,11 @@ func newServeCommand(common *agentOptions) *cobra.Command {
 		Short: "Expose a tape-backed agent over A2A HTTP",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			modelRunner, err := newRunner(*common, model)
+			modelRunner, err := newRunner(*common, model, settings.GetString("deepseek-api-key"))
 			if err != nil {
 				return err
 			}
-			token, err := peerToken()
+			token, err := peerToken(settings)
 			if err != nil {
 				return err
 			}

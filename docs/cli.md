@@ -54,9 +54,10 @@ strings, with durations such as `"30s"` or `"2m"`. Only settings applicable to
 the current command are applied; for example, `send` uses `peer`, while `serve`
 uses `listen`. A configured `peer` satisfies `send`'s required `--peer` flag.
 
-Explicit flags take precedence over agent settings, then `[defaults]`, then
-built-in defaults. This includes explicitly empty values and values equal to
-built-in defaults. Configuration values pass through Cobra's flag parsers and
+Explicit flags take precedence over environment variables, agent settings,
+`[defaults]`, and built-in defaults, in that order. This includes explicitly
+empty values and values equal to built-in defaults. Viper resolves these sources;
+configuration and environment values pass through Cobra's flag parsers and
 the same validation as command flags. For example:
 
 ```sh
@@ -64,11 +65,45 @@ the same validation as command flags. For example:
 ```
 
 Relative `data-dir` values in the file resolve from the config file's directory;
-an explicit `--data-dir` resolves from the current working directory. Model and
-peer credentials still come from `DEEPSEEK_API_KEY` and `ANRA_PEER_TOKEN`.
+an explicit `--data-dir` or `ANRA_DATA_DIR` resolves from the current working
+directory. Model and peer credentials come from `DEEPSEEK_API_KEY` and
+`ANRA_PEER_TOKEN`, bound through Viper.
 Malformed TOML, unknown keys, and unknown agent selections fail before storage
-opens. No config file is loaded unless `--config` is supplied, and help does
-not require a readable config file.
+opens. No config file is loaded unless `--config` or `ANRA_CONFIG` is supplied,
+and help does not require a readable config file.
+
+## Environment variables
+
+Viper binds command options to `ANRA_` environment variables, with hyphens
+replaced by underscores. Variables apply to the commands that support the
+corresponding flags.
+
+| Variable | Setting |
+| --- | --- |
+| `ANRA_CONFIG` | TOML configuration file |
+| `ANRA_AGENT` | Agent name |
+| `ANRA_DATA_DIR` | Tape database directory |
+| `ANRA_SESSION` | Conversation session |
+| `ANRA_RUNNER` | `deepseek` or `echo` |
+| `ANRA_MODEL` | Model name |
+| `ANRA_SYSTEM` | System instruction |
+| `ANRA_LISTEN` | Server listen address |
+| `ANRA_PEER` | Peer base URL; satisfies `send`'s required peer setting |
+| `ANRA_TIMEOUT` | Command timeout, such as `30s` |
+| `ANRA_PEER_TOKEN` | Peer bearer token |
+| `DEEPSEEK_API_KEY` | DeepSeek API key |
+
+For example, run an agent without repeating command flags:
+
+```sh
+ANRA_AGENT=alice ANRA_RUNNER=echo ./anra run "hello"
+ANRA_CONFIG=anra.example.toml ANRA_AGENT=bob ./anra run "hello"
+```
+
+Flags override environment variables even when the flag equals its built-in
+default. Empty environment values are also honored: an empty required setting
+fails validation instead of falling back to TOML. Credentials remain
+environment-only and are not accepted as flags or TOML settings.
 
 ## Local agent
 

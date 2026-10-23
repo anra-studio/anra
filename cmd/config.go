@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 type fileConfig struct {
@@ -37,13 +37,37 @@ func (c agentConfig) settings() map[string]*string {
 	}
 }
 
-// applyConfig runs after Cobra parses explicit flags and before argument
-// execution or required-flag validation. Applying settings through Cobra keeps
-// flag parsing, validation, and command option bindings in one place.
-func applyConfig(command *cobra.Command, path string) error {
-	if path == "" {
-		return nil
+// applyConfig resolves flags, environment, and the selected TOML profile through
+// Viper, then applies the resolved values through Cobra's parsers. This also lets
+// config or environment values satisfy required flags such as --peer.
+func applyConfig(command *cobra.Command, settings *viper.Viper) error {
+	if err := settings.BindPFlags(command.Flags()); err != nil {
+		return err
 	}
+	names := []string{"config", "agent", "data-dir", "session", "runner", "model", "system", "listen", "peer", "timeout"}
+	for _, name := range names {
+		if command.Flag(name) != nil {
+			settings.MustBindEnv(name)
+		}
+	}
+	if path := settings.GetString("config"); path != "" {
+		if err := loadAgentConfig(settings, path); err != nil {
+			return err
+		}
+	}
+	for _, name := range names {
+		flag := command.Flag(name)
+		if flag == nil || flag.Changed || !settings.IsSet(name) {
+			continue
+		}
+		if err := command.Flags().Set(name, settings.GetString(name)); err != nil {
+			return fmt.Errorf("setting %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func loadAgentConfig(settings *viper.Viper, path string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("read config %q: %w", path, err)
@@ -65,41 +89,29 @@ func applyConfig(command *cobra.Command, path string) error {
 		if _, ok := config.Agents[config.DefaultAgent]; !ok {
 			return fmt.Errorf("config %q: default-agent %q is not configured", path, config.DefaultAgent)
 		}
-		if !command.Flag("agent").Changed {
-			if err := command.Flags().Set("agent", config.DefaultAgent); err != nil {
-				return err
-			}
-		}
+		settings.SetDefault("agent", config.DefaultAgent)
 	}
-	id := command.Flag("agent").Value.String()
+	id := settings.GetString("agent")
 	selected, ok := config.Agents[id]
 	if !ok {
 		return fmt.Errorf("agent %q is not configured in %q", id, path)
 	}
-	settings := config.Defaults.settings()
+	merged := config.Defaults.settings()
 	for name, value := range selected.settings() {
 		if value != nil {
-			settings[name] = value
+			merged[name] = value
 		}
 	}
-	names := make([]string, 0, len(settings))
-	for name := range settings {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		value := settings[name]
-		flag := command.Flag(name)
-		if value == nil || flag == nil || flag.Changed {
+	values := make(map[string]any)
+	for name, value := range merged {
+		if value == nil {
 			continue
 		}
 		text := *value
 		if name == "data-dir" && text != "" && !filepath.IsAbs(text) {
 			text = filepath.Join(filepath.Dir(path), text)
 		}
-		if err := command.Flags().Set(name, text); err != nil {
-			return fmt.Errorf("config %q, agent %q, %s: %w", path, id, name, err)
-		}
+		values[name] = text
 	}
-	return nil
+	return settings.MergeConfigMap(values)
 }

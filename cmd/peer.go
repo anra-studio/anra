@@ -2,12 +2,13 @@ package cmd
 
 import (
 	"errors"
-	"os"
 	"strings"
+
+	"github.com/spf13/viper"
 )
 
-func peerToken() (string, error) {
-	token := os.Getenv("ANRA_PEER_TOKEN")
+func peerToken(settings *viper.Viper) (string, error) {
+	token := settings.GetString("peer-token")
 	if strings.TrimSpace(token) == "" || strings.ContainsAny(token, "\r\n") {
 		return "", errors.New("ANRA_PEER_TOKEN must contain a non-empty bearer token")
 	}
