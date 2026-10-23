@@ -1,0 +1,14 @@
+default-agent = "alice"
+
+[defaults]
+data-dir = ".anra"
+session = "default"
+runner = "echo"
+timeout = "1m"
+
+[agents.alice]
+peer = "http://127.0.0.1:8080"
+
+[agents.bob]
+listen = "127.0.0.1:8080"
+# For model-generated answers, set runner = "deepseek" and DEEPSEEK_API_KEY.

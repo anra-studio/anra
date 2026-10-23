@@ -129,6 +129,10 @@ interfaces. The historical tape-backed task persistence profile is not restored
 by this release. Core message IDs are not a durable runtime deduplication key;
 the extension's request IDs are.
 
+For a messaging-only server, `NewMessageHandler(card, core, authenticatePeer)`
+serves the same discovery and authenticated A2A endpoints without a borrowing
+service or grant journal. This is the handler used by [`anra serve`](cli.md).
+
 ## Wire contract and limits
 
 Clients activate `A2A-Extensions: urn:anra:a2a:tape-view:v1` on every extension
@@ -265,9 +269,9 @@ content fingerprint checks, so a changed source tape with the same configured
 identity is not detected; a missing entry in the granted range still fails the
 read. Already delivered context cannot be recalled by closing a grant.
 
-Run `go test ./pkg/a2a` for the executable two-peer workflow, official SDK core
+Run `mise run e2e` for the executable peer and CLI workflows, official SDK core
 and streaming compatibility, model consumption/replay, bbolt restart,
-idempotency, authentication, bounds, corruption and failure checks.
+idempotency, authentication, and invalid wire request checks.
 
 References: [A2A extensions](https://a2a-protocol.org/latest/topics/extensions/),
 [A2A discovery](https://a2a-protocol.org/latest/topics/agent-discovery/),

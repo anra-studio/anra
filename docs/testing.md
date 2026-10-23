@@ -2,7 +2,10 @@
 
 The repository keeps BDD end-to-end scenarios as its shared acceptance contract.
 Read the [agent features](../tests/e2e/features/agent.feature) and
-[peer features](../tests/e2e/features/peers.feature) to review what Anra promises.
+[peer features](../tests/e2e/features/peers.feature), plus the
+[CLI features](../tests/e2e/features/cli.feature) and
+[TOML configuration features](../tests/e2e/features/config.feature), to review
+what Anra promises.
 The same Given/When/Then steps execute with
 [Godog](https://github.com/cucumber/godog/tree/v0.15.1), so the specifications
 and checks stay together. Undefined and pending steps fail the suite.
@@ -61,9 +64,14 @@ uses a controlled clock rather than sleeps.
 Model responses and lender permission decisions are deterministic fixtures.
 The suite needs no model credentials or external service once Go dependencies
 are installed. It checks Anra's behavior around model calls; it does not measure
-a real model's answer quality. Anra currently exposes a library, so public Go
-APIs and peer HTTP endpoints are the E2E entry points. The suite does not launch
-a separate process or exercise an application UI.
+a real model's answer quality. Library scenarios use public Go APIs and peer
+HTTP endpoints. CLI scenarios build `cmd/anra` once per suite and launch real
+processes with the explicit echo runner, temporary disk storage, and localhost
+HTTP. They check local persistence, two-agent messaging, receiver restart,
+authentication failure, TOML agent selection, configuration precedence, and
+invalid configuration. Each subprocess has model
+credentials removed from its environment. The suite does not exercise an
+application UI.
 
 ## Temporary unit checks
 

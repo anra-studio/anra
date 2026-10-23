@@ -77,6 +77,24 @@ func NewPeerHandler(card *sdk.AgentCard, core a2asrv.RequestHandler, s *Service,
 	if !found {
 		return nil, ErrInvalidParams
 	}
+	mux, err := newMessageMux(card, core, auth)
+	if err != nil {
+		return nil, err
+	}
+	mux.Handle(ViewPath+"/", views)
+	return mux, nil
+}
+
+// NewMessageHandler serves discovery and authenticated core A2A messaging
+// without advertising or enabling tape borrowing.
+func NewMessageHandler(card *sdk.AgentCard, core a2asrv.RequestHandler, auth Authenticate) (http.Handler, error) {
+	return newMessageMux(card, core, auth)
+}
+
+func newMessageMux(card *sdk.AgentCard, core a2asrv.RequestHandler, auth Authenticate) (*http.ServeMux, error) {
+	if card == nil || core == nil || auth == nil {
+		return nil, ErrInvalidParams
+	}
 	mux := http.NewServeMux()
 	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
 	sdkHandler := a2asrv.NewJSONRPCHandler(&a2asrv.InterceptedHandler{Handler: core, Interceptors: []a2asrv.CallInterceptor{peerAuthentication{}}})
@@ -88,7 +106,6 @@ func NewPeerHandler(card *sdk.AgentCard, core a2asrv.RequestHandler, s *Service,
 		}
 		sdkHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), peerKey{}, p)))
 	}))
-	mux.Handle(ViewPath+"/", views)
 	return mux, nil
 }
 

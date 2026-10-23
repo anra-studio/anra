@@ -56,6 +56,7 @@ type scenario struct {
 
 func initializeScenario(sc *godog.ScenarioContext) {
 	s := &scenario{}
+	initializeCLI(sc, s)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		root, err := os.MkdirTemp("", "anra-e2e-")
 		if err != nil {
