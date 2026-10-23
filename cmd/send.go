@@ -21,15 +21,35 @@ import (
 
 func newSendCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 	var peer string
+	var to string
 	var timeout time.Duration
 	command := &cobra.Command{
-		Use:     "send [flags] message",
-		Short:   "Send a message from a local agent to a peer URL",
-		Args:    messageArgs,
-		PreRunE: func(*cobra.Command, []string) error { return validateTimeout(timeout) },
+		Use:   "send [flags] message",
+		Short: "Ask a running agent to send a message to a named peer",
+		Args:  messageArgs,
+		PreRunE: func(*cobra.Command, []string) error {
+			if err := validateTimeout(timeout); err != nil {
+				return err
+			}
+			if peer == "" && to == "" {
+				return errors.New("required flag(s): --to or --peer")
+			}
+			if peer != "" && to != "" {
+				return errors.New("choose --to or --peer")
+			}
+			return nil
+		},
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(command.Context(), timeout)
 			defer cancel()
+			if to != "" {
+				answer, err := sendFromServer(ctx, common.id, to, strings.Join(args, " "), settings)
+				if err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(command.OutOrStdout(), answer)
+				return err
+			}
 			modelRunner, err := newPeerRunner(ctx, peer, settings)
 			if err != nil {
 				return err
@@ -39,8 +59,8 @@ func newSendCommand(common *agentOptions, settings *viper.Viper) *cobra.Command 
 			})
 		},
 	}
-	command.Flags().StringVar(&peer, "peer", "", "peer base URL (required)")
-	command.MarkFlagRequired("peer")
+	command.Flags().StringVar(&peer, "peer", "", "direct peer URL override (opens a local sender tape)")
+	command.Flags().StringVar(&to, "to", "", "registered destination agent name (source must be serving)")
 	command.Flags().DurationVar(&timeout, "timeout", time.Minute, "command timeout")
 	return command
 }
@@ -55,7 +75,10 @@ func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(clone)
 }
 
-type peerRunner struct{ client *a2aclient.Client }
+type peerRunner struct {
+	client *a2aclient.Client
+	name   string
+}
 
 func newPeerRunner(ctx context.Context, base string, settings *viper.Viper) (runner.Runner, error) {
 	u, err := url.Parse(base)
@@ -84,7 +107,7 @@ func newPeerRunner(ctx context.Context, base string, settings *viper.Viper) (run
 	if err != nil {
 		return nil, err
 	}
-	return peerRunner{client}, nil
+	return peerRunner{client: client, name: card.Name}, nil
 }
 
 // Explicit sending needs no local LLM: the peer supplies the response. Anra.Run

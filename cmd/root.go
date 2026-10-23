@@ -28,6 +28,7 @@ Options also accept ANRA_ environment variables, such as ANRA_AGENT and ANRA_RUN
 	root.PersistentFlags().StringVar(&common.dataDir, "data-dir", ".anra", "directory for per-agent tape databases")
 	root.PersistentFlags().StringVar(&common.session, "session", "default", "persistent conversation session")
 	root.PersistentFlags().String("config", "", "TOML file containing agent settings")
-	root.AddCommand(newRunCommand(&common, settings), newServeCommand(&common, settings), newSendCommand(&common, settings))
+	root.PersistentFlags().String("registry", "", "team Agent Card directory URL")
+	root.AddCommand(newRunCommand(&common, settings), newServeCommand(&common, settings), newSendCommand(&common, settings), newRegistryCommand(settings), newPeersCommand(settings))
 	return root
 }

@@ -43,6 +43,35 @@ type runtimeConfig struct {
 // Option configures optional Anra capabilities.
 type Option func(*Anra) error
 
+// Exchange records an explicit outgoing message and a remote answer on this
+// agent's tape. The network call runs without holding the runtime mutex, so two
+// servers can send to one another while still accepting incoming messages.
+// Concurrent incoming and outgoing exchanges may interleave on the shared tape.
+func (a *Anra) Exchange(ctx context.Context, input string, respond func(context.Context, string) (string, error)) (string, error) {
+	if strings.TrimSpace(input) == "" || respond == nil {
+		return "", errors.New("agent: exchange requires a message and responder")
+	}
+	a.mu.Lock()
+	err := a.appendMessage(ctx, taperunner.Message{Role: taperunner.RoleUser, Text: input})
+	a.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	answer, err := respond(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(answer) == "" {
+		return "", errors.New("agent: empty peer answer")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.appendMessage(ctx, taperunner.Message{Role: taperunner.RoleAssistant, Text: answer}); err != nil {
+		return "", err
+	}
+	return answer, nil
+}
+
 func WithRunner(value taperunner.Runner) Option {
 	return func(anra *Anra) error {
 		if value == nil {

@@ -12,43 +12,40 @@ Agents can communicate with peers and share relevant context with permission.
 - [API and development workflow](proto/README.md)
 - [BDD end-to-end scenarios and testing policy](docs/testing.md)
 
-## Say hello between two agents
+## Say hello between two running agents
 
-Build the CLI:
+Build the CLI with `mise run build-cli`. Set `ANRA_PEER_TOKEN=local-demo` in each
+terminal, then start the shared directory:
 
 ```sh
-mise run build-cli
+./anra registry --listen 127.0.0.1:9090
 ```
 
-In one terminal, start Bob with the explicit no-key echo runner:
+Start Alice and Bob in separate terminals using [anra.example.toml](anra.example.toml):
 
 ```sh
-export ANRA_PEER_TOKEN=local-demo
-./anra serve --agent bob --runner echo --listen 127.0.0.1:8080
+./anra --config anra.example.toml serve --agent alice
+# Another terminal:
+./anra --config anra.example.toml serve --agent bob
 ```
 
-In another terminal, send a greeting from Alice:
+Each server chooses an available port and registers its Agent Card. With both
+running, send in either direction from another terminal:
 
 ```sh
-export ANRA_PEER_TOKEN=local-demo
-./anra send --agent alice --peer http://127.0.0.1:8080 "hello from alice"
+./anra --config anra.example.toml peers
+./anra --config anra.example.toml send --agent alice --to bob "hello from alice"
 # bob: hello from alice
+./anra --config anra.example.toml send --agent bob --to alice "hello from bob"
+# alice: hello from bob
 ```
 
-Both agents keep the exchange in separate tape databases under `.anra/`.
-Stop Bob with Ctrl-C and restart the same command to keep his conversation.
-The echo runner repeats text; use the default DeepSeek runner with
-`DEEPSEEK_API_KEY` for model-generated answers.
+The CLI contacts the source agent's running server. That server discovers the
+destination by name and sends directly over A2A. Both agents persist the exchange
+in separate tapes under `.anra/`. No peer addresses are needed in the config.
+Ctrl-C unregisters a server; crashed servers disappear when their leases expire.
 
-Keep agent settings in [`anra.example.toml`](anra.example.toml) and select them
-with `--config` and `--agent`:
-
-```sh
-ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml serve --agent bob
-# In another terminal; Alice is the configured default agent:
-ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml send "hello from alice"
-```
-
-Viper also accepts environment settings such as `ANRA_CONFIG`, `ANRA_AGENT`,
-and `ANRA_RUNNER`. Precedence is flags, environment, agent TOML settings, shared
-defaults, then built-in defaults. See [command line usage](docs/cli.md).
+The example uses the no-key echo runner. Set `runner = "deepseek"` and
+`DEEPSEEK_API_KEY` for model-generated answers. Viper accepts `ANRA_` environment
+settings; precedence is flags, environment, agent TOML settings, shared defaults,
+then built-in defaults. See [command line usage](docs/cli.md).

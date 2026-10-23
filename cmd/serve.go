@@ -4,16 +4,15 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"time"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/agent"
+	"github.com/scbizu/anra/pkg/discovery"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -35,7 +34,7 @@ func newServeCommand(common *agentOptions, settings *viper.Viper) *cobra.Command
 				return err
 			}
 			return withAgent(command.Context(), *common, modelRunner, model, func(a *agent.Anra) error {
-				return serve(command.Context(), a, common.id, listen, token, command.ErrOrStderr())
+				return serve(command.Context(), a, common.id, listen, token, settings, command.ErrOrStderr())
 			})
 		},
 	}
@@ -44,7 +43,7 @@ func newServeCommand(common *agentOptions, settings *viper.Viper) *cobra.Command
 	return command
 }
 
-func serve(ctx context.Context, a *agent.Anra, id, listen, token string, status io.Writer) error {
+func serve(ctx context.Context, a *agent.Anra, id, listen, token string, settings *viper.Viper, status io.Writer) error {
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return err
@@ -63,28 +62,27 @@ func serve(ctx context.Context, a *agent.Anra, id, listen, token string, status 
 	if err != nil {
 		return err
 	}
-	handler, err := a2a.NewMessageHandler(card, a2asrv.NewHandler(executor), func(req *http.Request) (string, error) {
+	authenticate := func(req *http.Request) (string, error) {
 		if subtle.ConstantTimeCompare([]byte(req.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 			return "", errors.New("invalid peer token")
 		}
 		return "trusted-peer", nil
-	})
+	}
+	handler, err := a2a.NewMessageHandler(card, a2asrv.NewHandler(executor), authenticate)
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
-	defer server.Close()
-	if _, err := fmt.Fprintf(status, "%s listening at %s\n", id, base); err != nil {
+	mux := http.NewServeMux()
+	mux.Handle(outboundPath, outboundHandler(a, settings, authenticate))
+	mux.Handle("/", handler)
+	registered, cleanup, err := registerAgent(ctx, settings.GetString("registry"), token, discovery.Record{Name: id, CardURL: base + a2asrv.WellKnownAgentCardPath, Card: card})
+	if err != nil {
 		return err
 	}
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return server.Shutdown(shutdownCtx)
+	defer cleanup()
+	err = serveHTTP(registered, listener, mux, id, status)
+	if err == nil && ctx.Err() == nil && context.Cause(registered) != nil {
+		return context.Cause(registered)
 	}
+	return err
 }

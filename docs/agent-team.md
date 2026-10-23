@@ -30,6 +30,13 @@ permissioned Tape borrowing belong to `pkg/a2a`; members need no shared team
 Tape or mandatory coordinator. A coordinating member can use tools to request
 work from peers.
 
+The CLI can run every member as a server. A shared `registry` service tracks
+leased Agent Cards; each server registers and renews its own record. The CLI
+invokes the selected source server for named sends, and that server discovers
+and contacts the destination directly. The directory routes no messages and
+owns no agent tapes. `Anra.Exchange` records explicit outgoing messages and
+remote answers while allowing incoming requests during the network call.
+
 ## Trust model
 
 An Anra team is a set of trusted members. Tape is not opened to external

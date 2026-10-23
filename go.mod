@@ -10,6 +10,7 @@ require (
 	github.com/a2aproject/a2a-go/v2 v2.5.0
 	github.com/cucumber/godog v0.15.1
 	github.com/go-playground/validator/v10 v10.30.5
+	github.com/google/uuid v1.6.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/samber/lo v1.53.0
 	github.com/scbizu/tape-go v0.2.0-anra.2
@@ -45,7 +46,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/safehtml v0.1.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.15 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

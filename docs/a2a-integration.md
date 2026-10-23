@@ -83,8 +83,12 @@ policy remains in Anra.
 
 Discover configured, trusted peer card URLs. An optional directory can provide
 these same references. `RankPeers` ranks visible native card skill descriptions
-and returns the peers worth visiting, best first, or no match. This release does not implement a network
-registry or automatic registration.
+and returns the peers worth visiting, best first, or no match. The CLI's
+`registry` command provides a leased team directory of Agent Cards.
+`serve --registry <url>` registers automatically, and named sends resolve the
+current destination card through that directory. See
+[CLI discovery](cli.md#running-servers-and-discovery). The registry is an Anra
+directory service; core A2A communication still uses the official SDK.
 
 ```go
 card, err := a2a.Discover(ctx, credentialScopedHTTPClient, peerCardURL)

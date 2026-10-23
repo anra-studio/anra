@@ -46,6 +46,7 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 	c := &cliScenario{s: s}
 	initializeConfig(sc, c)
 	initializeEnvironment(sc, c)
+	initializeTeam(sc, c)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		*c = cliScenario{s: s}
 		return ctx, nil

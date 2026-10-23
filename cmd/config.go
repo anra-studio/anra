@@ -19,14 +19,15 @@ type fileConfig struct {
 // Pointers distinguish an omitted setting from an explicitly empty value.
 // Keys mirror the command flags; credentials continue to come from the environment.
 type agentConfig struct {
-	DataDir *string `toml:"data-dir"`
-	Session *string `toml:"session"`
-	Runner  *string `toml:"runner"`
-	Model   *string `toml:"model"`
-	System  *string `toml:"system"`
-	Listen  *string `toml:"listen"`
-	Peer    *string `toml:"peer"`
-	Timeout *string `toml:"timeout"`
+	DataDir  *string `toml:"data-dir"`
+	Session  *string `toml:"session"`
+	Runner   *string `toml:"runner"`
+	Model    *string `toml:"model"`
+	System   *string `toml:"system"`
+	Listen   *string `toml:"listen"`
+	Peer     *string `toml:"peer"`
+	Timeout  *string `toml:"timeout"`
+	Registry *string `toml:"registry"`
 }
 
 func (c agentConfig) settings() map[string]*string {
@@ -34,6 +35,7 @@ func (c agentConfig) settings() map[string]*string {
 		"data-dir": c.DataDir, "session": c.Session, "runner": c.Runner,
 		"model": c.Model, "system": c.System, "listen": c.Listen,
 		"peer": c.Peer, "timeout": c.Timeout,
+		"registry": c.Registry,
 	}
 }
 
@@ -44,7 +46,7 @@ func applyConfig(command *cobra.Command, settings *viper.Viper) error {
 	if err := settings.BindPFlags(command.Flags()); err != nil {
 		return err
 	}
-	names := []string{"config", "agent", "data-dir", "session", "runner", "model", "system", "listen", "peer", "timeout"}
+	names := []string{"config", "agent", "registry", "data-dir", "session", "runner", "model", "system", "listen", "peer", "to", "timeout", "lease-ttl"}
 	for _, name := range names {
 		if command.Flag(name) != nil {
 			settings.MustBindEnv(name)

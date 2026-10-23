@@ -2,12 +2,13 @@
 
 Build with `mise run build-cli`, or `go build -o anra ./cmd/anra`.
 Run `./anra --help` or `./anra <command> -h` for Cobra-generated usage.
-Shared flags (`--agent`, `--data-dir`, `--session`, `--config`) can precede the subcommand,
+Shared flags (`--agent`, `--data-dir`, `--session`, `--config`, `--registry`) can precede the subcommand,
 and command flags can appear before or after the message. Quote the message
 to preserve its spacing. Use `--` before a message that starts with a dash.
 
 Command definitions live in the `cmd` package: `root.go` registers the command
-tree, with `run.go`, `serve.go`, and `send.go` defining each subcommand.
+tree, with one file per subcommand, including `run.go`, `serve.go`, `send.go`,
+`registry.go`, and `peers.go`.
 `cmd/anra/main.go` is the executable entry point.
 
 ## Agent configuration
@@ -23,36 +24,39 @@ data-dir = ".anra"
 session = "default"
 runner = "echo"
 timeout = "1m"
+registry = "http://127.0.0.1:9090"
+listen = "127.0.0.1:0"
 
 [agents.alice]
-peer = "http://127.0.0.1:8080"
 
 [agents.bob]
-listen = "127.0.0.1:8080"
 ```
 
 Select an entry with `--agent`; omitting it selects `default-agent`, or `anra`
 if no default is configured. The selected agent must exist in the file.
 Add, edit, or remove `[agents.<name>]` sections to manage the agent list.
 
-Start Bob in one terminal:
+Start the directory with `ANRA_PEER_TOKEN=local-demo ./anra registry`.
+Then start both agents in separate terminals:
 
 ```sh
+ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml serve --agent alice
 ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml serve --agent bob
 ```
 
-From another terminal, send from the configured default agent, Alice:
+From another terminal:
 
 ```sh
-ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml send "hello from alice"
+ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml send --agent alice --to bob "hello from alice"
 # bob: hello from alice
 ```
 
 Each `[agents.<name>]` section and `[defaults]` can contain `data-dir`, `session`,
-`runner`, `model`, `system`, `listen`, `peer`, and `timeout`. All values are
+`runner`, `model`, `system`, `listen`, `registry`, `peer`, and `timeout`. All values are
 strings, with durations such as `"30s"` or `"2m"`. Only settings applicable to
 the current command are applied; for example, `send` uses `peer`, while `serve`
-uses `listen`. A configured `peer` satisfies `send`'s required `--peer` flag.
+uses `listen`. `registry` is the shared discovery endpoint. Named sends use
+`--to`; a configured `peer` selects the optional direct-address mode.
 
 Explicit flags take precedence over environment variables, agent settings,
 `[defaults]`, and built-in defaults, in that order. This includes explicitly
@@ -87,8 +91,11 @@ corresponding flags.
 | `ANRA_RUNNER` | `deepseek` or `echo` |
 | `ANRA_MODEL` | Model name |
 | `ANRA_SYSTEM` | System instruction |
-| `ANRA_LISTEN` | Server listen address |
-| `ANRA_PEER` | Peer base URL; satisfies `send`'s required peer setting |
+| `ANRA_LISTEN` | Server or registry listen address |
+| `ANRA_REGISTRY` | Team Agent Card directory URL |
+| `ANRA_TO` | Named send destination |
+| `ANRA_LEASE_TTL` | Registry lease lifetime (default `15s`, minimum `1s`) |
+| `ANRA_PEER` | Optional direct-address send destination |
 | `ANRA_TIMEOUT` | Command timeout, such as `30s` |
 | `ANRA_PEER_TOKEN` | Peer bearer token |
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
@@ -128,37 +135,48 @@ Leaving `--model` empty uses tape-go's provider default. An absent key is an
 error; the command never silently switches to echo. Live provider behavior
 requires your credentials; the repository E2Es use echo.
 
-## Peer messaging
+## Running servers and discovery
 
-Set the same `ANRA_PEER_TOKEN` in both terminals. This token authenticates the
-trusted peer group. It is separate from the model API key. Start Bob:
+Start one team directory with `./anra registry --listen 127.0.0.1:9090`.
+Use the same `ANRA_PEER_TOKEN` for the directory, agent servers, and CLI clients.
+Each `serve --registry http://127.0.0.1:9090` registers its Agent Card, including
+its actual bound address and capabilities. All agents share this discovery
+endpoint; each agent owns its tape and communicates directly with peers.
 
-```sh
-export ANRA_PEER_TOKEN=local-demo
-./anra serve --agent bob --runner echo --listen 127.0.0.1:8080
-```
+`serve` publishes `/.well-known/agent-card.json` and authenticated A2A at `/a2a`.
+`--listen 127.0.0.1:0` chooses an available port. `peers --registry <url>` lists
+registered names and card URLs. Agent names are unique while their leases are
+active; attempting to start another server with the same name fails.
 
-From another terminal:
+Registrations renew every third of the lease lifetime. The directory defaults
+to a `15s` lifetime, configurable with `registry --lease-ttl`. Ctrl-C or SIGTERM
+shuts down HTTP, closes the tape, and unregisters the server. A crashed process
+loses its registration after the lease expires. The directory is in memory;
+active servers retry transient directory failures and register again after it
+restarts. A rejected credential or conflicting registration stops the affected
+agent server. An agent restart registers the same name at its new port and
+resumes its saved conversation.
 
-```sh
-export ANRA_PEER_TOKEN=local-demo
-./anra send --agent alice --peer http://127.0.0.1:8080 "hello from alice"
-# bob: hello from alice
-```
+`send --agent alice --to bob` requires both named agents to be serving. The CLI
+resolves Alice, invokes her authenticated outbound endpoint, and Alice discovers
+Bob's current card before sending over the official A2A SDK. Alice records the
+outgoing message and Bob's reply; Bob records the incoming message and his
+answer. Both source and destination tapes stay owned by their server processes.
+Bob can use the same path to send to Alice. Concurrent opposite-direction sends
+are supported; concurrent exchanges can interleave in each agent's session.
 
-`serve` publishes the standard Agent Card at `/.well-known/agent-card.json`
-and authenticates core A2A messages at `/a2a`. It prints the listening URL to
-stderr. Use a concrete interface address for `--listen`, such as
-`127.0.0.1:8080`; this address is advertised in discovery. Port `0` selects an
-available port. Ctrl-C or SIGTERM shuts down the server and closes its tape.
-The CLI exposes messaging; context borrowing remains a library capability.
+This explicit send flow uses the target's configured runner to answer. The CLI
+needs no model key; the destination server needs one when using DeepSeek. The
+echo runner exercises registration, discovery, transport, and storage without
+model credentials. The CLI exposes messaging; context borrowing remains a
+library capability.
 
-`send` discovers the peer and sends a text message using the official A2A SDK.
-The sender runs through Anra's tape runtime with the remote peer providing its
-answer, so the sender needs no model key. Both tapes retain the outgoing text
-and reply. This command sends the supplied text directly; model-directed peer
-tool selection is outside this initial command flow. To receive a model answer,
-start Bob with `--runner deepseek` and set his `DEEPSEEK_API_KEY`.
+For direct-address use without discovery, `send --peer http://127.0.0.1:8080`
+remains available. This mode opens the sender's local tape and requires that
+sender's server to be stopped. `--peer` and `--to` are mutually exclusive.
+A server started without `--registry` publishes its card but does not register.
+Use a concrete listen address reachable by other team members; that address
+is advertised in its card.
 
 ## Storage and sessions
 
@@ -172,7 +190,8 @@ messages use the serving agent's configured session; they do not choose a local
 owner or session through A2A IDs. All peers talking to that server contribute
 to that conversation.
 
-Only one process can open an agent database at a time. While Bob is serving,
-use `send` to talk to him; stop the server before using `run --agent bob` on
-the same database. Alice and Bob can run concurrently because their files are
-separate. `run` and `send` accept `--timeout` (default `1m`).
+Only one process can open an agent database at a time. Named sends use the
+running source server, so they work while its database is open. Stop a server
+before using `run` or direct `send --peer` with that agent's database. Alice and
+Bob run concurrently because their files are separate. `run` and `send` accept
+`--timeout` (default `1m`).
