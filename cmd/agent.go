@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/scbizu/anra/pkg/agent"
-	"github.com/scbizu/tape-go/pkg/runner"
+	"github.com/scbizu/anra/pkg/discovery"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"google.golang.org/adk/model"
 )
 
 var agentID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -48,7 +50,19 @@ func validateTimeout(timeout time.Duration) error {
 }
 
 // withAgent owns tape initialization and closure for one command invocation.
-func withAgent(ctx context.Context, common agentOptions, modelRunner runner.Runner, model modelOptions, execute func(*agent.Anra) error) (runErr error) {
+func withAgent(ctx context.Context, common agentOptions, llm model.LLM, config modelOptions, settings *viper.Viper, execute func(*agent.Anra) error) (runErr error) {
+	options := []agent.Option{agent.WithSystemInstruction("You are Anra agent " + common.id + ".\n" + config.system)}
+	if registry := settings.GetString("registry"); registry != "" {
+		token, err := peerToken(settings)
+		if err != nil {
+			return err
+		}
+		directory, err := discovery.NewClient(registry, token)
+		if err != nil {
+			return err
+		}
+		options = append(options, agent.WithPeers(directory, peerHTTP(token)))
+	}
 	tape, err := bbolt.NewBboltStorage(common.session, filepath.Join(common.dataDir, common.id+".db"))
 	if err != nil {
 		return err
@@ -57,7 +71,10 @@ func withAgent(ctx context.Context, common agentOptions, modelRunner runner.Runn
 	if err := tape.Init(owner.WithOwnerId(ctx, common.id)); err != nil {
 		return fmt.Errorf("open agent tape: %w", err)
 	}
-	a, err := agent.New(common.id, tape, agent.WithRunner(modelRunner), agent.WithModel(model.model), agent.WithSystemInstruction(model.system))
+	if llm != nil {
+		options = append(options, agent.WithLLM(llm))
+	}
+	a, err := agent.New(common.id, tape, options...)
 	if err != nil {
 		return err
 	}

@@ -10,7 +10,7 @@ Feature: Run tape-backed agents from the terminal
     Examples:
       | command | item      |
       | root    | serve     |
-      | run     | --runner  |
+      | run     | --provider  |
       | serve   | --listen  |
       | send    | --peer    |
 
@@ -36,7 +36,7 @@ Feature: Run tape-backed agents from the terminal
       | assistant | alice: hello again |
 
   Scenario: Say hello from one agent to another and restart the receiving agent
-    Given the CLI agent "bob" is serving with the echo runner
+    Given the CLI agent "bob" is serving with a deterministic model
     When the CLI agent "alice" sends "hello from alice" to the serving agent
     Then the CLI answer is "bob: hello from alice"
     When I restart the serving CLI agent
@@ -57,7 +57,7 @@ Feature: Run tape-backed agents from the terminal
       | assistant | bob: hello again      |
 
   Scenario: An incorrect peer token cannot send a message
-    Given the CLI agent "bob" is serving with the echo runner
+    Given the CLI agent "bob" is serving with a deterministic model
     When the CLI agent sends a greeting with the wrong peer token
     Then the CLI command fails
     When I stop the serving CLI agent
@@ -75,5 +75,5 @@ Feature: Run tape-backed agents from the terminal
       | missing key     | DEEPSEEK_API_KEY        |
       | missing token   | ANRA_PEER_TOKEN         |
       | missing peer    | required flag(s)        |
-      | unknown runner  | unknown runner         |
+      | unknown provider  | unknown provider         |
       | unknown command | unknown command        |

@@ -10,7 +10,9 @@ promises.
 The [running-agent discovery features](../tests/e2e/features/discovery.feature)
 cover two registered servers, bidirectional and concurrent greetings, restart,
 duplicate names, authentication, graceful unregistering, and crash expiry.
-The same Given/When/Then steps execute with
+The [ADK features](../tests/e2e/features/adk.feature) cover built-in tool execution,
+model-driven peer discovery and messaging, persisted tool history, and rejection
+of tool configuration. The same Given/When/Then steps execute with
 [Godog](https://github.com/cucumber/godog/tree/v0.15.1), so the specifications
 and checks stay together. Undefined and pending steps fail the suite.
 
@@ -70,8 +72,8 @@ The suite needs no model credentials or external service once Go dependencies
 are installed. It checks Anra's behavior around model calls; it does not measure
 a real model's answer quality. Library scenarios use public Go APIs and peer
 HTTP endpoints. CLI scenarios build `cmd/anra` once per suite and launch real
-processes with the explicit echo runner, temporary disk storage, and localhost
-HTTP. They check local persistence, two-agent messaging, receiver restart,
+processes using tape-go's ADK runtime and real provider HTTP requests to a
+deterministic local model fixture, temporary disk storage, and localhost HTTP. They check local persistence, two-agent messaging, receiver restart,
 authentication failure, TOML agent selection, Viper environment settings,
 configuration precedence, running-agent discovery, and invalid configuration.
 Directory lease expiry uses bounded polling of the public directory API;

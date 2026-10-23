@@ -94,12 +94,8 @@ directory service; core A2A communication still uses the official SDK.
 card, err := a2a.Discover(ctx, credentialScopedHTTPClient, peerCardURL)
 client, err := a2a.NewClient(credentialScopedHTTPClient, card)
 borrower, err := agent.New("borrower-local", borrowerTape,
-    agent.WithRunner(modelRunner),
-    agent.WithTool(a2a.BorrowTool{
-        Client: client,
-        Name: "borrow_researcher_context",
-        Description: "Borrow relevant storage research from the researcher peer",
-    }),
+    agent.WithLLM(providerModel),
+    agent.WithBorrowClient(client),
 )
 output, err := borrower.Run(ctx, "Find the peer's storage concurrency findings")
 ```

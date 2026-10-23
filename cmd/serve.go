@@ -25,7 +25,7 @@ func newServeCommand(common *agentOptions, settings *viper.Viper) *cobra.Command
 		Short: "Expose a tape-backed agent over A2A HTTP",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			modelRunner, err := newRunner(*common, model, settings.GetString("deepseek-api-key"))
+			llm, err := newModel(model, settings.GetString("deepseek-api-key"))
 			if err != nil {
 				return err
 			}
@@ -33,7 +33,7 @@ func newServeCommand(common *agentOptions, settings *viper.Viper) *cobra.Command
 			if err != nil {
 				return err
 			}
-			return withAgent(command.Context(), *common, modelRunner, model, func(a *agent.Anra) error {
+			return withAgent(command.Context(), *common, llm, model, settings, func(a *agent.Anra) error {
 				return serve(command.Context(), a, common.id, listen, token, settings, command.ErrOrStderr())
 			})
 		},

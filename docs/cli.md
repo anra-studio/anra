@@ -8,7 +8,7 @@ to preserve its spacing. Use `--` before a message that starts with a dash.
 
 Command definitions live in the `cmd` package: `root.go` registers the command
 tree, with one file per subcommand, including `run.go`, `serve.go`, `send.go`,
-`registry.go`, and `peers.go`.
+`registry.go`, `peers.go`, and `ask.go`.
 `cmd/anra/main.go` is the executable entry point.
 
 ## Agent configuration
@@ -22,7 +22,7 @@ default-agent = "alice"
 [defaults]
 data-dir = ".anra"
 session = "default"
-runner = "echo"
+provider = "deepseek"
 timeout = "1m"
 registry = "http://127.0.0.1:9090"
 listen = "127.0.0.1:0"
@@ -37,7 +37,7 @@ if no default is configured. The selected agent must exist in the file.
 Add, edit, or remove `[agents.<name>]` sections to manage the agent list.
 
 Start the directory with `ANRA_PEER_TOKEN=local-demo ./anra registry`.
-Then start both agents in separate terminals:
+Set `DEEPSEEK_API_KEY` in both server environments, then start the agents in separate terminals:
 
 ```sh
 ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml serve --agent alice
@@ -48,11 +48,10 @@ From another terminal:
 
 ```sh
 ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml send --agent alice --to bob "hello from alice"
-# bob: hello from alice
 ```
 
 Each `[agents.<name>]` section and `[defaults]` can contain `data-dir`, `session`,
-`runner`, `model`, `system`, `listen`, `registry`, `peer`, and `timeout`. All values are
+`provider`, `api-base`, `model`, `system`, `listen`, `registry`, `peer`, and `timeout`. All values are
 strings, with durations such as `"30s"` or `"2m"`. Only settings applicable to
 the current command are applied; for example, `send` uses `peer`, while `serve`
 uses `listen`. `registry` is the shared discovery endpoint. Named sends use
@@ -88,7 +87,8 @@ corresponding flags.
 | `ANRA_AGENT` | Agent name |
 | `ANRA_DATA_DIR` | Tape database directory |
 | `ANRA_SESSION` | Conversation session |
-| `ANRA_RUNNER` | `deepseek` or `echo` |
+| `ANRA_PROVIDER` | Model provider (`deepseek`) |
+| `ANRA_API_BASE` | Optional provider API base URL |
 | `ANRA_MODEL` | Model name |
 | `ANRA_SYSTEM` | System instruction |
 | `ANRA_LISTEN` | Server or registry listen address |
@@ -103,7 +103,7 @@ corresponding flags.
 For example, run an agent without repeating command flags:
 
 ```sh
-ANRA_AGENT=alice ANRA_RUNNER=echo ./anra run "hello"
+ANRA_AGENT=alice ANRA_PROVIDER=deepseek ./anra run "hello"
 ANRA_CONFIG=anra.example.toml ANRA_AGENT=bob ./anra run "hello"
 ```
 
@@ -115,25 +115,30 @@ environment-only and are not accepted as flags or TOML settings.
 ## Local agent
 
 ```sh
-./anra run --agent alice --runner echo "hello"
-# alice: hello
+./anra run --agent alice --provider deepseek "hello"
 ```
 
 `run` opens a tape-backed Anra agent, appends the message, runs it, prints its
 answer to stdout, and closes storage. A later command with the same agent,
 data directory, and session reconstructs its conversation from disk.
 
-`--runner echo` is an explicit deterministic demonstration. The default runner
-is `deepseek`, using tape-go's DeepSeek provider and ADK runner adapter. Set
-`DEEPSEEK_API_KEY` in the environment before using it:
+The runner is tape-go's ADK runtime. `--provider deepseek` selects the model
+provider; it does not replace the agent loop. Set `DEEPSEEK_API_KEY` in the
+environment before using `run` or `serve`:
 
 ```sh
 ./anra run --agent alice --model deepseek-chat --system "Answer briefly." "hello"
 ```
 
-Leaving `--model` empty uses tape-go's provider default. An absent key is an
-error; the command never silently switches to echo. Live provider behavior
-requires your credentials; the repository E2Es use echo.
+Leaving `--model` empty uses tape-go's provider default. `--api-base` can override
+the provider's HTTP endpoint. An absent key is an error. Production has no echo
+provider; the repository E2Es run a deterministic provider HTTP fixture with a
+fixture key, so no real model credentials are needed.
+
+The runtime registers its built-in Bash, peer discovery, and peer messaging
+tools internally. Peer operations require a configured registry and team token.
+There is no `--tools` flag, TOML `tools` key, environment tool setting, or public
+option for injecting arbitrary tools.
 
 ## Running servers and discovery
 
@@ -165,11 +170,15 @@ answer. Both source and destination tapes stay owned by their server processes.
 Bob can use the same path to send to Alice. Concurrent opposite-direction sends
 are supported; concurrent exchanges can interleave in each agent's session.
 
-This explicit send flow uses the target's configured runner to answer. The CLI
-needs no model key; the destination server needs one when using DeepSeek. The
-echo runner exercises registration, discovery, transport, and storage without
-model credentials. The CLI exposes messaging; context borrowing remains a
-library capability.
+`send` explicitly routes a message to the destination's model. The CLI needs
+no model key; the destination server does.
+
+`ask --agent alice "Discover Bob and ask him to say hello."` submits a request
+to Alice's model over A2A. Her ADK loop can discover peer cards, call the built-in
+`send_peer_message` tool, and use Bob's response in her answer. ADK persists the
+model's tool calls and results to Alice's tape, including history used after a
+restart. Both servers need model credentials. Context borrowing is also a
+built-in library capability, connected with `agent.WithBorrowClient`.
 
 For direct-address use without discovery, `send --peer http://127.0.0.1:8080`
 remains available. This mode opens the sender's local tape and requires that
@@ -193,5 +202,5 @@ to that conversation.
 Only one process can open an agent database at a time. Named sends use the
 running source server, so they work while its database is open. Stop a server
 before using `run` or direct `send --peer` with that agent's database. Alice and
-Bob run concurrently because their files are separate. `run` and `send` accept
+Bob run concurrently because their files are separate. `run`, `ask`, and `send` accept
 `--timeout` (default `1m`).

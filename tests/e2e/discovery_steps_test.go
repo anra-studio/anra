@@ -24,6 +24,7 @@ type teamScenario struct {
 
 func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 	t := &teamScenario{c: c}
+	initializeADK(sc, t)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		*t = teamScenario{c: c, agents: make(map[string]*cliScenario)}
 		return ctx, nil
@@ -40,18 +41,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 		return t.registry.startProcess("registry", "registry", "--listen", "127.0.0.1:0", "--lease-ttl", "1s")
 	})
 	sc.Step(`^team agents "([^"]*)" and "([^"]*)" are serving$`, func(a, b string) error {
-		config := fmt.Sprintf("[defaults]\nregistry = %q\ndata-dir = 'cli'\nrunner = 'echo'\nlisten = '127.0.0.1:0'\n[agents.%s]\n[agents.%s]\n", t.registry.peer, a, b)
-		if err := os.WriteFile(c.configPath(), []byte(config), 0o600); err != nil {
-			return err
-		}
-		for _, id := range []string{a, b} {
-			p := &cliScenario{s: c.s}
-			t.agents[id] = p
-			if err := p.startProcess(id, "serve", "--config", c.configPath(), "--agent", id); err != nil {
-				return err
-			}
-		}
-		return nil
+		return t.startAgents(a, b)
 	})
 	sc.Step(`^I list the team's registered peers$`, func() { c.execute("e2e-peer-token", "peers", "--registry", t.registry.peer) })
 	sc.Step(`^the team directory lists "([^"]*)" and "([^"]*)"$`, func(a, b string) error {
@@ -115,7 +105,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 		return err
 	})
 	sc.Step(`^another server attempts to register as "([^"]*)"$`, func(id string) {
-		c.execute("e2e-peer-token", "serve", "--agent", id, "--runner", "echo", "--data-dir", filepath.Join(c.s.root, "duplicate"), "--listen", "127.0.0.1:0", "--registry", t.registry.peer)
+		c.execute("e2e-peer-token", "serve", "--agent", id, "--provider", "deepseek", "--data-dir", filepath.Join(c.s.root, "duplicate"), "--listen", "127.0.0.1:0", "--registry", t.registry.peer)
 	})
 	sc.Step(`^both team agents send greetings simultaneously$`, func() {
 		t.concurrent = []*cliScenario{{s: c.s}, {s: c.s}}
@@ -177,6 +167,21 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 		}
 	})
 	sc.Step(`^I query the team directory with an incorrect token$`, func() { c.execute("incorrect", "peers", "--registry", t.registry.peer) })
+}
+
+func (t *teamScenario) startAgents(a, b string) error {
+	config := fmt.Sprintf("[defaults]\nregistry = %q\ndata-dir = 'cli'\nprovider = 'deepseek'\nlisten = '127.0.0.1:0'\n[agents.%s]\n[agents.%s]\n", t.registry.peer, a, b)
+	if err := os.WriteFile(t.c.configPath(), []byte(config), 0o600); err != nil {
+		return err
+	}
+	for _, id := range []string{a, b} {
+		p := &cliScenario{s: t.c.s}
+		t.agents[id] = p
+		if err := p.startProcess(id, "serve", "--config", t.c.configPath(), "--agent", id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (t *teamScenario) send(c *cliScenario, from, to, text string) {

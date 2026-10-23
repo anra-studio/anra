@@ -72,10 +72,10 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		flags := []string{"--agent", id, "--data-dir", c.dataDir()}
 		var args []string
 		if placement == "before the command" {
-			args = append(flags, "run", "--runner", "echo", text)
+			args = append(flags, "run", "--provider", "deepseek", text)
 		} else {
 			args = append([]string{"run", text}, flags...)
-			args = append(args, "--runner", "echo")
+			args = append(args, "--provider", "deepseek")
 		}
 		c.execute("", args...)
 		return c.err
@@ -86,7 +86,7 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^the CLI agent "([^"]*)" is serving with the echo runner$`, c.start)
+	sc.Step(`^the CLI agent "([^"]*)" is serving with a deterministic model$`, c.start)
 	sc.Step(`^the CLI agent "([^"]*)" sends "([^"]*)" to the serving agent$`, c.send)
 	sc.Step(`^I restart the serving CLI agent$`, func() error {
 		if err := c.stop(); err != nil {
@@ -137,7 +137,7 @@ func cliEnv(token string) []string {
 }
 
 func (c *cliScenario) environment(token string) []string {
-	env := cliEnv(token)
+	env := append(cliEnv(token), "DEEPSEEK_API_KEY=e2e-model-key", "ANRA_API_BASE="+c.s.modelServer.URL)
 	for key, value := range c.env {
 		env = append(env, key+"="+value)
 	}
@@ -152,7 +152,7 @@ func (c *cliScenario) execute(token string, args ...string) {
 }
 
 func (c *cliScenario) runLocal(id, text string) error {
-	c.execute("e2e-peer-token", "run", "--agent", id, "--data-dir", c.dataDir(), "--runner", "echo", text)
+	c.execute("e2e-peer-token", "run", "--agent", id, "--data-dir", c.dataDir(), "--provider", "deepseek", text)
 	return c.err
 }
 
@@ -162,7 +162,7 @@ func (c *cliScenario) send(id, text string) error {
 }
 
 func (c *cliScenario) start(id string) error {
-	return c.startProcess(id, "serve", "--agent", id, "--data-dir", c.dataDir(), "--runner", "echo", "--listen", "127.0.0.1:0")
+	return c.startProcess(id, "serve", "--agent", id, "--data-dir", c.dataDir(), "--provider", "deepseek", "--listen", "127.0.0.1:0")
 }
 
 func (c *cliScenario) startProcess(id string, args ...string) error {
@@ -274,18 +274,22 @@ func (c *cliScenario) invalid(problem string) error {
 	token := "e2e-peer-token"
 	switch problem {
 	case "missing message":
-		args = append(args, "--runner", "echo")
+		args = append(args, "--provider", "deepseek")
 	case "invalid agent":
-		args = append(args, "--agent", "../alice", "--runner", "echo", "hello")
+		args = append(args, "--agent", "../alice", "--provider", "deepseek", "hello")
 	case "missing key":
+		if c.env == nil {
+			c.env = make(map[string]string)
+		}
+		c.env["DEEPSEEK_API_KEY"] = ""
 		args = append(args, "hello")
 	case "missing token":
-		args = append(append([]string{"serve"}, common...), "--runner", "echo")
+		args = append(append([]string{"serve"}, common...), "--provider", "deepseek")
 		token = ""
 	case "missing peer":
 		args = append(append([]string{"send"}, common...), "hello")
-	case "unknown runner":
-		args = append(args, "--runner", "unknown", "hello")
+	case "unknown provider":
+		args = append(args, "--provider", "unknown", "hello")
 	case "unknown command":
 		args = []string{"unknown"}
 	default:

@@ -1,48 +1,42 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
-	tapeagent "github.com/scbizu/tape-go/pkg/agent"
+	deepseek "github.com/cohesion-org/deepseek-go"
 	"github.com/scbizu/tape-go/pkg/provider/ds"
-	"github.com/scbizu/tape-go/pkg/runner"
 	"github.com/spf13/cobra"
+	"google.golang.org/adk/model"
 )
 
 type modelOptions struct {
-	runner, model, system string
+	provider, model, system, apiBase string
 }
 
 func (o *modelOptions) flags(command *cobra.Command) {
-	command.Flags().StringVar(&o.runner, "runner", "deepseek", "model runner: deepseek or echo")
-	command.Flags().StringVar(&o.model, "model", "", "DeepSeek model (empty uses tape-go's default)")
-	command.Flags().StringVar(&o.system, "system", "", "system instruction for the model")
+	command.Flags().StringVar(&o.provider, "provider", "deepseek", "model provider")
+	command.Flags().StringVar(&o.model, "model", "", "model name (empty uses the provider default)")
+	command.Flags().StringVar(&o.system, "system", "", "system instruction for the agent")
+	command.Flags().StringVar(&o.apiBase, "api-base", "", "provider API base URL override")
 }
 
-func newRunner(agent agentOptions, o modelOptions, key string) (runner.Runner, error) {
-	switch o.runner {
-	case "echo":
-		return echoRunner{id: agent.id}, nil
-	case "deepseek":
-		if strings.TrimSpace(key) == "" {
-			return nil, errors.New("DEEPSEEK_API_KEY is required for --runner deepseek; use --runner echo for a local demo")
-		}
-		model, err := ds.NewModel(key, o.model)
-		if err != nil {
-			return nil, err
-		}
-		return tapeagent.NewADKRunner(model), nil
-	default:
-		return nil, fmt.Errorf("unknown runner %q (use deepseek or echo)", o.runner)
+func newModel(o modelOptions, key string) (model.LLM, error) {
+	if o.provider != "deepseek" {
+		return nil, fmt.Errorf("unknown provider %q (use deepseek)", o.provider)
 	}
-}
-
-// echoRunner is an explicit no-model demo, using the same tape runtime.
-type echoRunner struct{ id string }
-
-func (r echoRunner) RunTurn(_ context.Context, req runner.Request) (runner.Response, error) {
-	return runner.Response{Output: r.id + ": " + req.Messages[len(req.Messages)-1].Text}, nil
+	if strings.TrimSpace(key) == "" {
+		return nil, errors.New("DEEPSEEK_API_KEY is required for provider deepseek")
+	}
+	var opts []deepseek.Option
+	if o.apiBase != "" {
+		u, err := url.Parse(o.apiBase)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return nil, errors.New("--api-base must be an HTTP(S) provider URL")
+		}
+		opts = append(opts, deepseek.WithBaseURL(strings.TrimRight(o.apiBase, "/")+"/"))
+	}
+	return ds.NewModel(key, o.model, opts...)
 }

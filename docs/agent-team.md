@@ -1,7 +1,7 @@
 # Anra agent team
 
 Anra composes agents on tape-go, pinned to `v0.2.0-anra.2`. Each member owns an identity, role instructions,
-a Runner, tools, and a Tape. Members communicate through A2A and can borrow
+an ADK runtime, built-in tools, and a Tape. Members communicate through A2A and can borrow
 another member's Tape view when authorized.
 
 ## Member runtime
@@ -9,14 +9,19 @@ another member's Tape view when authorized.
 `agent.New(principal, storage, options...)` configures a member. Storage must
 be an initialized tape-go `*bbolt.Bbolt`. The constructor accepts that concrete
 type directly. The caller owns initialization and closure.
-`Run(ctx, input)` stores the user message and calls tape-go's neutral
-`Runner.RunTurn`. The Runner returns either final output or tool calls. Tool
-calls and results are stored on Tape before the next turn. Subsequent runs
-rebuild conversation context from those records.
+`Run(ctx, input)` delegates the model/tool loop to tape-go's `agent.NewRuntime`
+and ADK runner. `agent.WithLLM` supplies the provider model, implementing ADK's
+`model.LLM`; provider selection and agent execution are separate concerns.
+Tape-go's `TapeAdapter` implements ADK's session and memory services and context
+window callback. User messages, model responses, tool calls, and tool results
+are persisted as ADK events and reconstructed on later invocations.
 
-Capabilities implement `agent.Tool`; model providers implement tape-go's
-`runner.Runner`. Anra uses Runner messages, tool calls, and results directly.
-It does not maintain a separate Event, Activation, Decision, or Effect model.
+Tools are registered internally. The runtime includes tape-go's native Bash
+tool and Anra's peer discovery/messaging tools. `WithPeers` supplies their
+network services; `WithBorrowClient` connects the built-in context borrowing
+capability. There is no public option for injecting arbitrary tools. Anra does
+not maintain a second agent loop. Its storage adapter preserves tool entry kinds
+and reads legacy structured messages as ADK events without rewriting old tapes.
 The former `Submit` and `Inspect` lifecycle APIs have been removed; callers use
 `Run` for execution and Tape storage for history queries.
 

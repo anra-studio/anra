@@ -39,6 +39,7 @@ type scenario struct {
 	localTape, peerTape *bbolt.Bbolt
 	service             *a2a.Service
 	server              *httptest.Server
+	modelServer         *httptest.Server
 	card                *sdk.AgentCard
 	client              *a2a.Client
 	ordinary            *a2aclient.Client
@@ -63,12 +64,16 @@ func initializeScenario(sc *godog.ScenarioContext) {
 			return ctx, err
 		}
 		*s = scenario{root: root}
+		s.modelServer = newModelServer()
 		s.ctx, s.cancel = context.WithTimeout(ctx, 20*time.Second)
 		s.clock.Store(time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC).UnixNano())
 		return s.ctx, nil
 	})
 	sc.After(func(ctx context.Context, sc *godog.Scenario, scenarioErr error) (context.Context, error) {
 		err := s.stopPeer()
+		if s.modelServer != nil {
+			s.modelServer.Close()
+		}
 		if s.localTape != nil {
 			err = errors.Join(err, s.localTape.Close())
 		}
@@ -152,10 +157,6 @@ func (s *scenario) saveFailure(name string, failure error) error {
 
 type modelFunc func(context.Context, runner.Request) (runner.Response, error)
 
-func (f modelFunc) RunTurn(ctx context.Context, r runner.Request) (runner.Response, error) {
-	return f(ctx, r)
-}
-
 func (s *scenario) openTape(name, principal string) (*bbolt.Bbolt, error) {
 	tape, err := bbolt.NewBboltStorage("session", filepath.Join(s.root, name+".db"))
 	if err != nil {
@@ -182,7 +183,7 @@ func (s *scenario) reopenLocalTape() error {
 }
 
 func (s *scenario) ask(question, answer string) error {
-	a, err := agent.New("borrower-local", s.localTape, agent.WithRunner(modelFunc(func(_ context.Context, req runner.Request) (runner.Response, error) {
+	a, err := agent.New("borrower-local", s.localTape, agent.WithLLM(modelFunc(func(_ context.Context, req runner.Request) (runner.Response, error) {
 		s.lastRequest = req
 		return runner.Response{Output: answer}, nil
 	})))
@@ -197,7 +198,7 @@ func (s *scenario) otherMember() error {
 	if err := s.localTape.Init(owner.WithOwnerId(s.ctx, "other-local")); err != nil {
 		return err
 	}
-	a, err := agent.New("other-local", s.localTape, agent.WithRunner(modelFunc(func(_ context.Context, req runner.Request) (runner.Response, error) {
+	a, err := agent.New("other-local", s.localTape, agent.WithLLM(modelFunc(func(_ context.Context, req runner.Request) (runner.Response, error) {
 		if len(req.Messages) != 1 || req.Messages[0].Text != "private question" {
 			return runner.Response{}, fmt.Errorf("another member received private history: %+v", req.Messages)
 		}
@@ -278,7 +279,7 @@ func (s *scenario) startPeer() error {
 	if err != nil {
 		return err
 	}
-	lender, err := agent.New("researcher-local", s.peerTape, agent.WithRunner(modelFunc(func(context.Context, runner.Request) (runner.Response, error) {
+	lender, err := agent.New("researcher-local", s.peerTape, agent.WithLLM(modelFunc(func(context.Context, runner.Request) (runner.Response, error) {
 		return runner.Response{Output: "research response"}, nil
 	})))
 	if err != nil {
@@ -605,7 +606,7 @@ func (s *scenario) borrowWithAgent() error {
 		return err
 	}
 	turns := 0
-	a, err := agent.New("borrower-local", s.localTape, agent.WithTool(a2a.BorrowTool{Client: s.client}), agent.WithRunner(modelFunc(func(_ context.Context, req runner.Request) (runner.Response, error) {
+	a, err := agent.New("borrower-local", s.localTape, agent.WithBorrowClient(s.client), agent.WithLLM(modelFunc(func(_ context.Context, req runner.Request) (runner.Response, error) {
 		turns++
 		if turns == 1 {
 			return runner.Response{ToolCalls: []runner.ToolCall{{ID: "borrow-call", Name: "borrow_peer_context", Arguments: json.RawMessage(`{"requestId":"agent-borrow","purpose":"fix storage concurrency","query":"bbolt"}`)}}}, nil
@@ -660,7 +661,7 @@ func (s *scenario) checkBorrowedContext() error {
 	return errors.New("borrowed context missing from tool results")
 }
 func (s *scenario) recallBorrowedContext() error {
-	a, err := agent.New("borrower-local", s.localTape, agent.WithRunner(modelFunc(func(_ context.Context, req runner.Request) (runner.Response, error) {
+	a, err := agent.New("borrower-local", s.localTape, agent.WithLLM(modelFunc(func(_ context.Context, req runner.Request) (runner.Response, error) {
 		s.lastRequest = req
 		if err := s.checkBorrowedContext(); err != nil {
 			return runner.Response{}, err

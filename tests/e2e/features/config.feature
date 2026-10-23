@@ -79,6 +79,6 @@ Feature: Manage named CLI agents in a TOML file
       | unknown default agent   | is not configured           |
       | invalid agent name      | invalid agent name          |
       | invalid duration        | timeout                     |
-      | explicit runner         | DEEPSEEK_API_KEY             |
+      | explicit provider         | unknown provider             |
       | explicit zero timeout   | --timeout must be positive  |
       | explicit empty session  | --session must not be empty |

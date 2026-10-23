@@ -3,7 +3,7 @@ default-agent = "alice"
 [defaults]
 data-dir = ".anra"
 session = "default"
-runner = "echo"
+provider = "deepseek"
 timeout = "1m"
 registry = "http://127.0.0.1:9090"
 listen = "127.0.0.1:0"
@@ -11,4 +11,4 @@ listen = "127.0.0.1:0"
 [agents.alice]
 
 [agents.bob]
-# For model-generated answers, set runner = "deepseek" and DEEPSEEK_API_KEY.
+# Set DEEPSEEK_API_KEY and ANRA_PEER_TOKEN in each server environment.

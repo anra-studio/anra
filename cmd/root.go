@@ -12,9 +12,10 @@ func NewRootCommand() *cobra.Command {
 		Short: "Run tape-backed agents and communicate with peers",
 		Long: `Run tape-backed agents and communicate with peers over A2A HTTP.
 
-run/serve use DeepSeek (DEEPSEEK_API_KEY) by default; --runner echo needs no key.
-serve/send require the same ANRA_PEER_TOKEN environment variable.
-Options also accept ANRA_ environment variables, such as ANRA_AGENT and ANRA_RUNNER.`,
+run/serve use tape-go's ADK runtime, configured models, and built-in tools.
+DeepSeek requires DEEPSEEK_API_KEY.
+Peer commands require the same ANRA_PEER_TOKEN environment variable.
+Options also accept ANRA_ environment variables, such as ANRA_AGENT and ANRA_PROVIDER.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(command *cobra.Command, _ []string) error {
@@ -29,6 +30,6 @@ Options also accept ANRA_ environment variables, such as ANRA_AGENT and ANRA_RUN
 	root.PersistentFlags().StringVar(&common.session, "session", "default", "persistent conversation session")
 	root.PersistentFlags().String("config", "", "TOML file containing agent settings")
 	root.PersistentFlags().String("registry", "", "team Agent Card directory URL")
-	root.AddCommand(newRunCommand(&common, settings), newServeCommand(&common, settings), newSendCommand(&common, settings), newRegistryCommand(settings), newPeersCommand(settings))
+	root.AddCommand(newRunCommand(&common, settings), newAskCommand(&common, settings), newServeCommand(&common, settings), newSendCommand(&common, settings), newRegistryCommand(settings), newPeersCommand(settings))
 	return root
 }

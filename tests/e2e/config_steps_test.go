@@ -76,15 +76,15 @@ func (c *cliScenario) writeAgentConfig(peer string) error {
 [defaults]
 data-dir = "cli"
 session = "default"
-runner = "deepseek"
+provider = "invalid-default"
 timeout = "2s"
 
 [agents.alice]
-runner = "echo"
+provider = "deepseek"
 peer = %q
 
 [agents.bob]
-runner = "echo"
+provider = "deepseek"
 listen = "127.0.0.1:0"
 `, peer)
 	return os.WriteFile(c.configPath(), []byte(text), 0o600)
@@ -108,21 +108,21 @@ func (c *cliScenario) invalidConfig(problem string) error {
 	case "malformed TOML":
 		text += "\n[broken\n"
 	case "wrong setting type":
-		text = strings.ReplaceAll(text, `runner = "echo"`, `runner = 123`)
+		text = strings.ReplaceAll(text, `provider = "deepseek"`, `provider = 123`)
 	case "unknown setting":
 		text += "\nruner = 'echo'\n"
 	case "no agents":
-		text = "[defaults]\nrunner = 'echo'\n"
+		text = "[defaults]\nprovider = 'deepseek'\n"
 	case "unknown selected agent":
 		args = append(args, "--agent", "charlie")
 	case "unknown default agent":
 		text = strings.Replace(text, `default-agent = "alice"`, `default-agent = "charlie"`, 1)
 	case "invalid agent name":
-		text += "\n[agents.'../outside']\nrunner = 'echo'\n"
+		text += "\n[agents.'../outside']\nprovider = 'deepseek'\n"
 	case "invalid duration":
 		text = strings.Replace(text, `timeout = "2s"`, `timeout = "soon"`, 1)
-	case "explicit runner":
-		args = append(args, "--runner", "deepseek")
+	case "explicit provider":
+		args = append(args, "--provider", "invalid")
 	case "explicit zero timeout":
 		args = append(args, "--timeout", "0s")
 	case "explicit empty session":

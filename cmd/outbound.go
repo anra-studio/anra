@@ -12,7 +12,6 @@ import (
 
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/scbizu/anra/pkg/discovery"
-	"github.com/scbizu/tape-go/pkg/runner"
 	"github.com/spf13/viper"
 )
 
@@ -63,19 +62,16 @@ func outboundHandler(a *agent.Anra, settings *viper.Viper, authenticate func(*ht
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		remote, err := newPeerRunner(r.Context(), base, settings)
+		remote, err := newPeerClient(r.Context(), base, settings)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		if remote.(peerRunner).name != value.To {
+		if remote.Name != value.To {
 			http.Error(w, "discovered card name mismatch", http.StatusBadGateway)
 			return
 		}
-		answer, err := a.Exchange(r.Context(), value.Message, func(ctx context.Context, input string) (string, error) {
-			response, err := remote.RunTurn(ctx, runner.Request{Messages: []runner.Message{{Role: runner.RoleUser, Text: input}}})
-			return response.Output, err
-		})
+		answer, err := a.Exchange(r.Context(), value.Message, remote.Send)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return

@@ -8,6 +8,7 @@ require (
 	connectrpc.com/connect/v2 v2.0.0-rc.1
 	connectrpc.com/validate v0.8.0-rc.1
 	github.com/a2aproject/a2a-go/v2 v2.5.0
+	github.com/cohesion-org/deepseek-go v1.4.0
 	github.com/cucumber/godog v0.15.1
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/google/uuid v1.6.0
@@ -18,6 +19,8 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/timshannon/bolthold v0.0.0-20240314194003-30aac6950928
 	go.etcd.io/bbolt v1.5.0
+	google.golang.org/adk v1.4.0
+	google.golang.org/genai v1.57.0
 	google.golang.org/protobuf v1.36.12
 )
 
@@ -31,7 +34,6 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cohesion-org/deepseek-go v1.4.0 // indirect
 	github.com/cucumber/gherkin/go/v26 v26.2.0 // indirect
 	github.com/cucumber/messages/go/v21 v21.0.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
@@ -44,6 +46,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/gofrs/uuid v4.3.1+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/safehtml v0.1.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.15 // indirect
@@ -79,9 +82,7 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
-	google.golang.org/adk v1.4.0 // indirect
 	google.golang.org/api v0.279.0 // indirect
-	google.golang.org/genai v1.57.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/grpc v1.82.1 // indirect

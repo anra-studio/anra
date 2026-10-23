@@ -29,8 +29,8 @@ Feature: Configure CLI agents through the environment
 
   Scenario: Explicit flags override invalid environment values
     Given CLI environment settings for agent "alice"
-    And the environment has an invalid runner and timeout
-    When I run the CLI with explicit echo runner and timeout flags
+    And the environment has an invalid provider and timeout
+    When I run the CLI with explicit provider and timeout flags
     Then the CLI answer is "alice: hello"
 
   Scenario: Two agents communicate using environment settings
@@ -56,7 +56,7 @@ Feature: Configure CLI agents through the environment
     Examples:
       | problem            | error                       |
       | invalid agent      | --agent must start          |
-      | unknown runner     | unknown runner              |
+      | unknown provider     | unknown provider              |
       | invalid duration   | timeout                     |
       | zero timeout       | --timeout must be positive  |
       | empty session      | --session must not be empty |

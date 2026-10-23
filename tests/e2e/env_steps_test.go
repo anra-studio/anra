@@ -20,12 +20,12 @@ func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario) {
 		c.execute("", "run", "--agent", id, "--session", session, "hello "+id)
 		return c.err
 	})
-	sc.Step(`^the environment has an invalid runner and timeout$`, func() {
-		c.env["ANRA_RUNNER"] = "invalid"
+	sc.Step(`^the environment has an invalid provider and timeout$`, func() {
+		c.env["ANRA_PROVIDER"] = "invalid"
 		c.env["ANRA_TIMEOUT"] = "soon"
 	})
-	sc.Step(`^I run the CLI with explicit echo runner and timeout flags$`, func() error {
-		c.execute("", "run", "--runner", "echo", "--timeout", "1m", "hello")
+	sc.Step(`^I run the CLI with explicit provider and timeout flags$`, func() error {
+		c.execute("", "run", "--provider", "deepseek", "--timeout", "1m", "hello")
 		return c.err
 	})
 	sc.Step(`^the CLI agent is serving using environment settings$`, func() error {
@@ -44,8 +44,8 @@ func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario) {
 		switch problem {
 		case "invalid agent":
 			c.env["ANRA_AGENT"] = "../outside"
-		case "unknown runner":
-			c.env["ANRA_RUNNER"] = "invalid"
+		case "unknown provider":
+			c.env["ANRA_PROVIDER"] = "invalid"
 		case "invalid duration":
 			c.env["ANRA_TIMEOUT"] = "soon"
 		case "zero timeout":
@@ -58,7 +58,8 @@ func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario) {
 			c.env["ANRA_PEER_TOKEN"] = ""
 			args = []string{"serve"}
 		case "missing model key":
-			c.env["ANRA_RUNNER"] = "deepseek"
+			c.env["DEEPSEEK_API_KEY"] = ""
+			c.env["ANRA_PROVIDER"] = "deepseek"
 		default:
 			return fmt.Errorf("unknown environment problem %q", problem)
 		}
@@ -70,6 +71,6 @@ func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario) {
 func (c *cliScenario) agentEnvironment(id string) {
 	c.env = map[string]string{
 		"ANRA_AGENT": id, "ANRA_DATA_DIR": c.dataDir(), "ANRA_SESSION": "default",
-		"ANRA_RUNNER": "echo", "ANRA_TIMEOUT": "2s",
+		"ANRA_PROVIDER": "deepseek", "ANRA_TIMEOUT": "2s",
 	}
 }

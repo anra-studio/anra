@@ -20,11 +20,11 @@ func newRunCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(command.Context(), timeout)
 			defer cancel()
-			modelRunner, err := newRunner(*common, model, settings.GetString("deepseek-api-key"))
+			llm, err := newModel(model, settings.GetString("deepseek-api-key"))
 			if err != nil {
 				return err
 			}
-			return withAgent(ctx, *common, modelRunner, model, func(a *agent.Anra) error {
+			return withAgent(ctx, *common, llm, model, settings, func(a *agent.Anra) error {
 				return printAnswer(ctx, a, args, command.OutOrStdout())
 			})
 		},

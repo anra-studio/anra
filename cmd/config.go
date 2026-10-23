@@ -21,7 +21,8 @@ type fileConfig struct {
 type agentConfig struct {
 	DataDir  *string `toml:"data-dir"`
 	Session  *string `toml:"session"`
-	Runner   *string `toml:"runner"`
+	Provider *string `toml:"provider"`
+	APIBase  *string `toml:"api-base"`
 	Model    *string `toml:"model"`
 	System   *string `toml:"system"`
 	Listen   *string `toml:"listen"`
@@ -32,7 +33,7 @@ type agentConfig struct {
 
 func (c agentConfig) settings() map[string]*string {
 	return map[string]*string{
-		"data-dir": c.DataDir, "session": c.Session, "runner": c.Runner,
+		"data-dir": c.DataDir, "session": c.Session, "provider": c.Provider, "api-base": c.APIBase,
 		"model": c.Model, "system": c.System, "listen": c.Listen,
 		"peer": c.Peer, "timeout": c.Timeout,
 		"registry": c.Registry,
@@ -46,7 +47,7 @@ func applyConfig(command *cobra.Command, settings *viper.Viper) error {
 	if err := settings.BindPFlags(command.Flags()); err != nil {
 		return err
 	}
-	names := []string{"config", "agent", "registry", "data-dir", "session", "runner", "model", "system", "listen", "peer", "to", "timeout", "lease-ttl"}
+	names := []string{"config", "agent", "registry", "data-dir", "session", "provider", "api-base", "model", "system", "listen", "peer", "to", "timeout", "lease-ttl"}
 	for _, name := range names {
 		if command.Flag(name) != nil {
 			settings.MustBindEnv(name)
