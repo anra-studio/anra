@@ -14,23 +14,21 @@ import (
 )
 
 func newRegistryCommand(settings *viper.Viper) *cobra.Command {
-	var listen string
-	var ttl time.Duration
 	command := &cobra.Command{Use: "registry", Short: "Run the team's Agent Card directory", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			handler, err := discovery.NewHandler(ttl)
+			handler, err := discovery.NewHandler(settings.GetDuration("lease-ttl"))
 			if err != nil {
 				return err
 			}
-			listener, err := net.Listen("tcp", listen)
+			listener, err := net.Listen("tcp", settings.GetString("listen"))
 			if err != nil {
 				return err
 			}
 			return serveHTTP(command.Context(), listener, handler, "registry", command.ErrOrStderr())
 		},
 	}
-	command.Flags().StringVar(&listen, "listen", "127.0.0.1:9090", "directory HTTP listen address")
-	command.Flags().DurationVar(&ttl, "lease-ttl", 15*time.Second, "registration lifetime without renewal (at least 1s)")
+	command.Flags().String("listen", "127.0.0.1:9090", "directory HTTP listen address")
+	command.Flags().Duration("lease-ttl", 15*time.Second, "registration lifetime without renewal (at least 1s)")
 	return command
 }
 

@@ -1,14 +1,20 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+var agentID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 type fileConfig struct {
 	DefaultAgent string                 `toml:"default-agent"`
@@ -39,9 +45,8 @@ func (c agentConfig) settings() map[string]*string {
 	}
 }
 
-// applyConfig resolves flags, environment, and the selected TOML profile through
-// Viper, then applies the resolved values through Cobra's parsers. This also lets
-// config or environment values satisfy required flags such as --to.
+// applyConfig binds flags and environment, then loads the selected TOML profile
+// into Viper. Commands and agent construction read the resolved settings directly.
 func applyConfig(command *cobra.Command, settings *viper.Viper) error {
 	if err := settings.BindPFlags(command.Flags()); err != nil {
 		return err
@@ -57,15 +62,25 @@ func applyConfig(command *cobra.Command, settings *viper.Viper) error {
 			return err
 		}
 	}
-	for _, name := range names {
-		flag := command.Flag(name)
-		if flag == nil || flag.Changed || !settings.IsSet(name) {
+	if !agentID.MatchString(settings.GetString("agent")) {
+		return errors.New("--agent must start with a letter or digit and contain only letters, digits, '.', '_' or '-'")
+	}
+	if strings.TrimSpace(settings.GetString("data-dir")) == "" || strings.TrimSpace(settings.GetString("session")) == "" {
+		return errors.New("--data-dir and --session must not be empty")
+	}
+	for _, name := range []string{"timeout", "lease-ttl"} {
+		if command.Flag(name) == nil {
 			continue
 		}
-		if err := command.Flags().Set(name, settings.GetString(name)); err != nil {
+		duration, err := time.ParseDuration(settings.GetString(name))
+		if err != nil {
 			return fmt.Errorf("setting %s: %w", name, err)
 		}
+		if name == "timeout" && duration <= 0 {
+			return errors.New("--timeout must be positive")
+		}
 	}
+
 	return nil
 }
 

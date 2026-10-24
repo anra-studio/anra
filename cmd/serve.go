@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -15,30 +16,26 @@ import (
 	"github.com/spf13/viper"
 )
 
-func newServeCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
-	var model modelOptions
-	var listen string
+func newServeCommand(settings *viper.Viper) *cobra.Command {
 	command := &cobra.Command{
-		Use:   "serve",
-		Short: "Expose a tape-backed agent over A2A HTTP",
-		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			llm, err := newModel(model, settings.GetString("deepseek-api-key"))
+		Use: "serve", Short: "Expose a tape-backed agent over A2A HTTP", Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) (runErr error) {
+			a, tape, err := openAgent(command.Context(), settings)
 			if err != nil {
 				return err
 			}
-			return withAgent(command.Context(), *common, llm, model, settings, func(a *agent.Anra) error {
-				return serve(command.Context(), a, common.id, listen, settings, command.ErrOrStderr())
-			})
+			defer func() { runErr = errors.Join(runErr, tape.Close()) }()
+			return serve(command.Context(), a, settings, command.ErrOrStderr())
 		},
 	}
-	model.flags(command)
-	command.Flags().StringVar(&listen, "listen", "127.0.0.1:8080", "HTTP listen address")
+	modelFlags(command)
+	command.Flags().String("listen", "127.0.0.1:8080", "HTTP listen address")
 	return command
 }
 
-func serve(ctx context.Context, a *agent.Anra, id, listen string, settings *viper.Viper, status io.Writer) error {
-	listener, err := net.Listen("tcp", listen)
+func serve(ctx context.Context, a *agent.Anra, settings *viper.Viper, status io.Writer) error {
+	id := settings.GetString("agent")
+	listener, err := net.Listen("tcp", settings.GetString("listen"))
 	if err != nil {
 		return err
 	}

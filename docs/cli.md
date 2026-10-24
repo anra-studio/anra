@@ -59,9 +59,10 @@ destination by name with `--to`; agent profiles contain no peer addresses.
 
 Explicit flags take precedence over environment variables, agent settings,
 `[defaults]`, and built-in defaults, in that order. This includes explicitly
-empty values and values equal to built-in defaults. Viper resolves these sources;
-configuration and environment values pass through Cobra's flag parsers and
-the same validation as command flags. For example:
+empty values and values equal to built-in defaults. Viper resolves these sources directly. Commands and agent construction read
+the same settings instance; resolved values are not copied into option structs
+or written back to Cobra flags. Duration values and required settings are
+validated before execution. For example:
 
 ```sh
 ./anra --config anra.example.toml run --agent bob --session scratch "hello"

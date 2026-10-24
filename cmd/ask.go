@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/scbizu/anra/pkg/discovery"
@@ -12,18 +11,16 @@ import (
 	"github.com/spf13/viper"
 )
 
-func newAskCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
-	var timeout time.Duration
+func newAskCommand(settings *viper.Viper) *cobra.Command {
 	command := &cobra.Command{Use: "ask [flags] message", Short: "Ask a running agent to use its model and built-in tools", Args: messageArgs,
-		PreRunE: func(*cobra.Command, []string) error { return validateTimeout(timeout) },
 		RunE: func(command *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(command.Context(), timeout)
+			ctx, cancel := context.WithTimeout(command.Context(), settings.GetDuration("timeout"))
 			defer cancel()
 			directory, err := discovery.NewClient(settings.GetString("registry"))
 			if err != nil {
 				return err
 			}
-			record, err := directory.Lookup(ctx, common.id)
+			record, err := directory.Lookup(ctx, settings.GetString("agent"))
 			if err != nil {
 				return err
 			}
@@ -31,14 +28,14 @@ func newAskCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := newPeerClient(ctx, base, common.id)
+			client, err := newPeerClient(ctx, base, settings.GetString("agent"))
 			if err != nil {
 				return err
 			}
-			if client.Name != common.id {
+			if client.Name != settings.GetString("agent") {
 				return errors.New("discovered card name mismatch")
 			}
-			answer, err := client.Send(ctx, strings.Join(args, " "))
+			answer, err := client.Send(ctx, message(args))
 			if err != nil {
 				return err
 			}
@@ -46,6 +43,6 @@ func newAskCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 			return err
 		},
 	}
-	command.Flags().DurationVar(&timeout, "timeout", time.Minute, "command timeout")
+	command.Flags().Duration("timeout", time.Minute, "command timeout")
 	return command
 }
