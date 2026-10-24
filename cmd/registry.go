@@ -18,11 +18,7 @@ func newRegistryCommand(settings *viper.Viper) *cobra.Command {
 	var ttl time.Duration
 	command := &cobra.Command{Use: "registry", Short: "Run the team's Agent Card directory", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			token, err := peerToken(settings)
-			if err != nil {
-				return err
-			}
-			handler, err := discovery.NewHandler(token, ttl)
+			handler, err := discovery.NewHandler(ttl)
 			if err != nil {
 				return err
 			}

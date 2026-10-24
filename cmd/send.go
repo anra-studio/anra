@@ -43,7 +43,7 @@ func newSendCommand(common *agentOptions, settings *viper.Viper) *cobra.Command 
 				_, err = fmt.Fprintln(command.OutOrStdout(), answer)
 				return err
 			}
-			peerClient, err := newPeerClient(ctx, peer, settings)
+			peerClient, err := newPeerClient(ctx, peer, common.id)
 			if err != nil {
 				return err
 			}

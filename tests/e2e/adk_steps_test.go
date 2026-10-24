@@ -81,14 +81,14 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		return nil
 	})
 	sc.Step(`^I ask running agent "([^"]*)" to "([^"]*)"$`, func(id, text string) error {
-		c.execute("e2e-peer-token", "ask", "--agent", id, "--registry", t.registry.peer, text)
+		c.execute("ask", "--agent", id, "--registry", t.registry.peer, text)
 		if c.err != nil {
 			return fmt.Errorf("%w: %s", c.err, c.output)
 		}
 		return nil
 	})
 	sc.Step(`^I run the local CLI agent with its built-in Bash tool$`, func() error {
-		c.execute("", "run", "--agent", "alice", "--data-dir", c.dataDir(), "run the built-in bash tool")
+		c.execute("run", "--agent", "alice", "--data-dir", c.dataDir(), "run the built-in bash tool")
 		if c.err != nil {
 			return fmt.Errorf("%w: %s", c.err, c.output)
 		}
@@ -174,7 +174,7 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		default:
 			return fmt.Errorf("unknown ADK problem %q", problem)
 		}
-		c.execute("", append(args, "hello")...)
+		c.execute(append(args, "hello")...)
 		return nil
 	})
 }

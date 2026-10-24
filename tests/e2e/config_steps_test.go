@@ -21,18 +21,18 @@ func initializeConfig(sc *godog.ScenarioContext, c *cliScenario) {
 		return os.WriteFile(c.configPath(), []byte(text), 0o600)
 	})
 	sc.Step(`^I run the configured default agent in session "([^"]*)" with "([^"]*)"$`, func(session, text string) error {
-		c.execute("", "run", "--config", c.configPath(), "--session", session, text)
+		c.execute("run", "--config", c.configPath(), "--session", session, text)
 		return c.err
 	})
 	sc.Step(`^the configured CLI agent "([^"]*)" has this conversation in session "([^"]*)"$`, func(id, session string, table *godog.Table) error {
 		return c.conversationAt(c.dataDir(), id, session, table)
 	})
 	sc.Step(`^I run the configured default agent with "([^"]*)"$`, func(text string) error {
-		c.execute("", "--config", c.configPath(), "run", text)
+		c.execute("--config", c.configPath(), "run", text)
 		return c.err
 	})
 	sc.Step(`^I run the configured CLI agent "([^"]*)" with "([^"]*)"$`, func(id, text string) error {
-		c.execute("", "run", "--config", c.configPath(), "--agent", id, text)
+		c.execute("run", "--config", c.configPath(), "--agent", id, text)
 		return c.err
 	})
 	sc.Step(`^the configured CLI agent "([^"]*)" is serving$`, func(id string) error {
@@ -42,18 +42,18 @@ func initializeConfig(sc *godog.ScenarioContext, c *cliScenario) {
 		if err := c.writeAgentConfig(c.peer); err != nil {
 			return err
 		}
-		c.execute("e2e-peer-token", "send", "--config", c.configPath(), text)
+		c.execute("send", "--config", c.configPath(), text)
 		return c.err
 	})
 	sc.Step(`^the configured default agent overrides its peer flag and sends "([^"]*)"$`, func(text string) error {
 		if err := c.writeAgentConfig("http://127.0.0.1:1"); err != nil {
 			return err
 		}
-		c.execute("e2e-peer-token", "send", "--config", c.configPath(), "--peer", c.peer, text)
+		c.execute("send", "--config", c.configPath(), "--peer", c.peer, text)
 		return c.err
 	})
 	sc.Step(`^I run the configured default agent with an explicit storage directory$`, func() {
-		c.execute("", "run", "--config", c.configPath(), "--data-dir", filepath.Join(c.s.root, "override"), "hello")
+		c.execute("run", "--config", c.configPath(), "--data-dir", filepath.Join(c.s.root, "override"), "hello")
 	})
 	sc.Step(`^the exchange is stored only in the explicit directory$`, func(table *godog.Table) error {
 		_, err := os.Stat(c.dataDir())
@@ -135,6 +135,6 @@ func (c *cliScenario) invalidConfig(problem string) error {
 			return err
 		}
 	}
-	c.execute("", append(args, "hello")...)
+	c.execute(append(args, "hello")...)
 	return nil
 }

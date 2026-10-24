@@ -36,18 +36,18 @@ Select an entry with `--agent`; omitting it selects `default-agent`, or `anra`
 if no default is configured. The selected agent must exist in the file.
 Add, edit, or remove `[agents.<name>]` sections to manage the agent list.
 
-Start the directory with `ANRA_PEER_TOKEN=local-demo ./anra registry`.
+Start the directory with `./anra registry`.
 Set `DEEPSEEK_API_KEY` in both server environments, then start the agents in separate terminals:
 
 ```sh
-ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml serve --agent alice
-ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml serve --agent bob
+./anra --config anra.example.toml serve --agent alice
+./anra --config anra.example.toml serve --agent bob
 ```
 
 From another terminal:
 
 ```sh
-ANRA_PEER_TOKEN=local-demo ./anra --config anra.example.toml send --agent alice --to bob "hello from alice"
+./anra --config anra.example.toml send --agent alice --to bob "hello from alice"
 ```
 
 Each `[agents.<name>]` section and `[defaults]` can contain `data-dir`, `session`,
@@ -69,8 +69,7 @@ the same validation as command flags. For example:
 
 Relative `data-dir` values in the file resolve from the config file's directory;
 an explicit `--data-dir` or `ANRA_DATA_DIR` resolves from the current working
-directory. Model and peer credentials come from `DEEPSEEK_API_KEY` and
-`ANRA_PEER_TOKEN`, bound through Viper.
+directory. The model credential comes from `DEEPSEEK_API_KEY`, bound through Viper.
 Malformed TOML, unknown keys, and unknown agent selections fail before storage
 opens. No config file is loaded unless `--config` or `ANRA_CONFIG` is supplied,
 and help does not require a readable config file.
@@ -97,7 +96,6 @@ corresponding flags.
 | `ANRA_LEASE_TTL` | Registry lease lifetime (default `15s`, minimum `1s`) |
 | `ANRA_PEER` | Optional direct-address send destination |
 | `ANRA_TIMEOUT` | Command timeout, such as `30s` |
-| `ANRA_PEER_TOKEN` | Peer bearer token |
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
 
 For example, run an agent without repeating command flags:
@@ -136,19 +134,25 @@ provider; the repository E2Es run a deterministic provider HTTP fixture with a
 fixture key, so no real model credentials are needed.
 
 The runtime registers its built-in Bash, peer discovery, and peer messaging
-tools internally. Peer operations require a configured registry and team token.
+tools internally. Named peer operations require a configured registry.
 There is no `--tools` flag, TOML `tools` key, environment tool setting, or public
 option for injecting arbitrary tools.
 
 ## Running servers and discovery
 
 Start one team directory with `./anra registry --listen 127.0.0.1:9090`.
-Use the same `ANRA_PEER_TOKEN` for the directory, agent servers, and CLI clients.
+The directory and peer endpoints must be accessible only to trusted team members.
+There is no global peer token or credential exchange. Clients automatically send
+`Anra-Agent: <caller-agent-name>`; receivers require a valid identity and trust
+members not to impersonate one another. The header is not a credential, and a
+receiver does not verify membership against the registry on every request.
+The local CLI acts on behalf of the agent selected with `--agent`.
+TapeView grants remain bound to the supplied requester identity.
 Each `serve --registry http://127.0.0.1:9090` registers its Agent Card, including
 its actual bound address and capabilities. All agents share this discovery
 endpoint; each agent owns its tape and communicates directly with peers.
 
-`serve` publishes `/.well-known/agent-card.json` and authenticated A2A at `/a2a`.
+`serve` publishes `/.well-known/agent-card.json` and A2A at `/a2a`.
 `--listen 127.0.0.1:0` chooses an available port. `peers --registry <url>` lists
 registered names and card URLs. Agent names are unique while their leases are
 active; attempting to start another server with the same name fails.
@@ -158,12 +162,12 @@ to a `15s` lifetime, configurable with `registry --lease-ttl`. Ctrl-C or SIGTERM
 shuts down HTTP, closes the tape, and unregisters the server. A crashed process
 loses its registration after the lease expires. The directory is in memory;
 active servers retry transient directory failures and register again after it
-restarts. A rejected credential or conflicting registration stops the affected
+restarts. An invalid or conflicting registration stops the affected
 agent server. An agent restart registers the same name at its new port and
 resumes its saved conversation.
 
 `send --agent alice --to bob` requires both named agents to be serving. The CLI
-resolves Alice, invokes her authenticated outbound endpoint, and Alice discovers
+resolves Alice, invokes her outbound endpoint, and Alice discovers
 Bob's current card before sending over the official A2A SDK. Alice records the
 outgoing message and Bob's reply; Bob records the incoming message and his
 answer. Both source and destination tapes stay owned by their server processes.

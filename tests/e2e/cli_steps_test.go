@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cucumber/godog"
+	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
@@ -60,7 +62,7 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		if command != "root" {
 			args = append(args, command)
 		}
-		c.execute("", append(args, "--help")...)
+		c.execute(append(args, "--help")...)
 	})
 	sc.Step(`^the CLI help lists "([^"]*)"$`, func(want string) error {
 		if c.err != nil || !strings.Contains(c.output, want) {
@@ -77,7 +79,7 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 			args = append([]string{"run", text}, flags...)
 			args = append(args, "--provider", "deepseek")
 		}
-		c.execute("", args...)
+		c.execute(args...)
 		return c.err
 	})
 	sc.Step(`^the CLI answer is "([^"]*)"$`, func(want string) error {
@@ -99,9 +101,21 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^the CLI agent "([^"]*)" has an empty tape$`, func(id string) error {
 		return c.conversation(id, &godog.Table{})
 	})
-	sc.Step(`^the CLI agent sends a greeting with the wrong peer token$`, func() {
-		c.execute("wrong-token", "send", "--agent", "alice", "--data-dir", c.dataDir(), "--peer", c.peer, "hello")
+	sc.Step(`^a peer sends a greeting with identity "([^"]*)"$`, func(identity string) {
+		h := &http.Client{}
+		if identity != "missing" {
+			h = a2a.TrustedHTTPClient(identity)
+		}
+		client, err := a2a.NewMessageClient(c.s.ctx, h, c.peer)
+		if err == nil {
+			_, err = client.Send(c.s.ctx, "hello")
+		}
+		c.err = err
+		if err != nil {
+			c.output = err.Error()
+		}
 	})
+
 	sc.Step(`^the CLI command fails$`, func() error {
 		if c.err == nil {
 			return fmt.Errorf("CLI succeeded: %s", c.output)
@@ -126,38 +140,38 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 
 func (c *cliScenario) dataDir() string { return filepath.Join(c.s.root, "cli") }
 
-func cliEnv(token string) []string {
+func cliEnv() []string {
 	var env []string
 	for _, value := range os.Environ() {
 		if !strings.HasPrefix(value, "DEEPSEEK_API_KEY=") && !strings.HasPrefix(value, "ANRA_") {
 			env = append(env, value)
 		}
 	}
-	return append(env, "ANRA_PEER_TOKEN="+token)
+	return env
 }
 
-func (c *cliScenario) environment(token string) []string {
-	env := append(cliEnv(token), "DEEPSEEK_API_KEY=e2e-model-key", "ANRA_API_BASE="+c.s.modelServer.URL)
+func (c *cliScenario) environment() []string {
+	env := append(cliEnv(), "DEEPSEEK_API_KEY=e2e-model-key", "ANRA_API_BASE="+c.s.modelServer.URL)
 	for key, value := range c.env {
 		env = append(env, key+"="+value)
 	}
 	return env
 }
 
-func (c *cliScenario) execute(token string, args ...string) {
+func (c *cliScenario) execute(args ...string) {
 	cmd := exec.CommandContext(c.s.ctx, cliBinary, args...)
-	cmd.Env = c.environment(token)
+	cmd.Env = c.environment()
 	output, err := cmd.CombinedOutput()
 	c.output, c.err = string(output), err
 }
 
 func (c *cliScenario) runLocal(id, text string) error {
-	c.execute("e2e-peer-token", "run", "--agent", id, "--data-dir", c.dataDir(), "--provider", "deepseek", text)
+	c.execute("run", "--agent", id, "--data-dir", c.dataDir(), "--provider", "deepseek", text)
 	return c.err
 }
 
 func (c *cliScenario) send(id, text string) error {
-	c.execute("e2e-peer-token", "send", "--agent", id, "--data-dir", c.dataDir(), "--peer", c.peer, text)
+	c.execute("send", "--agent", id, "--data-dir", c.dataDir(), "--peer", c.peer, text)
 	return c.err
 }
 
@@ -167,7 +181,7 @@ func (c *cliScenario) start(id string) error {
 
 func (c *cliScenario) startProcess(id string, args ...string) error {
 	cmd := exec.CommandContext(c.s.ctx, cliBinary, args...)
-	cmd.Env = c.environment("e2e-peer-token")
+	cmd.Env = c.environment()
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return err
@@ -271,7 +285,6 @@ func (c *cliScenario) conversationAt(dir, id, session string, table *godog.Table
 func (c *cliScenario) invalid(problem string) error {
 	common := []string{"--agent", "alice", "--data-dir", c.dataDir()}
 	args := append([]string{"run"}, common...)
-	token := "e2e-peer-token"
 	switch problem {
 	case "missing message":
 		args = append(args, "--provider", "deepseek")
@@ -283,9 +296,6 @@ func (c *cliScenario) invalid(problem string) error {
 		}
 		c.env["DEEPSEEK_API_KEY"] = ""
 		args = append(args, "hello")
-	case "missing token":
-		args = append(append([]string{"serve"}, common...), "--provider", "deepseek")
-		token = ""
 	case "missing peer":
 		args = append(append([]string{"send"}, common...), "hello")
 	case "unknown provider":
@@ -295,6 +305,6 @@ func (c *cliScenario) invalid(problem string) error {
 	default:
 		return fmt.Errorf("unknown invalid configuration %q", problem)
 	}
-	c.execute(token, args...)
+	c.execute(args...)
 	return nil
 }

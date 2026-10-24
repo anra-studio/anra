@@ -13,11 +13,7 @@ import (
 func newPeersCommand(settings *viper.Viper) *cobra.Command {
 	return &cobra.Command{Use: "peers", Short: "List registered agents and their cards", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			token, err := peerToken(settings)
-			if err != nil {
-				return err
-			}
-			client, err := discovery.NewClient(settings.GetString("registry"), token)
+			client, err := discovery.NewClient(settings.GetString("registry"))
 			if err != nil {
 				return err
 			}

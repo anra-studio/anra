@@ -19,11 +19,7 @@ func newAskCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(command.Context(), timeout)
 			defer cancel()
-			token, err := peerToken(settings)
-			if err != nil {
-				return err
-			}
-			directory, err := discovery.NewClient(settings.GetString("registry"), token)
+			directory, err := discovery.NewClient(settings.GetString("registry"))
 			if err != nil {
 				return err
 			}
@@ -35,7 +31,7 @@ func newAskCommand(common *agentOptions, settings *viper.Viper) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := newPeerClient(ctx, base, settings)
+			client, err := newPeerClient(ctx, base, common.id)
 			if err != nil {
 				return err
 			}

@@ -13,6 +13,5 @@ func newEnvironment() *viper.Viper {
 	settings.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	settings.AllowEmptyEnv(true)
 	settings.MustBindEnv("deepseek-api-key", "DEEPSEEK_API_KEY")
-	settings.MustBindEnv("peer-token", "ANRA_PEER_TOKEN")
 	return settings
 }

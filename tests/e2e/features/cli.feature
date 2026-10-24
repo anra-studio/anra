@@ -56,12 +56,17 @@ Feature: Run tape-backed agents from the terminal
       | user      | hello again           |
       | assistant | bob: hello again      |
 
-  Scenario: An incorrect peer token cannot send a message
+  Scenario Outline: Peer messages require a valid caller identity
     Given the CLI agent "bob" is serving with a deterministic model
-    When the CLI agent sends a greeting with the wrong peer token
+    When a peer sends a greeting with identity "<identity>"
     Then the CLI command fails
     When I stop the serving CLI agent
     Then the CLI agent "bob" has an empty tape
+
+    Examples:
+      | identity |
+      | missing  |
+      | bad/name |
 
   Scenario Outline: Invalid CLI configuration fails before opening storage
     When I run the CLI with invalid configuration "<problem>"
@@ -73,7 +78,6 @@ Feature: Run tape-backed agents from the terminal
       | missing message | non-empty message      |
       | invalid agent   | --agent must start     |
       | missing key     | DEEPSEEK_API_KEY        |
-      | missing token   | ANRA_PEER_TOKEN         |
       | missing peer    | required flag(s)        |
       | unknown provider  | unknown provider         |
       | unknown command | unknown command        |

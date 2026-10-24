@@ -83,6 +83,16 @@ Feature: Running agents register cards and communicate by name
     When running agent "alice" attempts to greet "bob"
     Then the CLI command fails with "agent is not registered"
 
-  Scenario: The directory requires the team credential
-    When I query the team directory with an incorrect token
-    Then the CLI command fails with "HTTP 401"
+  Scenario: Trusted agents register and communicate without a shared credential
+    Given team agents "alice" and "bob" are serving
+    When I list the team's registered peers
+    Then the team directory lists "alice" and "bob"
+    And the team cards require no bearer credential
+    When running agent "alice" sends "hello without a token" to "bob"
+    Then the CLI answer is "bob: hello without a token"
+
+  Scenario: A different lease cannot renew or remove an active registration
+    Given team agents "alice" and "bob" are serving
+    When another lease attempts to renew or remove agent "alice"
+    And I list the team's registered peers
+    Then the team directory lists "alice" and "bob"

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/scbizu/anra/pkg/discovery"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -53,15 +54,11 @@ func validateTimeout(timeout time.Duration) error {
 func withAgent(ctx context.Context, common agentOptions, llm model.LLM, config modelOptions, settings *viper.Viper, execute func(*agent.Anra) error) (runErr error) {
 	options := []agent.Option{agent.WithSystemInstruction("You are Anra agent " + common.id + ".\n" + config.system)}
 	if registry := settings.GetString("registry"); registry != "" {
-		token, err := peerToken(settings)
+		directory, err := discovery.NewClient(registry)
 		if err != nil {
 			return err
 		}
-		directory, err := discovery.NewClient(registry, token)
-		if err != nil {
-			return err
-		}
-		options = append(options, agent.WithPeers(directory, peerHTTP(token)))
+		options = append(options, agent.WithPeers(directory, a2a.TrustedHTTPClient(common.id)))
 	}
 	tape, err := bbolt.NewBboltStorage(common.session, filepath.Join(common.dataDir, common.id+".db"))
 	if err != nil {

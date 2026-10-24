@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/subtle"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -29,12 +27,8 @@ func newServeCommand(common *agentOptions, settings *viper.Viper) *cobra.Command
 			if err != nil {
 				return err
 			}
-			token, err := peerToken(settings)
-			if err != nil {
-				return err
-			}
 			return withAgent(command.Context(), *common, llm, model, settings, func(a *agent.Anra) error {
-				return serve(command.Context(), a, common.id, listen, token, settings, command.ErrOrStderr())
+				return serve(command.Context(), a, common.id, listen, settings, command.ErrOrStderr())
 			})
 		},
 	}
@@ -43,7 +37,7 @@ func newServeCommand(common *agentOptions, settings *viper.Viper) *cobra.Command
 	return command
 }
 
-func serve(ctx context.Context, a *agent.Anra, id, listen, token string, settings *viper.Viper, status io.Writer) error {
+func serve(ctx context.Context, a *agent.Anra, id, listen string, settings *viper.Viper, status io.Writer) error {
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return err
@@ -54,28 +48,20 @@ func serve(ctx context.Context, a *agent.Anra, id, listen, token string, setting
 		Name: id, Description: "Anra tape-backed agent", Version: "0.1.0",
 		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(base+a2a.CorePath, sdk.TransportProtocolJSONRPC)},
 		DefaultInputModes:   []string{"text/plain"}, DefaultOutputModes: []string{"text/plain"},
-		Skills:               []sdk.AgentSkill{{ID: "chat", Name: "Chat", Description: "Talk to this agent", Tags: []string{"chat"}}},
-		SecuritySchemes:      sdk.NamedSecuritySchemes{"bearer": sdk.HTTPAuthSecurityScheme{Scheme: "Bearer"}},
-		SecurityRequirements: sdk.SecurityRequirementsOptions{{"bearer": {}}},
+		Skills: []sdk.AgentSkill{{ID: "chat", Name: "Chat", Description: "Talk to this agent", Tags: []string{"chat"}}},
 	}
 	executor, err := a2a.NewExecutor(a)
 	if err != nil {
 		return err
 	}
-	authenticate := func(req *http.Request) (string, error) {
-		if subtle.ConstantTimeCompare([]byte(req.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-			return "", errors.New("invalid peer token")
-		}
-		return "trusted-peer", nil
-	}
-	handler, err := a2a.NewMessageHandler(card, a2asrv.NewHandler(executor), authenticate)
+	handler, err := a2a.NewMessageHandler(card, a2asrv.NewHandler(executor), a2a.TrustedPeerIdentity)
 	if err != nil {
 		return err
 	}
 	mux := http.NewServeMux()
-	mux.Handle(outboundPath, outboundHandler(a, settings, authenticate))
+	mux.Handle(outboundPath, outboundHandler(a, id, settings))
 	mux.Handle("/", handler)
-	registered, cleanup, err := registerAgent(ctx, settings.GetString("registry"), token, discovery.Record{Name: id, CardURL: base + a2asrv.WellKnownAgentCardPath, Card: card})
+	registered, cleanup, err := registerAgent(ctx, settings.GetString("registry"), discovery.Record{Name: id, CardURL: base + a2asrv.WellKnownAgentCardPath, Card: card})
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cucumber/godog"
+	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/discovery"
 )
 
@@ -43,7 +45,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 	sc.Step(`^team agents "([^"]*)" and "([^"]*)" are serving$`, func(a, b string) error {
 		return t.startAgents(a, b)
 	})
-	sc.Step(`^I list the team's registered peers$`, func() { c.execute("e2e-peer-token", "peers", "--registry", t.registry.peer) })
+	sc.Step(`^I list the team's registered peers$`, func() { c.execute("peers", "--registry", t.registry.peer) })
 	sc.Step(`^the team directory lists "([^"]*)" and "([^"]*)"$`, func(a, b string) error {
 		if c.err != nil {
 			return c.err
@@ -69,7 +71,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 		return t.registry.startProcess("registry", "registry", "--listen", address, "--lease-ttl", "1s")
 	})
 	sc.Step(`^both team agents eventually register again$`, func() error {
-		client, err := discovery.NewClient(t.registry.peer, "e2e-peer-token")
+		client, err := discovery.NewClient(t.registry.peer)
 		if err != nil {
 			return err
 		}
@@ -97,7 +99,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 		return t.agents[id].startProcess(id, "serve", "--config", c.configPath(), "--agent", id)
 	})
 	sc.Step(`^team agent "([^"]*)" is still registered$`, func(id string) error {
-		client, err := discovery.NewClient(t.registry.peer, "e2e-peer-token")
+		client, err := discovery.NewClient(t.registry.peer)
 		if err != nil {
 			return err
 		}
@@ -105,7 +107,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 		return err
 	})
 	sc.Step(`^another server attempts to register as "([^"]*)"$`, func(id string) {
-		c.execute("e2e-peer-token", "serve", "--agent", id, "--provider", "deepseek", "--data-dir", filepath.Join(c.s.root, "duplicate"), "--listen", "127.0.0.1:0", "--registry", t.registry.peer)
+		c.execute("serve", "--agent", id, "--provider", "deepseek", "--data-dir", filepath.Join(c.s.root, "duplicate"), "--listen", "127.0.0.1:0", "--registry", t.registry.peer)
 	})
 	sc.Step(`^both team agents send greetings simultaneously$`, func() {
 		t.concurrent = []*cliScenario{{s: c.s}, {s: c.s}}
@@ -143,7 +145,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 		return nil
 	})
 	sc.Step(`^its registration eventually expires$`, func() error {
-		client, err := discovery.NewClient(t.registry.peer, "e2e-peer-token")
+		client, err := discovery.NewClient(t.registry.peer)
 		if err != nil {
 			return err
 		}
@@ -166,7 +168,35 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 			}
 		}
 	})
-	sc.Step(`^I query the team directory with an incorrect token$`, func() { c.execute("incorrect", "peers", "--registry", t.registry.peer) })
+	sc.Step(`^another lease attempts to renew or remove agent "([^"]*)"$`, func(name string) error {
+		client, err := discovery.NewClient(t.registry.peer)
+		if err != nil {
+			return err
+		}
+		record, err := client.Lookup(c.s.ctx, name)
+		if err != nil {
+			return err
+		}
+		if _, err := client.Register(c.s.ctx, record, "another-lease"); err == nil || !strings.Contains(err.Error(), "HTTP 409") {
+			return fmt.Errorf("unexpected renewal result: %v", err)
+		}
+		if err := client.Unregister(c.s.ctx, name, "another-lease"); err == nil || !strings.Contains(err.Error(), "HTTP 409") {
+			return fmt.Errorf("unexpected removal result: %v", err)
+		}
+		return nil
+	})
+	sc.Step(`^the team cards require no bearer credential$`, func() error {
+		for name, p := range t.agents {
+			card, err := a2a.Discover(c.s.ctx, http.DefaultClient, p.peer+"/.well-known/agent-card.json")
+			if err != nil {
+				return err
+			}
+			if len(card.SecuritySchemes) != 0 || len(card.SecurityRequirements) != 0 {
+				return fmt.Errorf("agent %s advertises authentication requirements", name)
+			}
+		}
+		return nil
+	})
 }
 
 func (t *teamScenario) startAgents(a, b string) error {
@@ -185,7 +215,7 @@ func (t *teamScenario) startAgents(a, b string) error {
 }
 
 func (t *teamScenario) send(c *cliScenario, from, to, text string) {
-	c.execute("e2e-peer-token", "send", "--agent", from, "--registry", t.registry.peer, "--to", to, text)
+	c.execute("send", "--agent", from, "--registry", t.registry.peer, "--to", to, text)
 }
 
 func (t *teamScenario) stopAgents() error {

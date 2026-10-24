@@ -9,11 +9,11 @@ import (
 	"github.com/scbizu/anra/pkg/discovery"
 )
 
-func registerAgent(parent context.Context, endpoint, token string, record discovery.Record) (context.Context, func(), error) {
+func registerAgent(parent context.Context, endpoint string, record discovery.Record) (context.Context, func(), error) {
 	if endpoint == "" {
 		return parent, func() {}, nil
 	}
-	client, err := discovery.NewClient(endpoint, token)
+	client, err := discovery.NewClient(endpoint)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -14,8 +14,8 @@ Agents can communicate with peers and share relevant context with permission.
 
 ## Say hello between two running agents
 
-Build the CLI with `mise run build-cli`. Set `ANRA_PEER_TOKEN=local-demo` in each
-terminal. Set `DEEPSEEK_API_KEY` for both agent servers, then start the shared directory:
+Build the CLI with `mise run build-cli`. Set `DEEPSEEK_API_KEY` for both agent
+servers, then start the shared directory:
 
 ```sh
 ./anra registry --listen 127.0.0.1:9090
@@ -42,6 +42,11 @@ The CLI contacts the source agent's running server. That server discovers the
 destination by name and sends directly over A2A. Both agents persist the exchange
 in separate tapes under `.anra/`. No peer addresses are needed in the config.
 Ctrl-C unregisters a server; crashed servers disappear when their leases expire.
+
+The registry and agent endpoints run inside a trusted network. No shared peer
+token is required. Requests carry the caller's agent identity; team members are
+trusted not to impersonate one another. TapeView borrowing still enforces grants,
+selected ranges, expiry, and release for each caller.
 
 Use `ask` to let Alice's model discover Bob and send the greeting through its
 built-in tools:

@@ -2,7 +2,6 @@
 package discovery
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,9 +50,10 @@ type registry struct {
 
 // NewHandler creates an in-memory registry. Agents re-register after a registry
 // restart. Expired entries are invisible to lookup and can be reclaimed.
-func NewHandler(token string, ttl time.Duration) (http.Handler, error) {
-	if strings.TrimSpace(token) == "" || ttl < time.Second {
-		return nil, errors.New("discovery: token and lease TTL of at least 1s are required")
+// Access to the directory must be restricted to trusted team members.
+func NewHandler(ttl time.Duration) (http.Handler, error) {
+	if ttl < time.Second {
+		return nil, errors.New("discovery: lease TTL of at least 1s is required")
 	}
 	r := &registry{entries: make(map[string]registered), ttl: ttl}
 	mux := http.NewServeMux()
@@ -61,13 +61,7 @@ func NewHandler(token string, ttl time.Duration) (http.Handler, error) {
 	mux.HandleFunc("GET "+AgentsPath+"/{name}", r.get)
 	mux.HandleFunc("PUT "+AgentsPath+"/{name}", r.put)
 	mux.HandleFunc("DELETE "+AgentsPath+"/{name}", r.remove)
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(req.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		mux.ServeHTTP(w, req)
-	}), nil
+	return mux, nil
 }
 
 func (r *registry) prune() {

@@ -299,7 +299,7 @@ func (s *scenario) startPeer() error {
 	if err := a2a.Advertise(card, base+a2a.ViewPath); err != nil {
 		return err
 	}
-	handler, err := a2a.NewPeerHandler(card, a2asrv.NewHandler(executor), s.service, authenticate)
+	handler, err := a2a.NewPeerHandler(card, a2asrv.NewHandler(executor), s.service, a2a.TrustedPeerIdentity)
 	if err != nil {
 		return err
 	}
@@ -342,28 +342,10 @@ func (s *scenario) restartPeer() error {
 	return s.startPeer()
 }
 
-type credentials struct {
-	next http.RoundTripper
-	peer string
-}
-
-func (c credentials) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
-	clone.Header.Set("Authorization", "Bearer "+c.peer+"-token")
-	return c.next.RoundTrip(clone)
-}
-func authenticate(req *http.Request) (string, error) {
-	switch req.Header.Get("Authorization") {
-	case "Bearer borrower-token":
-		return "borrower", nil
-	case "Bearer intruder-token":
-		return "intruder", nil
-	default:
-		return "", errors.New("invalid credential")
-	}
-}
 func (s *scenario) httpClient(peer string) *http.Client {
-	return &http.Client{Transport: credentials{s.server.Client().Transport, peer}, Timeout: 5 * time.Second}
+	client := a2a.TrustedHTTPClient(peer)
+	client.Timeout = 5 * time.Second
+	return client
 }
 func (s *scenario) clientFor(peer string) (*a2a.Client, error) {
 	return a2a.NewClient(s.httpClient(peer), s.card)
@@ -700,10 +682,10 @@ func (s *scenario) checkLocalOwnership() error {
 
 func (s *scenario) wireRequest(problem string) error {
 	body := `{"requestId":"wire-request","purpose":"research","query":"bbolt"}`
-	method, token, extension := "Borrow", "borrower-token", a2a.ExtensionURI
+	method, identity, extension := "Borrow", "borrower", a2a.ExtensionURI
 	switch problem {
-	case "no credentials":
-		token = ""
+	case "no identity":
+		identity = ""
 	case "no extension":
 		extension = ""
 	case "missing purpose":
@@ -723,8 +705,8 @@ func (s *scenario) wireRequest(problem string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Connect-Protocol-Version", "1")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if identity != "" {
+		req.Header.Set(a2a.PeerIdentityHeader, identity)
 	}
 	if extension != "" {
 		req.Header.Set(a2a.ExtensionHeader, extension)

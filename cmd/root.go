@@ -14,7 +14,7 @@ func NewRootCommand() *cobra.Command {
 
 run/serve use tape-go's ADK runtime, configured models, and built-in tools.
 DeepSeek requires DEEPSEEK_API_KEY.
-Peer commands require the same ANRA_PEER_TOKEN environment variable.
+Registry and peer endpoints must be accessible only to trusted team members.
 Options also accept ANRA_ environment variables, such as ANRA_AGENT and ANRA_PROVIDER.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,

@@ -13,12 +13,12 @@ import (
 )
 
 type Client struct {
-	base, token string
-	http        *http.Client
+	base string
+	http *http.Client
 }
 
 // HTTPError retains the directory status so renewal can distinguish a lost
-// connection from a rejected credential or a conflicting registration.
+// connection from a rejected request or a conflicting registration.
 type HTTPError struct {
 	StatusCode int
 	Message    string
@@ -28,12 +28,12 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("discovery: HTTP %d: %s", e.StatusCode, e.Message)
 }
 
-func NewClient(base, token string) (*Client, error) {
+func NewClient(base string) (*Client, error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, fmt.Errorf("discovery: registry must be an HTTP(S) base URL")
 	}
-	return &Client{base: strings.TrimRight(base, "/"), token: token, http: &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &Client{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 func (c *Client) request(ctx context.Context, method, path string, value any, lease string, result any) error {
@@ -49,7 +49,6 @@ func (c *Client) request(ctx context.Context, method, path string, value any, le
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 	if lease != "" {
 		req.Header.Set("Anra-Lease", lease)

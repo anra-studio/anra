@@ -44,8 +44,16 @@ remote answers while allowing incoming requests during the network call.
 
 ## Trust model
 
-An Anra team is a set of trusted members. Tape is not opened to external
-parties, so A2A responses from a member are treated as well-formed and honest.
+An Anra team is a set of trusted members. Access to both the registry and agent
+endpoints is restricted by the deployment network. There is no global shared
+peer token. Peer requests carry `Anra-Agent`, a stable caller name supplied by
+the client, which members are trusted not to impersonate. The CLI uses its selected
+agent name; receiving endpoints validate the name's format, without a live
+registry membership lookup. The directory's per-registration lease still protects
+renewal and removal of active names.
+
+Tape is not opened to external parties, so A2A responses from a member are
+treated as well-formed and honest.
 The tape-view client checks only what it needs to proceed and does not defend
 against a hostile peer:
 
@@ -55,8 +63,9 @@ against a hostile peer:
   re-validated.
 - `ReadView` still checks entry order and range coverage, because it needs them
   to assemble the granted range and to stop paging.
-- The service still authenticates the requester and enforces grants, expiry and
-  export limits. Trust in peers does not widen what a member may read.
+- The service still requires a requester identity and enforces requester-bound
+  grants, expiry and export limits. Trust in peers does not widen what a member
+  may read.
 
 External or untrusted tapes would need these client checks restored, together
 with per-peer credentials and redirect handling. That is out of scope today.

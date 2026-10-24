@@ -61,5 +61,4 @@ Feature: Configure CLI agents through the environment
       | zero timeout       | --timeout must be positive  |
       | empty session      | --session must not be empty |
       | missing config     | read config                 |
-      | empty peer token   | ANRA_PEER_TOKEN             |
       | missing model key  | DEEPSEEK_API_KEY             |

@@ -9,8 +9,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 )
 
-// Authenticate must verify a credential and return a stable peer identity.
-// Never derive it from a body field, contextId, taskId, or unverified header.
+// Authenticate resolves a stable peer identity. Use credential verification for
+// authenticated deployments, or TrustedPeerIdentity inside a trusted network.
+// Never derive identity from body fields, contextId, or taskId.
 type Authenticate func(*http.Request) (string, error)
 
 const CorePath = "/a2a"

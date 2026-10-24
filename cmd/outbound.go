@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/scbizu/anra/pkg/discovery"
 	"github.com/spf13/viper"
@@ -26,9 +27,9 @@ type outboundResponse struct {
 	Answer string `json:"answer"`
 }
 
-func outboundHandler(a *agent.Anra, settings *viper.Viper, authenticate func(*http.Request) (string, error)) http.Handler {
+func outboundHandler(a *agent.Anra, self string, settings *viper.Viper) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := authenticate(r); err != nil {
+		if _, err := a2a.TrustedPeerIdentity(r); err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -42,12 +43,7 @@ func outboundHandler(a *agent.Anra, settings *viper.Viper, authenticate func(*ht
 			http.Error(w, "a target agent and message are required", http.StatusBadRequest)
 			return
 		}
-		token, err := peerToken(settings)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		client, err := discovery.NewClient(settings.GetString("registry"), token)
+		client, err := discovery.NewClient(settings.GetString("registry"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -62,7 +58,7 @@ func outboundHandler(a *agent.Anra, settings *viper.Viper, authenticate func(*ht
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		remote, err := newPeerClient(r.Context(), base, settings)
+		remote, err := newPeerClient(r.Context(), base, self)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -81,17 +77,13 @@ func outboundHandler(a *agent.Anra, settings *viper.Viper, authenticate func(*ht
 	})
 }
 
-// sendFromServer invokes the source agent's authenticated outbound endpoint.
+// sendFromServer invokes the source agent's outbound endpoint inside the trusted network.
 // Its process owns the tape and resolves the destination through the directory.
 func sendFromServer(ctx context.Context, source, target, message string, settings *viper.Viper) (string, error) {
 	if !agentID.MatchString(target) {
 		return "", errors.New("--to must be an agent name")
 	}
-	token, err := peerToken(settings)
-	if err != nil {
-		return "", err
-	}
-	directory, err := discovery.NewClient(settings.GetString("registry"), token)
+	directory, err := discovery.NewClient(settings.GetString("registry"))
 	if err != nil {
 		return "", err
 	}
@@ -112,7 +104,7 @@ func sendFromServer(ctx context.Context, source, target, message string, setting
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	h := &http.Client{Transport: bearerTransport{token}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	h := a2a.TrustedHTTPClient(source)
 	resp, err := h.Do(req)
 	if err != nil {
 		return "", err
