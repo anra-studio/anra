@@ -77,6 +77,8 @@ processes using tape-go's ADK runtime and real provider HTTP requests to a
 deterministic local model fixture, temporary disk storage, and localhost HTTP. They check local persistence, two-agent messaging, receiver restart,
 missing or malformed caller identities, TOML agent selection, Viper environment settings,
 configuration precedence, running-agent discovery, and invalid configuration.
+All CLI sends use registered agent names. Direct peer flags and TOML settings
+are rejected; the legacy peer environment variable cannot select a destination.
 Directory lease expiry uses bounded polling of the public directory API;
 the crashing process is killed while the remaining agent continues renewing.
 Each subprocess has

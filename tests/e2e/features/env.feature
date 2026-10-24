@@ -34,11 +34,11 @@ Feature: Configure CLI agents through the environment
     Then the CLI answer is "alice: hello"
 
   Scenario: Two agents communicate using environment settings
-    Given CLI environment settings for agent "bob"
-    And the CLI agent is serving using environment settings
-    When agent "alice" sends "hello from alice" using environment settings
+    Given a running team Agent Card directory
+    And team agents "alice" and "bob" are serving using environment settings
+    When agent "alice" sends "hello from alice" to "bob" using environment settings
     Then the CLI answer is "bob: hello from alice"
-    When I stop the serving CLI agent
+    When I stop the team agents
     Then the CLI agent "alice" has this conversation on its tape
       | role      | text                  |
       | user      | hello from alice      |
@@ -54,11 +54,12 @@ Feature: Configure CLI agents through the environment
     And no CLI tape directory is created
 
     Examples:
-      | problem            | error                       |
-      | invalid agent      | --agent must start          |
-      | unknown provider     | unknown provider              |
-      | invalid duration   | timeout                     |
-      | zero timeout       | --timeout must be positive  |
-      | empty session      | --session must not be empty |
-      | missing config     | read config                 |
-      | missing model key  | DEEPSEEK_API_KEY             |
+      | problem                 | error                       |
+      | invalid agent           | --agent must start          |
+      | unknown provider        | unknown provider            |
+      | invalid duration        | timeout                     |
+      | zero timeout            | --timeout must be positive  |
+      | empty session           | --session must not be empty |
+      | missing config          | read config                 |
+      | legacy peer destination | required flag(s): --to      |
+      | missing model key       | DEEPSEEK_API_KEY            |

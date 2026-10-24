@@ -24,7 +24,7 @@ type teamScenario struct {
 	crashed    string
 }
 
-func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
+func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 	t := &teamScenario{c: c}
 	initializeADK(sc, t)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
@@ -197,6 +197,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) {
 		}
 		return nil
 	})
+	return t
 }
 
 func (t *teamScenario) startAgents(a, b string) error {

@@ -8,11 +8,11 @@ Feature: Run tape-backed agents from the terminal
     And no CLI tape directory is created
 
     Examples:
-      | command | item      |
-      | root    | serve     |
-      | run     | --provider  |
-      | serve   | --listen  |
-      | send    | --peer    |
+      | command | item       |
+      | root    | serve      |
+      | run     | --provider |
+      | serve   | --listen   |
+      | send    | --to       |
 
   Scenario Outline: Place shared flags before the command or after the message
     When I run the CLI agent "alice" with "hello" and flags <placement>
@@ -36,13 +36,15 @@ Feature: Run tape-backed agents from the terminal
       | assistant | alice: hello again |
 
   Scenario: Say hello from one agent to another and restart the receiving agent
-    Given the CLI agent "bob" is serving with a deterministic model
-    When the CLI agent "alice" sends "hello from alice" to the serving agent
+    Given a running team Agent Card directory
+    And team agents "alice" and "bob" are serving
+    When running agent "alice" sends "hello from alice" to "bob"
     Then the CLI answer is "bob: hello from alice"
-    When I restart the serving CLI agent
-    And the CLI agent "alice" sends "hello again" to the serving agent
+    When I stop team agent "bob"
+    And I restart team agent "bob"
+    And running agent "alice" sends "hello again" to "bob"
     Then the CLI answer is "bob: hello again"
-    When I stop the serving CLI agent
+    When I stop the team agents
     Then the CLI agent "alice" has this conversation on its tape
       | role      | text                  |
       | user      | hello from alice      |
@@ -74,10 +76,13 @@ Feature: Run tape-backed agents from the terminal
     And no CLI tape directory is created
 
     Examples:
-      | problem         | error                  |
-      | missing message | non-empty message      |
-      | invalid agent   | --agent must start     |
-      | missing key     | DEEPSEEK_API_KEY        |
-      | missing peer    | required flag(s)        |
-      | unknown provider  | unknown provider         |
-      | unknown command | unknown command        |
+      | problem             | error                                |
+      | missing message     | non-empty message                    |
+      | invalid agent       | --agent must start                   |
+      | missing key         | DEEPSEEK_API_KEY                     |
+      | missing destination | required flag(s): --to               |
+      | peer flag           | unknown flag: --peer                 |
+      | URL destination     | --to must be an agent name           |
+      | missing registry    | registry must be an HTTP(S) base URL |
+      | unknown provider    | unknown provider                     |
+      | unknown command     | unknown command                      |

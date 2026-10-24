@@ -51,11 +51,11 @@ From another terminal:
 ```
 
 Each `[agents.<name>]` section and `[defaults]` can contain `data-dir`, `session`,
-`provider`, `api-base`, `model`, `system`, `listen`, `registry`, `peer`, and `timeout`. All values are
+`provider`, `api-base`, `model`, `system`, `listen`, `registry`, and `timeout`. All values are
 strings, with durations such as `"30s"` or `"2m"`. Only settings applicable to
-the current command are applied; for example, `send` uses `peer`, while `serve`
-uses `listen`. `registry` is the shared discovery endpoint. Named sends use
-`--to`; a configured `peer` selects the optional direct-address mode.
+the current command are applied; for example, `serve` uses `listen`.
+`registry` is the shared discovery endpoint. Sends select a registered
+destination by name with `--to`; agent profiles contain no peer addresses.
 
 Explicit flags take precedence over environment variables, agent settings,
 `[defaults]`, and built-in defaults, in that order. This includes explicitly
@@ -94,7 +94,6 @@ corresponding flags.
 | `ANRA_REGISTRY` | Team Agent Card directory URL |
 | `ANRA_TO` | Named send destination |
 | `ANRA_LEASE_TTL` | Registry lease lifetime (default `15s`, minimum `1s`) |
-| `ANRA_PEER` | Optional direct-address send destination |
 | `ANRA_TIMEOUT` | Command timeout, such as `30s` |
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
 
@@ -184,10 +183,11 @@ model's tool calls and results to Alice's tape, including history used after a
 restart. Both servers need model credentials. Context borrowing is also a
 built-in library capability, connected with `agent.WithBorrowClient`.
 
-For direct-address use without discovery, `send --peer http://127.0.0.1:8080`
-remains available. This mode opens the sender's local tape and requires that
-sender's server to be stopped. `--peer` and `--to` are mutually exclusive.
-A server started without `--registry` publishes its card but does not register.
+Sending requires both source and destination servers to be registered. The CLI
+uses `--registry` (or its TOML/environment setting) to find the source server;
+the source resolves the destination's current Agent Card. There is no `--peer`
+flag or TOML `peer` setting, and `ANRA_PEER` has no effect. A server started
+without `--registry` publishes its card but cannot participate in named sends.
 Use a concrete listen address reachable by other team members; that address
 is advertised in its card.
 
@@ -203,8 +203,8 @@ messages use the serving agent's configured session; they do not choose a local
 owner or session through A2A IDs. All peers talking to that server contribute
 to that conversation.
 
-Only one process can open an agent database at a time. Named sends use the
+Only one process can open an agent database at a time. Sends use the
 running source server, so they work while its database is open. Stop a server
-before using `run` or direct `send --peer` with that agent's database. Alice and
+before using `run` with that agent's database. Alice and
 Bob run concurrently because their files are separate. `run`, `ask`, and `send` accept
 `--timeout` (default `1m`).

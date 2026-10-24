@@ -26,7 +26,6 @@ type agentConfig struct {
 	Model    *string `toml:"model"`
 	System   *string `toml:"system"`
 	Listen   *string `toml:"listen"`
-	Peer     *string `toml:"peer"`
 	Timeout  *string `toml:"timeout"`
 	Registry *string `toml:"registry"`
 }
@@ -35,19 +34,19 @@ func (c agentConfig) settings() map[string]*string {
 	return map[string]*string{
 		"data-dir": c.DataDir, "session": c.Session, "provider": c.Provider, "api-base": c.APIBase,
 		"model": c.Model, "system": c.System, "listen": c.Listen,
-		"peer": c.Peer, "timeout": c.Timeout,
+		"timeout":  c.Timeout,
 		"registry": c.Registry,
 	}
 }
 
 // applyConfig resolves flags, environment, and the selected TOML profile through
 // Viper, then applies the resolved values through Cobra's parsers. This also lets
-// config or environment values satisfy required flags such as --peer.
+// config or environment values satisfy required flags such as --to.
 func applyConfig(command *cobra.Command, settings *viper.Viper) error {
 	if err := settings.BindPFlags(command.Flags()); err != nil {
 		return err
 	}
-	names := []string{"config", "agent", "registry", "data-dir", "session", "provider", "api-base", "model", "system", "listen", "peer", "to", "timeout", "lease-ttl"}
+	names := []string{"config", "agent", "registry", "data-dir", "session", "provider", "api-base", "model", "system", "listen", "to", "timeout", "lease-ttl"}
 	for _, name := range names {
 		if command.Flag(name) != nil {
 			settings.MustBindEnv(name)

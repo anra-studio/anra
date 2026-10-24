@@ -7,7 +7,7 @@ import (
 	"github.com/cucumber/godog"
 )
 
-func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario) {
+func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario, team *teamScenario) {
 	sc.Step(`^CLI environment settings for agent "([^"]*)"$`, c.agentEnvironment)
 	sc.Step(`^I run the CLI using environment settings with "([^"]*)"$`, func(text string) error {
 		c.execute("run", text)
@@ -28,13 +28,24 @@ func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario) {
 		c.execute("run", "--provider", "deepseek", "--timeout", "1m", "hello")
 		return c.err
 	})
-	sc.Step(`^the CLI agent is serving using environment settings$`, func() error {
-		c.env["ANRA_LISTEN"] = "127.0.0.1:0"
-		return c.startProcess(c.env["ANRA_AGENT"], "serve")
+	sc.Step(`^team agents "([^"]*)" and "([^"]*)" are serving using environment settings$`, func(a, b string) error {
+		for _, id := range []string{a, b} {
+			p := &cliScenario{s: c.s}
+			p.agentEnvironment(id)
+			p.env["ANRA_REGISTRY"] = team.registry.peer
+			p.env["ANRA_LISTEN"] = "127.0.0.1:0"
+			team.agents[id] = p
+			if err := p.startProcess(id, "serve"); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
-	sc.Step(`^agent "([^"]*)" sends "([^"]*)" using environment settings$`, func(id, text string) error {
+	sc.Step(`^agent "([^"]*)" sends "([^"]*)" to "([^"]*)" using environment settings$`, func(id, text, to string) error {
 		c.agentEnvironment(id)
-		c.env["ANRA_PEER"] = c.peer
+		c.env["ANRA_REGISTRY"] = team.registry.peer
+		c.env["ANRA_TO"] = to
+		c.env["ANRA_PEER"] = "http://127.0.0.1:1"
 		c.execute("send", text)
 		return c.err
 	})
@@ -54,6 +65,9 @@ func initializeEnvironment(sc *godog.ScenarioContext, c *cliScenario) {
 			c.env["ANRA_SESSION"] = ""
 		case "missing config":
 			c.env["ANRA_CONFIG"] = filepath.Join(c.s.root, "missing.toml")
+		case "legacy peer destination":
+			c.env["ANRA_PEER"] = "http://127.0.0.1:1"
+			args = []string{"send", "hello"}
 		case "missing model key":
 			c.env["DEEPSEEK_API_KEY"] = ""
 			c.env["ANRA_PROVIDER"] = "deepseek"

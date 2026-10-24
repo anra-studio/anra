@@ -36,19 +36,19 @@ func buildCLI(t *testing.T) {
 }
 
 type cliScenario struct {
-	s                      *scenario
-	server                 *exec.Cmd
-	done                   chan error
-	peer, serverID, output string
-	err                    error
-	env                    map[string]string
+	s            *scenario
+	server       *exec.Cmd
+	done         chan error
+	peer, output string
+	err          error
+	env          map[string]string
 }
 
 func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 	c := &cliScenario{s: s}
-	initializeConfig(sc, c)
-	initializeEnvironment(sc, c)
-	initializeTeam(sc, c)
+	team := initializeTeam(sc, c)
+	initializeConfig(sc, c, team)
+	initializeEnvironment(sc, c, team)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		*c = cliScenario{s: s}
 		return ctx, nil
@@ -89,13 +89,6 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		return nil
 	})
 	sc.Step(`^the CLI agent "([^"]*)" is serving with a deterministic model$`, c.start)
-	sc.Step(`^the CLI agent "([^"]*)" sends "([^"]*)" to the serving agent$`, c.send)
-	sc.Step(`^I restart the serving CLI agent$`, func() error {
-		if err := c.stop(); err != nil {
-			return err
-		}
-		return c.start(c.serverID)
-	})
 	sc.Step(`^I stop the serving CLI agent$`, c.stop)
 	sc.Step(`^the CLI agent "([^"]*)" has this conversation on its tape$`, c.conversation)
 	sc.Step(`^the CLI agent "([^"]*)" has an empty tape$`, func(id string) error {
@@ -170,11 +163,6 @@ func (c *cliScenario) runLocal(id, text string) error {
 	return c.err
 }
 
-func (c *cliScenario) send(id, text string) error {
-	c.execute("send", "--agent", id, "--data-dir", c.dataDir(), "--peer", c.peer, text)
-	return c.err
-}
-
 func (c *cliScenario) start(id string) error {
 	return c.startProcess(id, "serve", "--agent", id, "--data-dir", c.dataDir(), "--provider", "deepseek", "--listen", "127.0.0.1:0")
 }
@@ -190,7 +178,7 @@ func (c *cliScenario) startProcess(id string, args ...string) error {
 		stderr.Close()
 		return err
 	}
-	c.server, c.serverID, c.done = cmd, id, make(chan error, 1)
+	c.server, c.done = cmd, make(chan error, 1)
 	ready := make(chan string, 1)
 	go func() {
 		scanner := bufio.NewScanner(stderr)
@@ -213,7 +201,7 @@ func (c *cliScenario) startProcess(id string, args ...string) error {
 		return nil
 	case err := <-c.done:
 		c.server = nil
-		return fmt.Errorf("server exited before startup: %v", err)
+		return fmt.Errorf("server %s exited before startup: %v", id, err)
 	case <-c.s.ctx.Done():
 		return c.s.ctx.Err()
 	}
@@ -296,8 +284,14 @@ func (c *cliScenario) invalid(problem string) error {
 		}
 		c.env["DEEPSEEK_API_KEY"] = ""
 		args = append(args, "hello")
-	case "missing peer":
+	case "missing destination":
 		args = append(append([]string{"send"}, common...), "hello")
+	case "peer flag":
+		args = []string{"send", "--peer", "http://127.0.0.1:1", "hello"}
+	case "URL destination":
+		args = []string{"send", "--to", "http://127.0.0.1:1", "hello"}
+	case "missing registry":
+		args = []string{"send", "--to", "bob", "hello"}
 	case "unknown provider":
 		args = append(args, "--provider", "unknown", "hello")
 	case "unknown command":
