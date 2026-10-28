@@ -83,6 +83,7 @@ func NewPeerHandler(card *sdk.AgentCard, core a2asrv.RequestHandler, s *Service,
 		return nil, err
 	}
 	mux.Handle(ViewPath+"/", views)
+	mux.Handle(ViewRESTPath, views)
 	return mux, nil
 }
 

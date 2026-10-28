@@ -51,6 +51,7 @@ type applicationScenario struct {
 
 func initializeApplication(sc *godog.ScenarioContext, cli *cliScenario) {
 	a := &applicationScenario{cli: cli}
+	initializeHTTP(sc, a)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		*a = applicationScenario{cli: cli}
 		return ctx, nil

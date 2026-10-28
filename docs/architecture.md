@@ -82,9 +82,15 @@ and permanent ownership rejection stops serving with its cause.
 `registry.Serve(ctx, listener, config, ready)` owns directory storage and HTTP.
 Supply `registry.Config{Path: "registry.db", HeartbeatTimeout: 15*time.Second}`.
 An existing host can instead `registry.Open(config)`, mount
-`registry.NewHandler(store)` and close the store after HTTP drains. Neither API
+the handler returned by `registry.NewHandler(store)` (checking its error), and
+close the store after HTTP drains. Neither API
 needs model credentials. A registry restart retains Peers and resets observed
 presence to unknown.
+
+`internal/httpserver` mounts Connect and Vanguard REST from the same registered
+services and owns the common HTTP lifecycle. [HTTP routes](http.md) are defined
+in protobuf annotations. Peer REST borrowing runs the same validation,
+authentication, extension negotiation, and requester-bound grants as Connect.
 
 `Node.UpdatePeer(ctx, metadata)` conditionally updates owned Peer metadata and
 refreshes the public Agent Card. Registry lookup and list return `Entry` values

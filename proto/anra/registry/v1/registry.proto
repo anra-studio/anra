@@ -4,6 +4,7 @@ package anra.registry.v1;
 
 import "anra/peer/v1/peer.proto";
 import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -30,12 +31,24 @@ message Entry {
 }
 
 service RegistryService {
-  rpc Register(RegisterRequest) returns (RegisterResponse);
-  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse);
-  rpc Lookup(LookupRequest) returns (LookupResponse);
-  rpc List(ListRequest) returns (ListResponse);
-  rpc Forget(ForgetRequest) returns (ForgetResponse);
+  rpc Register(RegisterRequest) returns (RegisterResponse) {
+    option (google.api.http) = {post: "/v1/registry/peers:register" body: "*"};
+  }
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse) {
+    option (google.api.http) = {post: "/v1/registry/peers/{id}:heartbeat" body: "*"};
+  }
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse) {
+    option (google.api.http) = {post: "/v1/registry/peers/{id}:disconnect" body: "*"};
+  }
+  rpc Lookup(LookupRequest) returns (LookupResponse) {
+    option (google.api.http) = {get: "/v1/registry/peers/{id}"};
+  }
+  rpc List(ListRequest) returns (ListResponse) {
+    option (google.api.http) = {get: "/v1/registry/peers"};
+  }
+  rpc Forget(ForgetRequest) returns (ForgetResponse) {
+    option (google.api.http) = {delete: "/v1/registry/peers/{id}"};
+  }
 }
 
 message RegisterRequest {

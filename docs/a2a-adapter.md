@@ -108,6 +108,11 @@ modes, security schemes/requirements, and a JSONRPC interface at
 | `/.well-known/agent-card.json` | Public native SDK Agent Card |
 | `/a2a` | Caller-identified core A2A JSON-RPC, including SDK streaming |
 | `/anra.a2a.tape.v1.TapeViewService/` | Caller-identified protobuf/Connect extension RPCs |
+| `/v1/tape/` | Caller-identified Vanguard REST TapeView routes |
+
+Connect and REST route mounting is shared in `internal/httpserver`. REST
+bindings come from `google.api.http` protobuf annotations. Both transports run
+the same validation and access interceptors; see [HTTP routes](http.md).
 
 The CLI and trusted-team profile use `a2a.TrustedPeerIdentity` to resolve
 `Anra-Agent` into a stable requester identity, also propagated into SDK

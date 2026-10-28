@@ -68,8 +68,10 @@ package for incompatible wire or semantic changes.
 `NewPeerHandler` mounts the service at `/anra.a2a.tape.v1.TapeViewService/`.
 Call `Advertise(card, publicBaseURL + ViewPath)` to publish its service URL
 as the extension's single `endpoint` parameter. `NewClient` uses the generated
-Connect binding. Standalone servers can mount `NewViewHandler` themselves at
-the same service path.
+Connect binding. Vanguard v0.5.0 also exposes the schema's `google.api.http`
+routes through the same Connect v2.0.0 server. Standalone servers can mount
+`NewViewHandler` themselves at the service path and `ViewRESTPath`.
+See [HTTP routes](../docs/http.md) for the REST API.
 
 Generated clients use `tapev1connect.NewTapeViewServiceClient` with
 `connect.NewClient(connecthttp.NewTransport(httpClient, baseURL))`. Every call
@@ -85,7 +87,7 @@ grant journal. `Resolve` and `Revoke` remain lender-local methods. A caller's
 identity is never accepted from protobuf request fields.
 
 Sequence fields are arbitrary-precision canonical decimal strings, including
-`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. `BorrowRequest.view` optionally pins an `TapeView`
+`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. `BorrowRequest.view` optionally pins a `TapeView`
 (source, closing-anchor snapshot head, and exact context scope); clients require `viewBorrowVersion: 1`
 in the card before sending it and verify exact grant provenance before reading. ProtoJSON
 range fields are `seqS` and `seqE`. Local domain/journal JSON uses `SeqS` and

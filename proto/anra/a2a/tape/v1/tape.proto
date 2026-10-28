@@ -3,6 +3,7 @@ syntax = "proto3";
 package anra.a2a.tape.v1;
 
 import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/scbizu/anra/gen/anra/a2a/tape/v1;tapev1";
@@ -11,10 +12,18 @@ option go_package = "github.com/scbizu/anra/gen/anra/a2a/tape/v1;tapev1";
 // All methods require authenticated peer identity and A2A-Extensions opt-in.
 // Resolve and Revoke are lender-local operations, never remote APIs.
 service TapeViewService {
-  rpc Borrow(BorrowRequest) returns (BorrowResponse);
-  rpc Get(GetRequest) returns (GetResponse);
-  rpc Read(ReadRequest) returns (ReadResponse);
-  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+  rpc Borrow(BorrowRequest) returns (BorrowResponse) {
+    option (google.api.http) = {post: "/v1/tape/borrows" body: "*"};
+  }
+  rpc Get(GetRequest) returns (GetResponse) {
+    option (google.api.http) = {get: "/v1/tape/borrows/{request_id}"};
+  }
+  rpc Read(ReadRequest) returns (ReadResponse) {
+    option (google.api.http) = {get: "/v1/tape/views/{view_id}/entries"};
+  }
+  rpc Release(ReleaseRequest) returns (ReleaseResponse) {
+    option (google.api.http) = {post: "/v1/tape/views/{view_id}:release" body: "*"};
+  }
 }
 
 message Source {

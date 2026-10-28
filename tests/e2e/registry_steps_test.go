@@ -509,7 +509,10 @@ func (r *registryScenario) open() error {
 		return err
 	}
 	r.store = store
-	base := registry.NewHandler(store)
+	base, err := registry.NewHandler(store)
+	if err != nil {
+		return err
+	}
 	r.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == registryv1connect.RegistryServiceRegisterProcedure && r.drop.CompareAndSwap(true, false) {
 			recorder := httptest.NewRecorder()

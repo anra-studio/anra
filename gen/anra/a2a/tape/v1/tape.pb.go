@@ -8,6 +8,7 @@ package tapev1
 
 import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
+	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -994,7 +995,7 @@ var File_anra_a2a_tape_v1_tape_proto protoreflect.FileDescriptor
 
 const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\n" +
-	"\x1banra/a2a/tape/v1/tape.proto\x12\x10anra.a2a.tape.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"N\n" +
+	"\x1banra/a2a/tape/v1/tape.proto\x12\x10anra.a2a.tape.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"N\n" +
 	"\x06Source\x12\"\n" +
 	"\bagent_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\aagentId\x12 \n" +
 	"\atape_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06tapeId\"\x85\x02\n" +
@@ -1073,12 +1074,12 @@ const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\x1bDECISION_STATUS_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17DECISION_STATUS_GRANTED\x10\x01\x12\x1a\n" +
 	"\x16DECISION_STATUS_DENIED\x10\x02\x12\x1b\n" +
-	"\x17DECISION_STATUS_PENDING\x10\x032\xb9\x02\n" +
-	"\x0fTapeViewService\x12K\n" +
-	"\x06Borrow\x12\x1f.anra.a2a.tape.v1.BorrowRequest\x1a .anra.a2a.tape.v1.BorrowResponse\x12B\n" +
-	"\x03Get\x12\x1c.anra.a2a.tape.v1.GetRequest\x1a\x1d.anra.a2a.tape.v1.GetResponse\x12E\n" +
-	"\x04Read\x12\x1d.anra.a2a.tape.v1.ReadRequest\x1a\x1e.anra.a2a.tape.v1.ReadResponse\x12N\n" +
-	"\aRelease\x12 .anra.a2a.tape.v1.ReleaseRequest\x1a!.anra.a2a.tape.v1.ReleaseResponseB4Z2github.com/scbizu/anra/gen/anra/a2a/tape/v1;tapev1b\x06proto3"
+	"\x17DECISION_STATUS_PENDING\x10\x032\xd4\x03\n" +
+	"\x0fTapeViewService\x12h\n" +
+	"\x06Borrow\x12\x1f.anra.a2a.tape.v1.BorrowRequest\x1a .anra.a2a.tape.v1.BorrowResponse\"\x1b\x82\xd3\xe4\x93\x02\x15:\x01*\"\x10/v1/tape/borrows\x12i\n" +
+	"\x03Get\x12\x1c.anra.a2a.tape.v1.GetRequest\x1a\x1d.anra.a2a.tape.v1.GetResponse\"%\x82\xd3\xe4\x93\x02\x1f\x12\x1d/v1/tape/borrows/{request_id}\x12o\n" +
+	"\x04Read\x12\x1d.anra.a2a.tape.v1.ReadRequest\x1a\x1e.anra.a2a.tape.v1.ReadResponse\"(\x82\xd3\xe4\x93\x02\"\x12 /v1/tape/views/{view_id}/entries\x12{\n" +
+	"\aRelease\x12 .anra.a2a.tape.v1.ReleaseRequest\x1a!.anra.a2a.tape.v1.ReleaseResponse\"+\x82\xd3\xe4\x93\x02%:\x01*\" /v1/tape/views/{view_id}:releaseB4Z2github.com/scbizu/anra/gen/anra/a2a/tape/v1;tapev1b\x06proto3"
 
 var (
 	file_anra_a2a_tape_v1_tape_proto_rawDescOnce sync.Once

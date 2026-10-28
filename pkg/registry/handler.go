@@ -1,18 +1,18 @@
 package registry
 
 import (
+	"net/http"
+
 	"connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connecthttp"
 	"connectrpc.com/validate"
 	"github.com/scbizu/anra/gen/anra/registry/v1/registryv1connect"
-	"net/http"
+	"github.com/scbizu/anra/internal/httpserver"
 )
 
-// NewHandler mounts the generated API. The caller owns the opened registry.
-func NewHandler(registry *Registry) http.Handler {
+// NewHandler mounts the generated Connect and Vanguard REST APIs.
+// The caller owns the opened registry.
+func NewHandler(registry *Registry) (http.Handler, error) {
 	server := connect.NewServer(validate.NewServerInterceptor())
 	registryv1connect.RegisterRegistryServiceHandler(server, registry)
-	mux := http.NewServeMux()
-	connecthttp.Mount(mux, server, connecthttp.WithReadMaxBytes(MaxMessageBytes), connecthttp.WithSendMaxBytes(MaxMessageBytes))
-	return mux
+	return httpserver.NewHandler(server, MaxMessageBytes)
 }

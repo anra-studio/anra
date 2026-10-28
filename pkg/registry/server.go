@@ -3,8 +3,9 @@ package registry
 import (
 	"context"
 	"errors"
-	"github.com/scbizu/anra/internal/httpserver"
 	"net"
+
+	"github.com/scbizu/anra/internal/httpserver"
 )
 
 // Serve owns the listener and durable directory until cancellation.
@@ -15,5 +16,9 @@ func Serve(ctx context.Context, listener net.Listener, config Config, ready func
 		return err
 	}
 	defer func() { serveErr = errors.Join(serveErr, registry.Close()) }()
-	return httpserver.Serve(ctx, listener, NewHandler(registry), ready)
+	handler, err := NewHandler(registry)
+	if err != nil {
+		return err
+	}
+	return httpserver.Serve(ctx, listener, handler, ready)
 }

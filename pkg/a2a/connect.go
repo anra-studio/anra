@@ -5,38 +5,50 @@ import (
 	"net/http"
 
 	"connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connecthttp"
 	"connectrpc.com/validate"
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	"github.com/scbizu/anra/gen/anra/a2a/tape/v1/tapev1connect"
+	"github.com/scbizu/anra/internal/httpserver"
 )
 
 const ViewPath = "/" + tapev1connect.TapeViewServiceName
+const ViewRESTPath = "/v1/tape/"
 
-// NewViewHandler serves the generated Connect tape-view API.
-// Mount it at ViewPath + "/". Identity comes only from Authenticate.
+// NewViewHandler serves the generated Connect and REST tape-view APIs.
+// Mount it at ViewPath + "/" and ViewRESTPath. Identity comes only from Authenticate.
 func NewViewHandler(s *Service, auth Authenticate) (http.Handler, error) {
 	if s == nil || auth == nil {
 		return nil, ErrInvalidParams
 	}
-	server := connect.NewServer(validate.NewServerInterceptor())
+	server := connect.NewServer(viewAccess, validate.NewServerInterceptor())
 	tapev1connect.RegisterTapeViewServiceHandler(server, &connectViews{service: s})
-	mux := http.NewServeMux()
-	connecthttp.Mount(mux, server, connecthttp.WithReadMaxBytes(MaxBodyBytes), connecthttp.WithSendMaxBytes(MaxBodyBytes))
-	errorWriter := connecthttp.NewErrorWriter()
+	handler, err := httpserver.NewHandler(server, MaxBodyBytes)
+	if err != nil {
+		return nil, err
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := auth(r)
-		if err != nil || p == "" {
-			_ = errorWriter.Write(w, r, connect.NewError(connect.CodeUnauthenticated, "unauthenticated peer"))
-			return
+		if err != nil {
+			p = ""
 		}
-		if !extensionActive(r.Header) {
-			_ = errorWriter.Write(w, r, connectError(ErrInactive))
-			return
-		}
-		w.Header().Set(ExtensionHeader, ExtensionURI)
-		mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), peerKey{}, p)))
+		handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), peerKey{}, p)))
 	}), nil
+}
+
+// Access checks run before validation/dispatch for every transport. Its adapter
+// writes each error in the caller's protocol, including Vanguard REST status JSON.
+func viewAccess(next connect.ServerFunc) connect.ServerFunc {
+	return func(ctx context.Context, spec connect.Spec, stream connect.ServerStream) error {
+		if connectPeer(ctx) == "" {
+			return connect.NewError(connect.CodeUnauthenticated, "unauthenticated peer")
+		}
+		info, ok := connect.CallInfoForServerContext(ctx)
+		if !ok || !extensionActive(info.RequestHeader()) {
+			return connectError(ErrInactive)
+		}
+		info.ResponseHeader().Set(ExtensionHeader, ExtensionURI)
+		return next(ctx, spec, stream)
+	}
 }
 
 type connectViews struct{ service *Service }

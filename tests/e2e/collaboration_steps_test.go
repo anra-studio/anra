@@ -509,7 +509,11 @@ func (c *collaborationScenario) setup() error {
 		return err
 	}
 	c.registryStore = store
-	c.directory = httptest.NewServer(registry.NewHandler(store))
+	handler, err := registry.NewHandler(store)
+	if err != nil {
+		return err
+	}
+	c.directory = httptest.NewServer(handler)
 	c.registry, err = discovery.NewClient(c.directory.URL)
 	if err != nil {
 		return err

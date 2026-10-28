@@ -9,6 +9,7 @@ package registryv1
 import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	v1 "github.com/scbizu/anra/gen/anra/peer/v1"
+	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
@@ -803,7 +804,7 @@ var File_anra_registry_v1_registry_proto protoreflect.FileDescriptor
 
 const file_anra_registry_v1_registry_proto_rawDesc = "" +
 	"\n" +
-	"\x1fanra/registry/v1/registry.proto\x12\x10anra.registry.v1\x1a\x17anra/peer/v1/peer.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa3\x01\n" +
+	"\x1fanra/registry/v1/registry.proto\x12\x10anra.registry.v1\x1a\x17anra/peer/v1/peer.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa3\x01\n" +
 	"\bPresence\x12\x1d\n" +
 	"\n" +
 	"runtime_id\x18\x01 \x01(\tR\truntimeId\x127\n" +
@@ -855,15 +856,15 @@ const file_anra_registry_v1_registry_proto_rawDesc = "" +
 	"\rPresenceState\x12\x1a\n" +
 	"\x16PRESENCE_STATE_UNKNOWN\x10\x00\x12\x19\n" +
 	"\x15PRESENCE_STATE_ONLINE\x10\x01\x12\x1a\n" +
-	"\x16PRESENCE_STATE_OFFLINE\x10\x022\xf4\x03\n" +
-	"\x0fRegistryService\x12Q\n" +
-	"\bRegister\x12!.anra.registry.v1.RegisterRequest\x1a\".anra.registry.v1.RegisterResponse\x12T\n" +
-	"\tHeartbeat\x12\".anra.registry.v1.HeartbeatRequest\x1a#.anra.registry.v1.HeartbeatResponse\x12W\n" +
+	"\x16PRESENCE_STATE_OFFLINE\x10\x022\xd9\x05\n" +
+	"\x0fRegistryService\x12y\n" +
+	"\bRegister\x12!.anra.registry.v1.RegisterRequest\x1a\".anra.registry.v1.RegisterResponse\"&\x82\xd3\xe4\x93\x02 :\x01*\"\x1b/v1/registry/peers:register\x12\x82\x01\n" +
+	"\tHeartbeat\x12\".anra.registry.v1.HeartbeatRequest\x1a#.anra.registry.v1.HeartbeatResponse\",\x82\xd3\xe4\x93\x02&:\x01*\"!/v1/registry/peers/{id}:heartbeat\x12\x86\x01\n" +
 	"\n" +
-	"Disconnect\x12#.anra.registry.v1.DisconnectRequest\x1a$.anra.registry.v1.DisconnectResponse\x12K\n" +
-	"\x06Lookup\x12\x1f.anra.registry.v1.LookupRequest\x1a .anra.registry.v1.LookupResponse\x12E\n" +
-	"\x04List\x12\x1d.anra.registry.v1.ListRequest\x1a\x1e.anra.registry.v1.ListResponse\x12K\n" +
-	"\x06Forget\x12\x1f.anra.registry.v1.ForgetRequest\x1a .anra.registry.v1.ForgetResponseB8Z6github.com/scbizu/anra/gen/anra/registry/v1;registryv1b\x06proto3"
+	"Disconnect\x12#.anra.registry.v1.DisconnectRequest\x1a$.anra.registry.v1.DisconnectResponse\"-\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/registry/peers/{id}:disconnect\x12l\n" +
+	"\x06Lookup\x12\x1f.anra.registry.v1.LookupRequest\x1a .anra.registry.v1.LookupResponse\"\x1f\x82\xd3\xe4\x93\x02\x19\x12\x17/v1/registry/peers/{id}\x12a\n" +
+	"\x04List\x12\x1d.anra.registry.v1.ListRequest\x1a\x1e.anra.registry.v1.ListResponse\"\x1a\x82\xd3\xe4\x93\x02\x14\x12\x12/v1/registry/peers\x12l\n" +
+	"\x06Forget\x12\x1f.anra.registry.v1.ForgetRequest\x1a .anra.registry.v1.ForgetResponse\"\x1f\x82\xd3\xe4\x93\x02\x19*\x17/v1/registry/peers/{id}B8Z6github.com/scbizu/anra/gen/anra/registry/v1;registryv1b\x06proto3"
 
 var (
 	file_anra_registry_v1_registry_proto_rawDescOnce sync.Once

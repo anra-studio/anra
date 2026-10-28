@@ -1,4 +1,4 @@
-// Package httpserver implements the HTTP lifecycle shared by peer and registry.
+// Package httpserver exposes RPC/REST routes and the HTTP lifecycle shared by peer and registry.
 package httpserver
 
 import (
@@ -6,7 +6,22 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/vanguard"
 )
+
+// NewHandler exposes the same RPC implementations through Connect and
+// schema-defined REST routes. Both transports run the server's interceptors.
+func NewHandler(server *connect.Server, maxBytes int) (http.Handler, error) {
+	mux := http.NewServeMux()
+	connecthttp.Mount(mux, server, connecthttp.WithReadMaxBytes(maxBytes), connecthttp.WithSendMaxBytes(maxBytes))
+	if err := vanguard.Mount(mux, server, vanguard.WithMaxReadBytes(int64(maxBytes))); err != nil {
+		return nil, err
+	}
+	return mux, nil
+}
 
 // Serve owns listener and closes it on return. ready runs after serving begins.
 func Serve(ctx context.Context, listener net.Listener, handler http.Handler, ready func(net.Addr) error) error {

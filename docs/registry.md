@@ -395,13 +395,18 @@ The former `--lease-ttl` flag is removed. Explicit operator retirement is
 `anra registry forget alice --address http://127.0.0.1:9090`; it rejects online
 Peers. A retired ID remains tombstoned across restart.
 
-Hosts can use `registry.Open(Config)` with `registry.NewHandler(store)`, or
+Hosts can use `registry.Open(Config)` with `registry.NewHandler(store)`
+(returning a handler and any route configuration error), or
 `registry.Serve(ctx, listener, config, ready)` to own serving and storage together.
 Discovery clients use `Start` for a runtime session, `Registration.Update` for
 owned metadata updates, and `Registration.Close` to disconnect. The optional
 Start callback receives metadata reconciled after uncertain update responses;
 it runs synchronously and must not call back into the session. Generated RPC
 methods remain available for explicit conditional operations.
+
+The registry also exposes Vanguard REST routes under `/v1/registry/`, using the
+same implementations and validation as Connect. See [HTTP routes](http.md) for
+the protobuf JSON bodies, query parameters, and error format.
 
 The migration targets a small trusted team and upgrades registry and clients
 together. It provides one persistent directory and one current runtime per Peer,
