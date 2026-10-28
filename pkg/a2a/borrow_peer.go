@@ -21,7 +21,7 @@ type borrowPeerArgs struct {
 	Query     string `json:"query"`
 }
 
-// NewPeerBorrowTool resolves the lender's current card and lets the lender select
+// NewPeerBorrowTool resolves the lender's current Peer and lets the lender select
 // context. Every request uses this agent's own HTTP client identity.
 func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{Name: "borrow_peer_context", Description: "Ask a named peer for context using a purpose and query. The lender selects an eligible immutable publication, even while busy, and grants access under your own identity. Keep all returned provenance."}, func(ctx tool.Context, args borrowPeerArgs) (map[string]any, error) {
@@ -32,12 +32,10 @@ func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string)
 		if err != nil {
 			return nil, err
 		}
-		// The message client validates the registered card and its endpoints.
-		remote, err := NewMessageClient(ctx, h, record)
-		if err != nil {
+		if err := discovery.RequireOnline(record); err != nil {
 			return nil, err
 		}
-		client, err := NewClient(h, remote.Card)
+		client, err := NewPeerClient(h, record.Peer)
 		if err != nil {
 			return nil, err
 		}

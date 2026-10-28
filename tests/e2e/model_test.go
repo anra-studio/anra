@@ -250,6 +250,12 @@ func newModelServer(control *providerControl) *httptest.Server {
 					_ = json.Unmarshal([]byte(last.Content), &result)
 					if result.Error != "" {
 						message["content"] = "Unable to consult peer: agent is not registered"
+						if strings.Contains(result.Error, " is offline") {
+							message["content"] = "Unable to consult peer: peer " + peer + " is offline"
+						}
+						if strings.Contains(result.Error, " is unknown") {
+							message["content"] = "Unable to consult peer: peer " + peer + " is unknown"
+						}
 					} else if result.Status == "busy" || result.Status == "no_new_context" {
 						message["content"] = "peer busy; continued locally"
 					} else {

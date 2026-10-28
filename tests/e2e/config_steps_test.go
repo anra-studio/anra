@@ -173,6 +173,8 @@ func (c *cliScenario) invalidConfig(problem string) error {
 		text = strings.ReplaceAll(text, `provider = "deepseek"`, `provider = "unknown"`)
 	case "missing lobby":
 		text = strings.Replace(text, "[lobby]\naddress = \"http://127.0.0.1:1\"\n\n", "", 1)
+	case "invalid public address":
+		text = strings.ReplaceAll(text, `endpoint = "127.0.0.1:0"`, `endpoint = "127.0.0.1:0"`+"\naddress = 'http://127.0.0.1:0'")
 	case "invalid lobby address":
 		text = strings.Replace(text, "http://127.0.0.1:1", "ftp://example.test", 1)
 	case "unknown selected agent":

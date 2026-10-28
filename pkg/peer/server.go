@@ -4,36 +4,40 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"path/filepath"
 
-	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	pv "github.com/scbizu/anra/gen/anra/peer/v1"
 	"github.com/scbizu/anra/internal/httpserver"
 	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/discovery"
+	peermodel "github.com/scbizu/anra/pkg/model/peer"
 )
 
-// Serve advertises the bound listener, maintains its directory lease, and serves
+// Serve advertises the bound listener, maintains its observed presence, and serves
 // A2A and TapeView until cancellation or a permanent registry rejection. It owns
 // the listener and grant journal. After it returns the caller must Close the node.
-// ready is optional and runs once the card is registered and HTTP serving begins.
+// ready is optional and runs once the Peer is registered and HTTP serving begins.
 func (n *Node) Serve(ctx context.Context, listener net.Listener, ready func(net.Addr) error) (serveErr error) {
 	a, settings := n.agent, n.settings
 	id := settings.ID
 	defer listener.Close()
 	base := "http://" + listener.Addr().String()
-	card := &sdk.AgentCard{
-		Name: id, Description: "Anra tape-backed agent", Version: "0.1.0",
-		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(base+a2a.CorePath, sdk.TransportProtocolJSONRPC)},
-		DefaultInputModes:   []string{"text/plain"}, DefaultOutputModes: []string{"text/plain"},
-		Skills: []sdk.AgentSkill{{ID: "chat", Name: "Chat", Description: "Talk to this agent", Tags: []string{"chat"}}},
+	if settings.Address != "" {
+		base = settings.Address
 	}
-	executor, err := a2a.NewExecutor(a)
+	metadata := &pv.Peer{Id: id, Description: "Anra tape-backed agent", Address: base, Skill: []*pv.Skill{
+		{Id: peermodel.Chat, Name: "Chat", Description: "Talk to this agent"},
+		{Id: peermodel.BorrowContext, Name: "Borrow context", Description: "Request a permitted completed publication"},
+	}}
+	card, err := a2a.Card(metadata)
 	if err != nil {
 		return err
 	}
-	a2a.AdvertiseCollaboration(card)
-	if err := a2a.AdvertisePublications(card, base+a2a.ViewPath); err != nil {
+	n.card.Store(card)
+	executor, err := a2a.NewExecutor(a)
+	if err != nil {
 		return err
 	}
 	views, err := a2a.NewService(a2a.Config{Source: a.Source(), Owner: id, Tape: a.Tape(), JournalPath: filepath.Join(settings.DataDir, id+".grants.db"), Publications: a, Exporter: a2a.PublicationExporter{}})
@@ -49,12 +53,28 @@ func (n *Node) Serve(ctx context.Context, listener net.Listener, ready func(net.
 	if err != nil {
 		return err
 	}
-	registered, cleanup, err := directory.MaintainRegistration(ctx, discovery.Record{Name: id, CardURL: base + a2asrv.WellKnownAgentCardPath, Card: card})
+	registration, err := directory.Start(ctx, metadata, func(value *pv.Peer) {
+		card, err := a2a.Card(value)
+		if err == nil {
+			n.card.Store(card)
+		}
+	})
 	if err != nil {
 		return err
 	}
-	defer cleanup()
-	err = httpserver.Serve(registered, listener, handler, ready)
+	n.metadataMu.Lock()
+	n.registration = registration
+	n.metadataMu.Unlock()
+	defer func() { registration.Close(); n.metadataMu.Lock(); n.registration = nil; n.metadataMu.Unlock() }()
+	registered := registration.Context()
+	dynamic := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == a2asrv.WellKnownAgentCardPath {
+			a2asrv.NewStaticAgentCardHandler(n.card.Load()).ServeHTTP(w, r)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+	err = httpserver.Serve(registered, listener, dynamic, ready)
 	if err == nil && ctx.Err() == nil && context.Cause(registered) != nil {
 		return context.Cause(registered)
 	}

@@ -1,15 +1,25 @@
-# A2A extension contracts
+# Anra protobuf contracts
 
 `anra/a2a/tape/v1/tape.proto` defines Anra's permissioned tape-view extension:
 `Borrow`, `Get`, `Read`, and `Release`. The official A2A core remains in
 `github.com/a2aproject/a2a-go/v2`; do not copy its schema or regenerate its
-messages here. Discovery still fetches the official JSON Agent Card.
+messages here. External A2A callers can still fetch the official JSON Agent Card;
+Anra discovery resolves typed Peer metadata.
 
 `anra/a2a/collaboration/v1/collaboration.proto` defines the delegation and
 response metadata for `urn:anra:a2a:collaboration:v1`. It imports TapeView's
 `AnchorRef` and adds no RPC service. These generated messages travel as ProtoJSON
 objects in the official A2A Message's extension metadata. Answer text remains in
 standard A2A text parts.
+
+`anra/peer/v1/peer.proto` defines canonical Peer/Skill metadata. The
+`anra/registry/v1/registry.proto` contract defines runtime presence and the
+Register, Heartbeat, Disconnect, Lookup, List and Forget RPCs. It is independent
+of the A2A SDK. `pkg/registry` persists ownership and metadata; `pkg/discovery`
+uses the generated client, and `pkg/a2a.Card` produces the A2A representation.
+Presence defaults to `PRESENCE_STATE_UNKNOWN`; the schema intentionally exempts
+that enum's zero value from Buf's usual `UNSPECIFIED` naming rule. See the
+[registry contract](../docs/registry.md) for persistence and mutation semantics.
 
 The layout follows Gate: versioned packages under `proto/`, generated messages
 and Connect bindings under `gen/`, transport adapters under `pkg/a2a`, and root

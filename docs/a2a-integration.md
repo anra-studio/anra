@@ -87,14 +87,19 @@ policy remains in Anra.
 
 ## Borrower setup and model consumption
 
-Discover configured, trusted peer card URLs. An optional directory can provide
-these same references. `RankPeers` ranks visible native card skill descriptions
-and returns the peers worth visiting, best first, or no match. The CLI's
-`registry` command provides a leased team directory of Agent Cards.
-`serve` registers automatically with the config's `[lobby].address`, and model-directed peer calls resolve the
-current destination card through that directory. See
-[CLI discovery](cli.md#running-servers-and-discovery). The registry is an Anra
-directory service; core A2A communication still uses the official SDK.
+Anra callers resolve typed Peer metadata and observed presence from the persistent
+registry. `NewMessageClient(ctx, httpClient, entry.Peer)` constructs the core
+A2A client, and `NewPeerClient(httpClient, entry.Peer)` constructs TapeView
+transport directly from the address and recognized skill. Call
+`discovery.RequireOnline(entry)` before sending a new request. `serve` registers
+with `[lobby].address` and publishes `a2a.Card(peer)` at the standard card URL.
+See [CLI discovery](cli.md#running-servers-and-discovery) and the
+[registry contract](registry.md).
+
+External A2A callers can discover trusted card URLs and use
+`NewMessageClientFromCard` or `NewClient` at that boundary. `RankPeers` ranks
+native card skill descriptions for explicit agent selection. Core A2A
+communication continues to use the official SDK. For example:
 
 ```go
 peerHTTPClient := a2a.TrustedHTTPClient("borrower")

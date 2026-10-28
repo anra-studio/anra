@@ -30,7 +30,7 @@ Start Alice and Bob in separate terminals using [anra.example.toml](anra.example
 ./anra --config anra.example.toml serve --agent bob
 ```
 
-Each server registers its Agent Card with the lobby. Alice's configured `endpoint`
+Each server registers its Peer metadata with the lobby and publishes an A2A card. Alice's configured `endpoint`
 chooses an available port; Bob's is set to `127.0.0.1:8080`. With both
 running, ask either agent to consult the other from another terminal:
 
@@ -43,7 +43,9 @@ The CLI contacts the selected agent's running model. That agent decides whether
 to consult a peer through its built-in tools and combines the findings into an
 answer. Each agent persists its own conversation and tools in `.anra/`. No peer
 addresses are needed in the config.
-Ctrl-C unregisters a server; crashed servers disappear when their leases expire.
+The registry preserves Peer identities, addresses and skills in `.anra/registry.db`.
+Ctrl-C marks presence offline; lost contact marks it unknown. Explicit retirement
+uses `anra registry forget <id>`. See the [registry contract](docs/registry.md).
 
 The registry and agent endpoints run inside a trusted network. No shared peer
 token is required. Requests carry the caller's agent identity; team members are

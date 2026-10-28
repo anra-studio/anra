@@ -37,7 +37,7 @@ Feature: Run tape-backed agents from the terminal
       | assistant | alice: hello again |
 
   Scenario: Say hello from one agent to another and restart the receiving agent
-    Given a running team Agent Card directory
+    Given a running team Peer directory
     And team agents "alice" and "bob" are serving
     When running agent "alice" sends "hello from alice" to "bob"
     Then the CLI answer is "bob: hello from alice"
@@ -60,7 +60,7 @@ Feature: Run tape-backed agents from the terminal
       | assistant | bob: hello again      |
 
   Scenario Outline: Peer messages require a valid caller identity
-    Given a running team Agent Card directory
+    Given a running team Peer directory
     And the CLI agent "bob" is serving with a deterministic model
     When a peer sends a greeting with identity "<identity>"
     Then the CLI command fails

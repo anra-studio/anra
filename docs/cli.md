@@ -49,7 +49,7 @@ settings.
 
 | Key | Meaning | Requirement |
 | --- | --- | --- |
-| `[lobby].address` | Team Agent Card directory URL; agents find peers only through the lobby | Required |
+| `[lobby].address` | Team Peer registry address; agents find peers only through the lobby | Required |
 | `data-dir` | Tape database directory, relative to the config file | Required |
 | `provider` | Model provider (`deepseek`) | Required |
 | `model` | Model name; empty uses tape-go's provider default | Optional |
@@ -57,6 +57,7 @@ settings.
 | `role` | Role part of the agent's system instruction | Optional |
 | `desc` | Description part of the system instruction | Optional |
 | `endpoint` | HTTP listen address of `serve`, such as `127.0.0.1:0` | Required |
+| `address` | Public HTTP(S) origin, for example behind a proxy; defaults to the concrete bound address | Optional |
 
 Each selected agent must explicitly set `data-dir`, `provider`, `timeout`, and
 `endpoint` for `run`, `ask`, and `serve`. Missing, empty, or whitespace-only
@@ -69,8 +70,8 @@ the model should know it.
 Unknown keys (including the removed `default-agent`, `[defaults]`, `session`,
 `registry`, `api-base`, and any `tools`) fail with `parse config` before
 storage opens. Help does not require a readable config file. `registry` is the
-one command that takes no config: it uses its own `--listen` and `--lease-ttl`
-flags.
+one command that takes no config: it uses `--listen`, `--data-dir`, and
+`--heartbeat-timeout`.
 
 The remaining shared flags select the agent and file: `--agent` and `--config`. The model credential comes from `DEEPSEEK_API_KEY`.
 `DEEPSEEK_API_BASE` optionally overrides the provider's HTTP endpoint (the E2Es
@@ -123,22 +124,38 @@ members not to impersonate one another. The header is not a credential, and a
 receiver does not verify membership against the registry on every request.
 The local CLI acts on behalf of the agent selected with `--agent`.
 TapeView grants remain bound to the supplied requester identity.
-Each `serve` registers with the lobby and publishes its Agent Card, including
-its actual bound address and capabilities. All agents share this discovery
+Each `serve` registers its canonical Peer with the lobby and publishes an A2A
+Agent Card generated from that Peer, including its address and skills. All agents share this discovery
 endpoint; each agent owns its tape and communicates directly with peers.
 
 `serve` publishes `/.well-known/agent-card.json` and A2A at `/a2a`.
-An `endpoint` of `127.0.0.1:0` chooses an available port. Agent names are
-unique while their leases are active; attempting to start another server with the same name fails.
+An `endpoint` of `127.0.0.1:0` chooses an available port. A wildcard bind
+requires a concrete public `address` in the agent configuration. The address
+must be an HTTP(S) origin with no user information, query, fragment or non-root
+path; port zero and wildcard public addresses are invalid.
 
-Registrations renew every third of the lease lifetime. The directory defaults
-to a `15s` lifetime, configurable with `registry --lease-ttl`. Ctrl-C or SIGTERM
-shuts down HTTP, closes the tape, and unregisters the server. A crashed process
-loses its registration after the lease expires. The directory is in memory;
-active servers retry transient directory failures and register again after it
-restarts. An invalid or conflicting registration stops the affected
-agent server. An agent restart registers the same name at its new port and
-resumes its saved conversation.
+The registry persists metadata in `<registry-data-dir>/registry.db`; the data
+directory defaults to `.anra`. It keeps each Peer after shutdown, a crash or a
+registry restart. Presence is observed separately: `ONLINE` means recent contact,
+`OFFLINE` means an explicit disconnect, and `UNKNOWN` means stale contact or a
+registry restart. The last address and skills remain available in every state.
+
+Heartbeats run every third of the freshness window, which defaults to `15s` and
+is configurable with `registry --heartbeat-timeout` (minimum `1s`). The former
+`--lease-ttl` flag has been removed. Ctrl-C or SIGTERM disconnects presence and
+drains reasoning before closing the tape. A crash eventually leaves unknown
+presence. Active servers retry transient failures and re-establish presence
+after a registry restart. A conflicting online runtime cannot claim the same
+Peer; stale-runtime mutations are rejected after replacement.
+
+Explicitly retire an offline or unknown Peer with:
+
+```sh
+./anra registry forget alice --address http://127.0.0.1:9090
+```
+
+Retirement removes its directory entry and retains a tombstone. Reusing retired
+IDs is outside the current contract. It does not delete the agent's tape.
 
 `ask --agent alice "Discover Bob and ask him to say hello."` submits a question
 to Alice's model over A2A. Her ADK loop can answer locally, discover peers, ask a
@@ -170,8 +187,10 @@ private. This first implementation publishes final answers; it does not expose a
 intermediate `publish_context` tool.
 
 The CLI uses `[lobby].address` to find the selected server; its peer tools resolve
-the destination's current Agent Card. There is no `--peer` flag or TOML `peer`
-setting. Use a listen address reachable by other team members.
+the destination's canonical Peer and observed presence. There is no `--peer` flag or TOML `peer`
+setting. Use an address reachable by other team members. Unknown/offline presence
+is reported explicitly; requests are never routed automatically to a same-skill
+agent. `discover_peers` explicitly lists online Peers.
 
 ## Storage and sessions
 

@@ -21,7 +21,6 @@ import (
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	a2a "github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/agent"
-	"github.com/scbizu/anra/pkg/discovery"
 	"github.com/scbizu/tape-go/pkg/runner"
 	entry "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -61,6 +60,7 @@ type scenario struct {
 func initializeScenario(sc *godog.ScenarioContext) {
 	s := &scenario{}
 	initializeCLI(sc, s)
+	initializeRegistry(sc, s)
 	initializeCollaboration(sc, s)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		root, err := os.MkdirTemp("", "anra-e2e-")
@@ -753,22 +753,11 @@ func (s *scenario) wireRequest(problem string) error {
 	return nil
 }
 
-// peerRecord discovers a peer's card directly, for fixtures that hold only a
-// URL rather than a directory record.
-func peerRecord(ctx context.Context, h *http.Client, base string) (discovery.Record, error) {
-	cardURL := strings.TrimRight(base, "/") + a2asrv.WellKnownAgentCardPath
-	card, err := a2a.Discover(ctx, h, cardURL)
-	if err != nil {
-		return discovery.Record{}, err
-	}
-	return discovery.Record{Name: card.Name, CardURL: cardURL, Card: card}, nil
-}
-
-// messageClient builds a client for a peer found by URL instead of the directory.
+// messageClient exercises the external A2A boundary for fixtures holding a URL.
 func messageClient(ctx context.Context, h *http.Client, base string) (*a2a.MessageClient, error) {
-	record, err := peerRecord(ctx, h, base)
+	card, err := a2a.Discover(ctx, h, strings.TrimRight(base, "/")+a2asrv.WellKnownAgentCardPath)
 	if err != nil {
 		return nil, err
 	}
-	return a2a.NewMessageClient(ctx, h, record)
+	return a2a.NewMessageClientFromCard(ctx, h, card)
 }

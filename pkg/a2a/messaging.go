@@ -10,7 +10,7 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
-	"github.com/scbizu/anra/pkg/discovery"
+	pv "github.com/scbizu/anra/gen/anra/peer/v1"
 	"github.com/scbizu/anra/pkg/model/delegator"
 )
 
@@ -21,21 +21,34 @@ type MessageClient struct {
 	Card          *sdk.AgentCard
 }
 
-// NewMessageClient builds a client from the card the directory registered for
-// the peer. The record is the only discovery step: the card is not fetched
-// again, so a client always talks to the card the peer registered.
-func NewMessageClient(ctx context.Context, h *http.Client, record discovery.Record) (*MessageClient, error) {
-	if h == nil || record.Card == nil {
-		return nil, ErrInvalidParams
-	}
-	card := record.Card
-	if card.Name != record.Name {
-		return nil, errors.New("discovered card name mismatch")
-	}
-	// BaseURL checks the card URL and every advertised interface origin.
-	base, err := discovery.BaseURL(record)
+// NewMessageClient resolves protocol details from canonical Peer metadata.
+func NewMessageClient(ctx context.Context, h *http.Client, value *pv.Peer) (*MessageClient, error) {
+	card, err := Card(value)
 	if err != nil {
 		return nil, err
+	}
+	return NewMessageClientFromCard(ctx, h, card)
+}
+
+// NewMessageClientFromCard is the external A2A boundary for callers holding an
+// Agent Card. Internal discovery uses NewMessageClient with typed Peer values.
+func NewMessageClientFromCard(ctx context.Context, h *http.Client, card *sdk.AgentCard) (*MessageClient, error) {
+	if h == nil || card == nil || len(card.SupportedInterfaces) == 0 || card.SupportedInterfaces[0] == nil {
+		return nil, ErrInvalidParams
+	}
+	origin, err := url.Parse(card.SupportedInterfaces[0].URL)
+	if err != nil || origin.Host == "" || (origin.Scheme != "http" && origin.Scheme != "https") || origin.User != nil {
+		return nil, ErrInvalidParams
+	}
+	base := origin.Scheme + "://" + origin.Host
+	for _, endpoint := range card.SupportedInterfaces {
+		if endpoint == nil {
+			return nil, ErrInvalidParams
+		}
+		u, err := url.Parse(endpoint.URL)
+		if err != nil || u.User != nil || u.Scheme+"://"+u.Host != base {
+			return nil, ErrInvalidParams
+		}
 	}
 	for _, ext := range card.Capabilities.Extensions {
 		if ext.URI != ExtensionURI {
@@ -54,7 +67,7 @@ func NewMessageClient(ctx context.Context, h *http.Client, record discovery.Reco
 	if err != nil {
 		return nil, err
 	}
-	return &MessageClient{client: client, Name: record.Name, collaboration: advertisesCollaboration(card), Card: card}, nil
+	return &MessageClient{client: client, Name: card.Name, collaboration: advertisesCollaboration(card), Card: card}, nil
 }
 
 // Send returns a typed outcome when the peer advertises collaboration.

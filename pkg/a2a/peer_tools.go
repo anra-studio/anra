@@ -10,11 +10,13 @@ import (
 
 	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	rv "github.com/scbizu/anra/gen/anra/registry/v1"
 	"github.com/scbizu/anra/pkg/discovery"
 	"github.com/scbizu/anra/pkg/model/anchor"
 	"github.com/scbizu/anra/pkg/model/delegator"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // Delegation hints use the public ProtoJSON spelling, not Go protobuf field tags.
@@ -52,23 +54,22 @@ type sendResult struct {
 	Publication map[string]any `json:"publication,omitempty"`
 }
 
-// PeerTools creates native ADK tools backed by the team's leased directory and
+// PeerTools creates native ADK tools backed by the team's Peer directory and
 // official A2A SDK. Tool calls and responses are persisted by the ADK runtime.
 func PeerTools(directory *discovery.Client, h *http.Client, self string) (map[string]tool.Tool, error) {
-	discover, err := functiontool.New(functiontool.Config{Name: "discover_peers", Description: "Discover available peer agents, their Agent Cards and skills, and any publication references supplied with this question. References must be borrowed under your own identity."}, func(ctx tool.Context, _ discoverArgs) (discoverResult, error) {
+	discover, err := functiontool.New(functiontool.Config{Name: "discover_peers", Description: "Discover online peer agents, their identities, addresses and skills, and any publication references supplied with this question. References must be borrowed under your own identity."}, func(ctx tool.Context, _ discoverArgs) (discoverResult, error) {
 		if directory == nil {
 			return discoverResult{}, errors.New("peer discovery requires a configured registry")
 		}
-		records, err := directory.List(ctx)
+		records, err := directory.List(ctx, &rv.ListRequest{State: rv.PresenceState_PRESENCE_STATE_ONLINE.Enum()})
 		if err != nil {
 			return discoverResult{}, err
 		}
 		result := discoverResult{Agents: make([]map[string]any, 0, len(records))}
 		for _, record := range records {
-			if record.Name != self {
-				// SDK cards contain custom JSON union types. Expose their wire
-				// representation so ADK validates the actual JSON shape.
-				encoded, err := json.Marshal(record)
+			if record.Peer.Id != self {
+				// Expose the canonical protobuf JSON shape to the model.
+				encoded, err := protojson.Marshal(record.Peer)
 				if err != nil {
 					return discoverResult{}, err
 				}
@@ -116,7 +117,10 @@ func PeerTools(directory *discovery.Client, h *http.Client, self string) (map[st
 		if err != nil {
 			return sendResult{}, err
 		}
-		client, err := NewMessageClient(ctx, h, record)
+		if err := discovery.RequireOnline(record); err != nil {
+			return sendResult{}, err
+		}
+		client, err := NewMessageClient(ctx, h, record.Peer)
 		if err != nil {
 			return sendResult{}, err
 		}

@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package anra.registry.v1;
+
+import "anra/peer/v1/peer.proto";
+import "buf/validate/validate.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/scbizu/anra/gen/anra/registry/v1;registryv1";
+
+enum PresenceState {
+  // buf:lint:ignore ENUM_ZERO_VALUE_SUFFIX
+  PRESENCE_STATE_UNKNOWN = 0;
+  PRESENCE_STATE_ONLINE = 1;
+  PRESENCE_STATE_OFFLINE = 2;
+}
+
+message Presence {
+  string runtime_id = 1;
+  google.protobuf.Timestamp last_seen = 2;
+  PresenceState state = 3 [(buf.validate.field).enum.defined_only = true];
+}
+
+// Entry contains public discovery information, never ownership credentials.
+message Entry {
+  anra.peer.v1.Peer peer = 1;
+  Presence presence = 2;
+  string revision = 3;
+}
+
+service RegistryService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse);
+  rpc Lookup(LookupRequest) returns (LookupResponse);
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Forget(ForgetRequest) returns (ForgetResponse);
+}
+
+message RegisterRequest {
+  anra.peer.v1.Peer peer = 1 [(buf.validate.field).required = true];
+  string runtime_id = 2 [(buf.validate.field).string = {min_bytes: 1 max_bytes: 256}];
+  string token = 3 [(buf.validate.field).string = {min_bytes: 1 max_bytes: 256}];
+  // Empty means create only. Other values come from Lookup/Register.
+  string expected_revision = 4;
+}
+message RegisterResponse {
+  Entry entry = 1;
+  google.protobuf.Duration heartbeat_timeout = 2;
+}
+message HeartbeatRequest {
+  string id = 1 [(buf.validate.field).string.min_bytes = 1];
+  string runtime_id = 2 [(buf.validate.field).string.min_bytes = 1];
+  string token = 3 [(buf.validate.field).string.min_bytes = 1];
+}
+// Heartbeats return the current snapshot to reconcile an acknowledgement lost
+// during a metadata update. They still mutate only the contact observation.
+message HeartbeatResponse {
+  Entry entry = 1;
+  google.protobuf.Duration heartbeat_timeout = 2;
+}
+message DisconnectRequest {
+  string id = 1 [(buf.validate.field).string.min_bytes = 1];
+  string runtime_id = 2 [(buf.validate.field).string.min_bytes = 1];
+  string token = 3 [(buf.validate.field).string.min_bytes = 1];
+}
+message DisconnectResponse {}
+message LookupRequest {
+  string id = 1 [(buf.validate.field).string.min_bytes = 1];
+}
+message LookupResponse { Entry entry = 1; }
+message ListRequest {
+  optional PresenceState state = 1 [(buf.validate.field).enum.defined_only = true];
+  string skill = 2;
+}
+message ListResponse { repeated Entry entry = 1; }
+message ForgetRequest {
+  string id = 1 [(buf.validate.field).string.min_bytes = 1];
+  string expected_revision = 2 [(buf.validate.field).string.min_bytes = 1];
+}
+message ForgetResponse {}

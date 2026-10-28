@@ -11,7 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"connectrpc.com/connect/v2"
 	"github.com/cucumber/godog"
+	rv "github.com/scbizu/anra/gen/anra/registry/v1"
 	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/discovery"
 )
@@ -39,9 +41,9 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 		}
 		return ctx, err
 	})
-	sc.Step(`^a running team Agent Card directory$`, func() error {
+	sc.Step(`^a running team Peer directory$`, func() error {
 		t.registry = &cliScenario{s: c.s}
-		return t.registry.startProcess("registry", "registry", "--listen", "127.0.0.1:0", "--lease-ttl", "1s")
+		return t.registry.startProcess("registry", "registry", "--listen", "127.0.0.1:0", "--heartbeat-timeout", "1s", "--data-dir", filepath.Join(c.s.root, "registry"))
 	})
 	sc.Step(`^team agents "([^"]*)" and "([^"]*)" are serving$`, func(a, b string) error {
 		return t.startAgents(a, b)
@@ -56,7 +58,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 		records, err := client.List(ctx)
 		c.output, c.err = "", err
 		for _, record := range records {
-			c.output += record.Name + "\t" + record.CardURL + "\n"
+			c.output += record.Peer.Id + "\t" + record.Peer.Address + "\n"
 		}
 		return nil
 	})
@@ -82,7 +84,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 		if err := t.registry.stop(); err != nil {
 			return err
 		}
-		return t.registry.startProcess("registry", "registry", "--listen", address, "--lease-ttl", "1s")
+		return t.registry.startProcess("registry", "registry", "--listen", address, "--heartbeat-timeout", "1s", "--data-dir", filepath.Join(c.s.root, "registry"))
 	})
 	sc.Step(`^both team agents eventually register again$`, func() error {
 		client, err := discovery.NewClient(t.registry.peer)
@@ -98,7 +100,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 			if err != nil {
 				return err
 			}
-			if len(records) == 2 {
+			if len(records) == 2 && records[0].Presence.State == rv.PresenceState_PRESENCE_STATE_ONLINE && records[1].Presence.State == rv.PresenceState_PRESENCE_STATE_ONLINE {
 				return nil
 			}
 			select {
@@ -117,8 +119,11 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 		if err != nil {
 			return err
 		}
-		_, err = client.Lookup(c.s.ctx, id)
-		return err
+		entry, err := client.Lookup(c.s.ctx, id)
+		if err != nil {
+			return err
+		}
+		return discovery.RequireOnline(entry)
 	})
 	sc.Step(`^another server attempts to register as "([^"]*)"$`, func(id string) error {
 		path := filepath.Join(c.s.root, "duplicate.toml")
@@ -164,7 +169,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 		t.crashed = id
 		return nil
 	})
-	sc.Step(`^its registration eventually expires$`, func() error {
+	sc.Step(`^its presence eventually becomes unknown$`, func() error {
 		client, err := discovery.NewClient(t.registry.peer)
 		if err != nil {
 			return err
@@ -174,8 +179,8 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 		ticker := time.NewTicker(25 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			_, err := client.Lookup(ctx, t.crashed)
-			if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+			entry, err := client.Lookup(ctx, t.crashed)
+			if err == nil && entry.Presence.State == rv.PresenceState_PRESENCE_STATE_UNKNOWN {
 				return nil
 			}
 			if err != nil {
@@ -183,28 +188,68 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 			}
 			select {
 			case <-ctx.Done():
-				return errors.New("crashed agent registration did not expire")
+				return errors.New("crashed Peer did not become unknown")
 			case <-ticker.C:
 			}
 		}
 	})
-	sc.Step(`^another lease attempts to renew or remove agent "([^"]*)"$`, func(name string) error {
+	sc.Step(`^another runtime attempts to heartbeat or disconnect agent "([^"]*)"$`, func(name string) error {
 		client, err := discovery.NewClient(t.registry.peer)
 		if err != nil {
 			return err
 		}
-		record, err := client.Lookup(c.s.ctx, name)
-		if err != nil {
-			return err
+		_, err = client.Heartbeat(c.s.ctx, &rv.HeartbeatRequest{Id: name, RuntimeId: "another-runtime", Token: "another-token"})
+		if connect.CodeOf(err) != connect.CodePermissionDenied {
+			return fmt.Errorf("unexpected heartbeat result: %v", err)
 		}
-		if _, err := client.Register(c.s.ctx, record, "another-lease"); err == nil || !strings.Contains(err.Error(), "HTTP 409") {
-			return fmt.Errorf("unexpected renewal result: %v", err)
-		}
-		if err := client.Unregister(c.s.ctx, name, "another-lease"); err == nil || !strings.Contains(err.Error(), "HTTP 409") {
-			return fmt.Errorf("unexpected removal result: %v", err)
+		_, err = client.Disconnect(c.s.ctx, &rv.DisconnectRequest{Id: name, RuntimeId: "another-runtime", Token: "another-token"})
+		if connect.CodeOf(err) != connect.CodePermissionDenied {
+			return fmt.Errorf("unexpected disconnect result: %v", err)
 		}
 		return nil
 	})
+	sc.Step(`^the operator forgets team agent "([^"]*)"$`, func(id string) error {
+		c.execute("registry", "forget", id, "--address", t.registry.peer)
+		return c.err
+	})
+	sc.Step(`^team agent "([^"]*)" is forgotten$`, func(id string) error {
+		client, err := discovery.NewClient(t.registry.peer)
+		if err != nil {
+			return err
+		}
+		_, err = client.Lookup(c.s.ctx, id)
+		if connect.CodeOf(err) != connect.CodeNotFound {
+			return fmt.Errorf("forgotten lookup: %v", err)
+		}
+		return nil
+	})
+	sc.Step(`^the busy agent keeps online presence across a heartbeat window$`, func() error {
+		client, err := discovery.NewClient(t.registry.peer)
+		if err != nil {
+			return err
+		}
+		deadline := time.Now().Add(1200 * time.Millisecond)
+		ticker := time.NewTicker(25 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			entry, err := client.Lookup(c.s.ctx, "alice")
+			if err != nil {
+				return err
+			}
+			if err := discovery.RequireOnline(entry); err != nil {
+				return err
+			}
+			if time.Now().After(deadline) {
+				return nil
+			}
+			select {
+			case <-ticker.C:
+			case <-c.s.ctx.Done():
+				return c.s.ctx.Err()
+			}
+		}
+	})
+
 	sc.Step(`^the team cards require no bearer credential$`, func() error {
 		for name, p := range t.agents {
 			card, err := a2a.Discover(c.s.ctx, http.DefaultClient, p.peer+"/.well-known/agent-card.json")

@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
+	sdk "github.com/a2aproject/a2a-go/v2/a2a"
+	pv "github.com/scbizu/anra/gen/anra/peer/v1"
 	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/scbizu/anra/pkg/config"
@@ -21,11 +24,14 @@ import (
 // Node owns an agent and its tape. Stop serving before calling Close.
 // If shutdown times out, Close leaves storage open so cleanup can be retried.
 type Node struct {
-	agent    *agent.Anra
-	tape     *bbolt.Bbolt
-	settings config.Settings
-	closeMu  sync.Mutex
-	closed   bool
+	metadataMu   sync.Mutex
+	registration *discovery.Registration
+	card         atomic.Pointer[sdk.AgentCard]
+	agent        *agent.Anra
+	tape         *bbolt.Bbolt
+	settings     config.Settings
+	closeMu      sync.Mutex
+	closed       bool
 }
 
 // Open initializes a configured agent, including recovery of interrupted work.
@@ -84,4 +90,23 @@ func (n *Node) Close(ctx context.Context) error {
 	err := n.tape.Close()
 	n.closed = true
 	return err
+}
+
+// UpdatePeer commits owned metadata before publishing the corresponding card.
+// Its address may describe a public proxy; changing it does not rebind a socket.
+func (n *Node) UpdatePeer(ctx context.Context, value *pv.Peer) error {
+	card, err := a2a.Card(value)
+	if err != nil {
+		return err
+	}
+	n.metadataMu.Lock()
+	defer n.metadataMu.Unlock()
+	if n.registration == nil {
+		return errors.New("peer: node is not serving")
+	}
+	if err := n.registration.Update(ctx, value); err != nil {
+		return err
+	}
+	n.card.Store(card)
+	return nil
 }

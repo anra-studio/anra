@@ -36,7 +36,8 @@ Tape or mandatory coordinator. A coordinating member can use tools to request
 work from peers.
 
 The CLI can run every member as a server. A shared `registry` service tracks
-leased Agent Cards; each server registers and renews its own record. The CLI
+persistent Peer metadata and independently observed presence; each server owns
+one runtime registration and maintains heartbeats. The CLI
 invokes the selected source server for named sends, and that server discovers
 and contacts the destination directly. The directory routes no messages and
 owns no agent tapes. `Anra.Exchange` records explicit outgoing messages and
@@ -49,8 +50,8 @@ endpoints is restricted by the deployment network. There is no global shared
 peer token. Peer requests carry `Anra-Agent`, a stable caller name supplied by
 the client, which members are trusted not to impersonate. The CLI uses its selected
 agent name; receiving endpoints validate the name's format, without a live
-registry membership lookup. The directory's per-registration lease still protects
-renewal and removal of active names.
+registry membership lookup. The registry's runtime ownership credentials protect
+metadata updates, heartbeats and disconnects. Explicit Forget retires a Peer separately.
 
 Tape is not opened to external parties, so A2A responses from a member are
 treated as well-formed and honest.

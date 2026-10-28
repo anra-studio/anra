@@ -4,7 +4,7 @@ Feature: Manage named CLI agents in a TOML file
   find each other. Settings are read at startup, so a change needs a restart.
 
   Scenario: Register and discover agents using the lobby and endpoint in the example config
-    Given a running team Agent Card directory
+    Given a running team Peer directory
     And a lobby TOML configuration based on the repository example
     And the configured CLI agent "alice" is serving
     And the configured CLI agent "bob" is serving
@@ -14,7 +14,7 @@ Feature: Manage named CLI agents in a TOML file
     Then the CLI answer is "e2e-bot:alice is a e2e example bot"
 
   Scenario: A running server keeps its settings until it restarts
-    Given a running team Agent Card directory
+    Given a running team Peer directory
     And a lobby TOML configuration based on the repository example
     And the configured CLI agent "alice" is serving
     When I change the role of configured agent "alice" to "Answer briefly."
@@ -41,7 +41,7 @@ Feature: Manage named CLI agents in a TOML file
       | assistant | bob: hello bob |
 
   Scenario: Serve and send using configured agents
-    Given a running team Agent Card directory
+    Given a running team Peer directory
     And a TOML CLI configuration for the team directory
     And the configured CLI agent "alice" is serving
     And the configured CLI agent "bob" is serving
@@ -146,6 +146,7 @@ Feature: Manage named CLI agents in a TOML file
       | default agent setting    | parse config       |
       | missing lobby            | must set [lobby]   |
       | invalid lobby address    | HTTP(S) base URL   |
+      | invalid public address   | nonzero valid port |
       | no agents                | at least one agent |
       | unknown selected agent   | is not configured  |
       | invalid agent name       | invalid agent name |

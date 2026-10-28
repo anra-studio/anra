@@ -11,10 +11,15 @@ import (
 
 	"github.com/cucumber/godog"
 	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
+	pv "github.com/scbizu/anra/gen/anra/peer/v1"
+	rv "github.com/scbizu/anra/gen/anra/registry/v1"
+	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/config"
 	"github.com/scbizu/anra/pkg/discovery"
 	"github.com/scbizu/anra/pkg/peer"
 	"github.com/scbizu/anra/pkg/registry"
+	"google.golang.org/protobuf/proto"
+	"path/filepath"
 )
 
 type hostedServer struct {
@@ -107,8 +112,46 @@ func initializeApplication(sc *godog.ScenarioContext, cli *cliScenario) {
 		}
 		return nil
 	})
+	sc.Step(`^the application updates Alice's public metadata$`, func() error {
+		client, err := discovery.NewClient(a.directory)
+		if err != nil {
+			return err
+		}
+		entry, err := client.Lookup(cli.s.ctx, "alice")
+		if err != nil {
+			return err
+		}
+		value := proto.Clone(entry.Peer).(*pv.Peer)
+		value.Description = "Alice reviews research"
+		value.Skill = append(value.Skill, &pv.Skill{Id: "review", Name: "Review", Description: "Review research"})
+		return a.peers[0].node.UpdatePeer(cli.s.ctx, value)
+	})
+	sc.Step(`^Alice's published card matches the committed Peer$`, func() error {
+		client, err := discovery.NewClient(a.directory)
+		if err != nil {
+			return err
+		}
+		entry, err := client.Lookup(cli.s.ctx, "alice")
+		if err != nil {
+			return err
+		}
+		card, err := a2a.Discover(cli.s.ctx, http.DefaultClient, entry.Peer.Address+"/.well-known/agent-card.json")
+		if err != nil {
+			return err
+		}
+		if card.Description != "Alice reviews research" || card.Description != entry.Peer.Description || len(card.Skills) != len(entry.Peer.Skill) {
+			return fmt.Errorf("published card lost metadata: %v", card)
+		}
+		for i, skill := range card.Skills {
+			if skill.ID != entry.Peer.Skill[i].Id || skill.Name != entry.Peer.Skill[i].Name {
+				return fmt.Errorf("published skill differs: %v", skill)
+			}
+		}
+		return nil
+	})
+
 	sc.Step(`^the application stops its peers$`, a.stopPeers)
-	sc.Step(`^the application directory has no agents$`, func() error {
+	sc.Step(`^the application directory retains offline agents$`, func() error {
 		directory, err := discovery.NewClient(a.directory)
 		if err != nil {
 			return err
@@ -117,8 +160,13 @@ func initializeApplication(sc *godog.ScenarioContext, cli *cliScenario) {
 		if err != nil {
 			return err
 		}
-		if len(records) != 0 {
-			return fmt.Errorf("application directory still has %d agents", len(records))
+		if len(records) == 0 {
+			return errors.New("application directory lost its Peers")
+		}
+		for _, record := range records {
+			if record.Presence.State != rv.PresenceState_PRESENCE_STATE_OFFLINE {
+				return fmt.Errorf("peer %s state %s", record.Peer.Id, record.Presence.State)
+			}
 		}
 		return nil
 	})
@@ -194,7 +242,7 @@ func (a *applicationScenario) start() error {
 	a.registry = &hostedServer{cancel: cancel, done: make(chan error, 1)}
 	ready := make(chan string, 1)
 	go func() {
-		a.registry.done <- registry.Serve(ctx, listener, time.Second, func(addr net.Addr) error { ready <- "http://" + addr.String(); return nil })
+		a.registry.done <- registry.Serve(ctx, listener, registry.Config{Path: filepath.Join(a.cli.s.root, "application-registry.db"), HeartbeatTimeout: time.Second}, func(addr net.Addr) error { ready <- "http://" + addr.String(); return nil })
 	}()
 	select {
 	case a.directory = <-ready:

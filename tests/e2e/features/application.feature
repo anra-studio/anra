@@ -27,7 +27,7 @@ Feature: Reuse Anra outside the command line
     When I ask configured agent "bob" for its role
     Then the CLI answer is "bob"
     When the application stops its peers
-    Then the application directory has no agents
+    Then the application directory retains offline agents
     When the application serves agents "alice" and "bob"
     And the application asks agent "alice" with "ask bob: hello again"
     Then the application answer is "bob: hello again"
@@ -39,10 +39,10 @@ Feature: Reuse Anra outside the command line
       | user      | ask bob: hello again         |
       | assistant | bob: hello again             |
 
-  Scenario: An application can reject readiness without leaking a registration or storage
+  Scenario: An application can reject readiness without leaving online presence or open storage
     Given an application host with configured agents
     When the application rejects agent "alice" at readiness
-    Then the application directory has no agents
+    Then the application directory retains offline agents
     When the application serves agents "alice" and "bob"
     And the application asks agent "alice" with "hello"
     Then the application answer is "alice: hello"
@@ -52,3 +52,11 @@ Feature: Reuse Anra outside the command line
     When the application opens an agent with an invalid identity
     Then the application rejects the identity
     And no CLI tape directory is created
+
+  Scenario: Owned metadata updates refresh the published A2A representation
+    Given an application host with configured agents
+    And the application serves agents "alice" and "bob"
+    When the application updates Alice's public metadata
+    Then Alice's published card matches the committed Peer
+    When the application asks agent "alice" with "hello"
+    Then the application answer is "alice: hello"

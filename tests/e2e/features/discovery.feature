@@ -1,9 +1,9 @@
-Feature: Running agents register cards and communicate by name
+Feature: Identified Peers retain metadata and communicate by name
   Alice and Bob both serve their own tape-backed runtimes. They discover one
   another through the team's directory and exchange messages directly.
 
   Background:
-    Given a running team Agent Card directory
+    Given a running team Peer directory
 
   Scenario: Both servers discover each other and exchange greetings in both directions
     Given team agents "alice" and "bob" are serving
@@ -48,16 +48,16 @@ Feature: Running agents register cards and communicate by name
       | user      | hello after restart      |
       | assistant | bob: hello after restart |
 
-  Scenario: A stopped agent unregisters and cannot receive named messages
+  Scenario: A stopped Peer remains known and offline
     Given team agents "alice" and "bob" are serving
     When I stop team agent "bob"
     And running agent "alice" attempts to greet "bob"
-    Then the CLI answer is "Unable to consult peer: agent is not registered"
+    Then the CLI answer is "Unable to consult peer: peer bob is offline"
     When I stop the team agents
     Then the CLI agent "alice" has this conversation on its tape
-      | role      | text                                            |
-      | user      | ask bob: hello                                  |
-      | assistant | Unable to consult peer: agent is not registered |
+      | role      | text                                      |
+      | user      | ask bob: hello                            |
+      | assistant | Unable to consult peer: peer bob is offline |
 
   Scenario: Running agents register again after the directory restarts
     Given team agents "alice" and "bob" are serving
@@ -68,7 +68,7 @@ Feature: Running agents register cards and communicate by name
 
   Scenario: A CLI sender must itself be a running registered server
     When running agent "alice" attempts to greet "bob"
-    Then the CLI command fails with "agent is not registered"
+    Then the CLI command fails with "peer is not registered"
     And no CLI tape directory is created
 
   Scenario: A running agent name cannot be taken by another server
@@ -78,13 +78,13 @@ Feature: Running agents register cards and communicate by name
     When running agent "bob" sends "still alice" to "alice"
     Then the CLI answer is "alice: still alice"
 
-  Scenario: An agent that crashes disappears when its registration lease expires
+  Scenario: A crashed Peer remains known with unknown presence
     Given team agents "alice" and "bob" are serving
     When team agent "bob" crashes
-    Then its registration eventually expires
+    Then its presence eventually becomes unknown
     And team agent "alice" is still registered
     When running agent "alice" attempts to greet "bob"
-    Then the CLI answer is "Unable to consult peer: agent is not registered"
+    Then the CLI answer is "Unable to consult peer: peer bob is unknown"
 
   Scenario: Trusted agents register and communicate without a shared credential
     Given team agents "alice" and "bob" are serving
@@ -94,8 +94,22 @@ Feature: Running agents register cards and communicate by name
     When running agent "alice" sends "hello without a token" to "bob"
     Then the CLI answer is "bob: hello without a token"
 
-  Scenario: A different lease cannot renew or remove an active registration
+  Scenario: A different runtime cannot heartbeat or disconnect a Peer
     Given team agents "alice" and "bob" are serving
-    When another lease attempts to renew or remove agent "alice"
+    When another runtime attempts to heartbeat or disconnect agent "alice"
     And I read the team directory
     Then the team directory lists "alice" and "bob"
+
+  Scenario: The operator explicitly retires a stopped Peer through the CLI
+    Given team agents "alice" and "bob" are serving
+    When I stop team agent "bob"
+    And the operator forgets team agent "bob"
+    Then team agent "bob" is forgotten
+    And team agent "alice" is still registered
+
+  Scenario: Reasoning BUSY does not interrupt heartbeat maintenance
+    Given team agents "alice" and "bob" are serving
+    And Alice is interrupted while reasoning after a published answer
+    Then the busy agent keeps online presence across a heartbeat window
+    When I try to ask running agent "alice" to "another callback"
+    Then the CLI command fails with "busy: request was not accepted"

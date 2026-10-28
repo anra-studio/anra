@@ -25,7 +25,10 @@ func Ask(ctx context.Context, settings config.Settings, input string) (a2a.Colla
 	if err != nil {
 		return a2a.CollaborationResult{}, err
 	}
-	client, err := a2a.NewMessageClient(ctx, a2a.TrustedHTTPClient(settings.ID), record)
+	if err := discovery.RequireOnline(record); err != nil {
+		return a2a.CollaborationResult{}, err
+	}
+	client, err := a2a.NewMessageClient(ctx, a2a.TrustedHTTPClient(settings.ID), record.Peer)
 	if err != nil {
 		return a2a.CollaborationResult{}, err
 	}

@@ -9,8 +9,11 @@ Read the [agent features](../tests/e2e/features/agent.feature) and
 promises.
 The [running-agent discovery features](../tests/e2e/features/discovery.feature)
 cover two registered servers, bidirectional and concurrent greetings, restart,
-duplicate names, registration lease ownership, token-free operation, graceful
-unregistering, and crash expiry.
+conflicting runtimes, ownership rejection, token-free peer communication,
+graceful disconnect and retained identities after crashes. The
+[registry scenarios](../tests/e2e/features/registry.feature) exercise generated
+Connect calls, persistent metadata, controlled-clock presence, conditional updates,
+filtered discovery, tombstones, stale runtimes and lost acknowledgement recovery.
 The [ADK features](../tests/e2e/features/adk.feature) cover built-in tool execution,
 model-driven peer discovery and messaging, persisted tool history, and rejection
 of tool configuration. The same Given/When/Then steps execute with
@@ -79,8 +82,10 @@ missing or malformed caller identities, required `--config` files, TOML agent se
 flag and environment overrides, running-agent discovery, and invalid configuration.
 All CLI sends use registered agent names. Direct peer flags and TOML settings
 are rejected, as are agent-setting flags and `ANRA_*` variables.
-Directory lease expiry uses bounded polling of the public directory API;
-the crashing process is killed while the remaining agent continues renewing.
+Process presence transitions use bounded polling of the public registry API;
+the crashing process is killed while the remaining agent keeps heartbeating.
+Registry contract scenarios use a controlled clock, real Connect HTTP calls and
+temporary directory storage. Registry restart resets presence and retains metadata.
 Each subprocess has
 inherited `ANRA_` settings and model credentials removed from its environment;
 scenario fixtures supply only deterministic settings and model fixture keys.

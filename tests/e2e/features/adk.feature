@@ -3,7 +3,7 @@ Feature: ADK runs each agent with its configured model and built-in tools
   exercise real model HTTP requests, tool execution, peer HTTP, and tape storage.
 
   Scenario: An agent discovers and messages a peer through its model's tools
-    Given a running team Agent Card directory
+    Given a running team Peer directory
     And team agents "alice" and "bob" are serving
     When I ask running agent "alice" to "discover peers and ask bob to say hello"
     Then the CLI answer is "bob: hello from alice"

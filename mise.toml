@@ -15,7 +15,7 @@ description = "Refresh the locked Protovalidate schema dependency"
 run = "buf dep update"
 
 [tasks.proto-generate]
-description = "Generate A2A extension protobuf messages and TapeView Connect v2 bindings"
+description = "Generate Peer, registry, and A2A protobuf messages and Connect v2 bindings"
 run = "buf generate"
 
 [tasks.proto-breaking]

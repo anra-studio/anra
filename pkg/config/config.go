@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	peermodel "github.com/scbizu/anra/pkg/model/peer"
 )
 
 // ErrInvalidAgentID is returned for an identity that cannot safely name an agent.
@@ -25,7 +26,7 @@ type File struct {
 	Agents map[string]Agent `toml:"agents"`
 }
 
-// Lobby identifies the shared Agent Card directory.
+// Lobby identifies the shared Peer registry.
 type Lobby struct {
 	Address string `toml:"address"`
 }
@@ -40,6 +41,7 @@ type Agent struct {
 	Role     string `toml:"role"`
 	Desc     string `toml:"desc"`
 	Endpoint string `toml:"endpoint"`
+	Address  string `toml:"address"`
 }
 
 // Settings is a resolved startup snapshot. DataDir is relative to the config
@@ -54,6 +56,7 @@ type Settings struct {
 	Role     string
 	Desc     string
 	Endpoint string
+	Address  string
 }
 
 // Load strictly decodes a TOML file. Agent resolves and validates the selected
@@ -98,7 +101,7 @@ func (config *File) Agent(id string) (Settings, error) {
 	settings := Settings{
 		ID: id, Registry: config.Lobby.Address,
 		DataDir: entry.DataDir, Provider: entry.Provider, Model: entry.Model,
-		Role: entry.Role, Desc: entry.Desc, Endpoint: entry.Endpoint,
+		Role: entry.Role, Desc: entry.Desc, Endpoint: entry.Endpoint, Address: entry.Address,
 	}
 	if strings.TrimSpace(settings.DataDir) == "" {
 		return Settings{}, fmt.Errorf("agent %q data-dir is required", id)
@@ -123,6 +126,9 @@ func (config *File) Agent(id string) (Settings, error) {
 	if settings.Timeout <= 0 {
 		return Settings{}, fmt.Errorf("agent %q timeout must be positive", id)
 	}
+	if err := settings.Validate(); err != nil {
+		return Settings{}, err
+	}
 	return settings, nil
 }
 
@@ -140,6 +146,11 @@ func (settings Settings) SystemInstruction() string {
 
 // Validate checks resolved settings supplied directly by an application shell.
 func (settings Settings) Validate() error {
+	if settings.Address != "" {
+		if _, err := peermodel.Address(settings.Address); err != nil {
+			return err
+		}
+	}
 	if !agentID.MatchString(settings.ID) {
 		return ErrInvalidAgentID
 	}

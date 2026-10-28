@@ -18,6 +18,7 @@ import (
 	"github.com/cucumber/godog"
 	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	pv "github.com/scbizu/anra/gen/anra/peer/v1"
 	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/agent"
 	"github.com/scbizu/anra/pkg/discovery"
@@ -34,13 +35,14 @@ import (
 )
 
 type collaborationNode struct {
-	a        *agent.Anra
-	tape     *bbolt.Bbolt
-	service  *a2a.Service
-	server   *httptest.Server
-	card     *sdk.AgentCard
-	calls    atomic.Int32
-	requests atomic.Int32
+	registration *discovery.Registration
+	a            *agent.Anra
+	tape         *bbolt.Bbolt
+	service      *a2a.Service
+	server       *httptest.Server
+	card         *sdk.AgentCard
+	calls        atomic.Int32
+	requests     atomic.Int32
 }
 type heldResult struct {
 	result a2a.CollaborationResult
@@ -51,6 +53,7 @@ type collaborationScenario struct {
 	nodes          map[string]*collaborationNode
 	directory      *httptest.Server
 	registry       *discovery.Client
+	registryStore  *registry.Registry
 	entered        chan struct{}
 	release        chan struct{}
 	held           chan heldResult
@@ -85,6 +88,9 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		var err error
 		for _, n := range c.nodes {
 			if n.server != nil {
+				if n.registration != nil {
+					n.registration.Close()
+				}
 				n.server.Close()
 			}
 			if n.a != nil {
@@ -105,6 +111,9 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		}
 		if c.directory != nil {
 			c.directory.Close()
+		}
+		if c.registryStore != nil {
+			err = errors.Join(err, c.registryStore.Close())
 		}
 		return ctx, err
 	})
@@ -224,6 +233,9 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^Alice restarts with the same source and the grant remains readable$`, func() error {
 		n := c.nodes["alice"]
 		source := n.a.Source()
+		if n.registration != nil {
+			n.registration.Close()
+		}
 		n.server.Close()
 		if err := n.service.Close(); err != nil {
 			return err
@@ -413,6 +425,9 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^startup rejects a tape containing (unsupported schema|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
 		n := c.nodes["alice"]
+		if n.registration != nil {
+			n.registration.Close()
+		}
 		n.server.Close()
 		if err := n.service.Close(); err != nil {
 			return err
@@ -478,11 +493,12 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	})
 }
 func (c *collaborationScenario) setup() error {
-	handler, err := registry.NewHandler(time.Minute)
+	store, err := registry.Open(registry.Config{Path: filepath.Join(c.s.root, "collaboration-registry.db"), HeartbeatTimeout: time.Minute})
 	if err != nil {
 		return err
 	}
-	c.directory = httptest.NewServer(handler)
+	c.registryStore = store
+	c.directory = httptest.NewServer(registry.NewHandler(store))
 	c.registry, err = discovery.NewClient(c.directory.URL)
 	if err != nil {
 		return err
@@ -554,7 +570,7 @@ func (c *collaborationScenario) startNode(name string, m modelFunc) error {
 		handler.ServeHTTP(w, r)
 	})
 	n.server.Start()
-	_, err = c.registry.Register(c.s.ctx, discovery.Record{Name: name, CardURL: base + a2asrv.WellKnownAgentCardPath, Card: n.card}, "fixture-"+name)
+	n.registration, err = c.registry.Start(c.s.ctx, &pv.Peer{Id: name, Address: base, Description: "Collaboration fixture", Skill: []*pv.Skill{{Id: "chat", Name: "Chat"}, {Id: "borrow-context", Name: "Borrow context"}}})
 	return err
 }
 func (c *collaborationScenario) send(from, to, input string) (a2a.CollaborationResult, error) {
@@ -759,6 +775,9 @@ func lastTool(r runner.Request) (string, map[string]any) {
 }
 func (c *collaborationScenario) replaceAlice(m modelFunc) error {
 	n := c.nodes["alice"]
+	if n.registration != nil {
+		n.registration.Close()
+	}
 	n.server.Close()
 	if err := n.service.Close(); err != nil {
 		return err

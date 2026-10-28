@@ -11,8 +11,8 @@ such as a web UI, can use it without importing Cobra or launching a subprocess.
 | `model` | Model provider construction and provider environment settings | `New` |
 | `agent` | Tape-backed ADK reasoning, built-in tools, admission, recovery and publications | `New`, `Anra.Run`, `Anra.Shutdown` |
 | `peer` | Compose the configured model, agent and disk storage; serve A2A/TapeView; call a running agent | `Open`, `Node.Run`, `Node.Serve`, `Node.Close`, `Ask` |
-| `discovery` | Directory records, card-origin validation, HTTP client and registration lease lifecycle | `NewClient`, `Client.Lookup`, `Client.List`, `Client.MaintainRegistration` |
-| `registry` | In-memory directory server, lease ownership and expiry | `NewHandler`, `Serve` |
+| `discovery` | Typed registry client, presence checks, heartbeat maintenance and owned metadata updates | `NewClient`, `Client.Lookup`, `Client.List`, `Client.Start`, `Registration.Update` |
+| `registry` | Persistent Peer directory, runtime ownership, presence and retirement | `Open`, `NewHandler`, `Serve` |
 | `a2a` | A2A and TapeView protocol adapters, clients and peer tools | `NewExecutor`, `NewPeerHandler`, `NewMessageClient`, `NewService` |
 | `model/anchor`, `model/delegator`, `model/journal` | Durable execution/publication records, delegation state and grant records | Protocol and storage types |
 
@@ -23,10 +23,10 @@ through its `Runtime` interface. No package under `pkg/` imports `cmd/` or Cobra
 The private `internal/httpserver` helper shares cancellation and HTTP shutdown
 between peer and registry servers; it has no terminal output.
 
-The proposed [registry design](registry.md) replaces Card-based registry records
-with a canonical Peer model using `address` and `skill`, a Connect RPC contract,
-and A2A translation at the protocol boundary. It describes the intended next
-design; the package table above describes the current implementation.
+The [registry contract](registry.md) uses canonical Peer metadata with `address`
+and `skill`, separate observed presence, and generated Connect RPCs. A2A cards
+are produced at the adapter boundary. Known Peers survive loss of contact;
+callers check presence and explicitly select a different agent if appropriate.
 
 ## Running locally from another host
 
@@ -70,17 +70,26 @@ come from `DEEPSEEK_API_KEY` and `DEEPSEEK_API_BASE`.
 Bind a listener and pass it to `node.Serve(ctx, listener, ready)`. The bound
 address, including an OS-selected port, is advertised in the Agent Card.
 `ready` is an optional `func(net.Addr) error` callback; a host can use it to
-update its own UI. Returning an error aborts startup and cleans up registration,
-HTTP and the grant journal. The library prints nothing.
+update its own UI. Returning an error aborts startup, disconnects established
+presence, and closes HTTP and the grant journal. The committed Peer remains known
+and offline. The library prints nothing.
 
 Cancel the serving context and wait for `Serve` to return before calling
 `node.Close`. `Serve` owns its listener and grant journal; the host owns the
-node. Registration renews until cancellation, transient directory outages are
-retried, and permanent registration rejection stops serving with its cause.
+node. Heartbeats continue until cancellation, transient outages are retried,
+and permanent ownership rejection stops serving with its cause.
 
-`registry.Serve(ctx, listener, ttl, ready)` runs the directory with the same
-listener and readiness contract. `registry.NewHandler(ttl)` lets an existing
-HTTP host mount the directory instead. Neither API needs model credentials.
+`registry.Serve(ctx, listener, config, ready)` owns directory storage and HTTP.
+Supply `registry.Config{Path: "registry.db", HeartbeatTimeout: 15*time.Second}`.
+An existing host can instead `registry.Open(config)`, mount
+`registry.NewHandler(store)` and close the store after HTTP drains. Neither API
+needs model credentials. A registry restart retains Peers and resets observed
+presence to unknown.
+
+`Node.UpdatePeer(ctx, metadata)` conditionally updates owned Peer metadata and
+refreshes the public Agent Card. Registry lookup and list return `Entry` values
+with Peer, Presence and revision; List includes all states by default. Use an
+explicit `ListRequest` state/skill filter for selection.
 
 `peer.Ask(ctx, settings, input)` discovers and calls the configured running agent
 without opening its local database or constructing a model. It returns the

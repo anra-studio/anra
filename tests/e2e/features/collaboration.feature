@@ -122,14 +122,14 @@ Feature: Anchor-backed nonblocking peer collaboration
     Then legacy lenders cannot silently accept publication references
 
   Scenario: Killing a process preserves publications and recovers its open invocation
-    Given a running team Agent Card directory
+    Given a running team Peer directory
     And team agents "alice" and "bob" are serving
     And Alice is interrupted while reasoning after a published answer
     When I try to ask running agent "alice" to "rejected CLI callback"
     Then the CLI command fails with "busy: request was not accepted"
     When team agent "alice" crashes
     And the interrupted tape retains an unmatched tool call and state delta
-    And its registration eventually expires
+    And its presence eventually becomes unknown
     And I restart team agent "alice"
     Then the recovered agent keeps its source, publication, grant, and physical history
     When I stop the team agents
