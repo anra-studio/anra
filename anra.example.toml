@@ -1,15 +1,25 @@
-default-agent = "alice"
+# Required for every agent command. Agents find each other only through the lobby.
+[lobby]
+address = "http://127.0.0.1:9090"
 
-[defaults]
-data-dir = ".anra"
-session = "default"
-provider = "deepseek"
-timeout = "1m"
-registry = "http://127.0.0.1:9090"
-listen = "127.0.0.1:0"
-
+# Each agent must set data-dir, provider, timeout, and endpoint.
+# Settings are read once at startup; restart the server after editing.
 [agents.alice]
+data-dir = ".anra"
+provider = "deepseek"
+model = "deepseek-flash"
+timeout = "1m"
+role = "e2e-bot"
+desc = "alice is a e2e example bot"
+endpoint = "127.0.0.1:0"
 
 [agents.bob]
+data-dir = ".anra"
+provider = "deepseek"
+model = "deepseek-flash"
+timeout = "1m"
+role = "e2e-bot"
+desc = "bob is a e2e example bot"
+endpoint = "127.0.0.1:8080"
 # Set DEEPSEEK_API_KEY in each server environment.
 # Keep the registry and agent endpoints inside the trusted team network.

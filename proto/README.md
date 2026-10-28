@@ -1,9 +1,15 @@
-# Tape-view API contract
+# A2A extension contracts
 
 `anra/a2a/tape/v1/tape.proto` defines Anra's permissioned tape-view extension:
 `Borrow`, `Get`, `Read`, and `Release`. The official A2A core remains in
 `github.com/a2aproject/a2a-go/v2`; do not copy its schema or regenerate its
 messages here. Discovery still fetches the official JSON Agent Card.
+
+`anra/a2a/collaboration/v1/collaboration.proto` defines the delegation and
+response metadata for `urn:anra:a2a:collaboration:v1`. It imports TapeView's
+`AnchorRef` and adds no RPC service. These generated messages travel as ProtoJSON
+objects in the official A2A Message's extension metadata. Answer text remains in
+standard A2A text parts.
 
 The layout follows Gate: versioned packages under `proto/`, generated messages
 and Connect bindings under `gen/`, transport adapters under `pkg/a2a`, and root
@@ -69,7 +75,9 @@ grant journal. `Resolve` and `Revoke` remain lender-local methods. A caller's
 identity is never accepted from protobuf request fields.
 
 Sequence fields are arbitrary-precision canonical decimal strings, including
-`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. ProtoJSON
+`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. `BorrowRequest.publication` optionally pins an `AnchorRef`
+(source plus positive sequence); clients require `publicationBorrowVersion: 1`
+in the card before sending it and verify exact grant provenance before reading. ProtoJSON
 range fields are `seqS` and `seqE`. Local domain/journal JSON uses `SeqS` and
 `SeqE`; it is independent of the protobuf wire format. Status is an enum with an invalid unspecified value.
 Times use protobuf Timestamp. `Payload.json_data` contains the exact JSON bytes;
@@ -107,6 +115,35 @@ retain source, view, snapshot, and sequence provenance checks in `BorrowTool`.
 The lender's selected turn/anchor range defines the complete view size. There
 is no separate maximum-entry cap or truncation of that range; pagination only
 splits its transport. `Eligible`/`Policy` supplies the turn boundaries.
+
+## Collaboration metadata
+
+`DelegationMetadata` defines the root request ID, required Timestamp deadline,
+ancestors, and optional context references. Its schema limits identifiers and
+context references; ancestry has no hop-count limit. The receiver validates this
+metadata before reasoning admission. `pkg/model/delegator` owns runtime delegation
+state: it creates roots, caps deadlines, and forks the path for each edge.
+Generated metadata stays private to the model;
+transport adapters receive owned snapshots.
+
+`ResponseMetadata` defines `Status`, `RetryHint`, and an optional publication.
+Only `STATUS_BUSY` may carry publication or retry hints. Status must be a defined,
+nonzero enum value. Canonical ProtoJSON uses `STATUS_COMPLETED`, `STATUS_BUSY`,
+and `RETRY_HINT_AFTER_NEW_PUBLICATION`. Unknown fields,
+unknown enum values, invalid references, and invalid field combinations are
+rejected. There is no decoder for the former lowercase wire statuses.
+
+Both incoming and outgoing metadata use ProtoJSON plus Protovalidate descriptors;
+the A2A adapter caps each metadata object at 8 KiB. `CollaborationResult` is only
+a local pairing of generated response metadata with text extracted from A2A
+parts. The CLI and model tools render readable lowercase status labels.
+`no_new_context` remains a local tool outcome derived from the Delegator's BUSY
+memory, not a protobuf status or wire outcome. `Begin` starts fresh memory for
+each invocation; outgoing siblings share that invocation's progress without
+sharing a mutable path. A successful read of a newer lender-selected snapshot
+clears suppression through `Borrowed`.
+Deadline expiry and cancellation are ordinary context errors. The transport's
+8 KiB metadata bound still applies to the encoded ancestry and context hints.
 
 | Domain error | Connect code |
 | --- | --- |

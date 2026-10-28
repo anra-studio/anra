@@ -27,6 +27,7 @@ type teamScenario struct {
 func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 	t := &teamScenario{c: c}
 	initializeADK(sc, t)
+	initializeRecovery(sc, t)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		*t = teamScenario{c: c, agents: make(map[string]*cliScenario)}
 		return ctx, nil
@@ -45,7 +46,20 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 	sc.Step(`^team agents "([^"]*)" and "([^"]*)" are serving$`, func(a, b string) error {
 		return t.startAgents(a, b)
 	})
-	sc.Step(`^I list the team's registered peers$`, func() { c.execute("peers", "--registry", t.registry.peer) })
+	sc.Step(`^I read the team directory$`, func() error {
+		client, err := discovery.NewClient(t.registry.peer)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(c.s.ctx, 5*time.Second)
+		defer cancel()
+		records, err := client.List(ctx)
+		c.output, c.err = "", err
+		for _, record := range records {
+			c.output += record.Name + "\t" + record.CardURL + "\n"
+		}
+		return nil
+	})
 	sc.Step(`^the team directory lists "([^"]*)" and "([^"]*)"$`, func(a, b string) error {
 		if c.err != nil {
 			return c.err
@@ -106,8 +120,14 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 		_, err = client.Lookup(c.s.ctx, id)
 		return err
 	})
-	sc.Step(`^another server attempts to register as "([^"]*)"$`, func(id string) {
-		c.execute("serve", "--agent", id, "--provider", "deepseek", "--data-dir", filepath.Join(c.s.root, "duplicate"), "--listen", "127.0.0.1:0", "--registry", t.registry.peer)
+	sc.Step(`^another server attempts to register as "([^"]*)"$`, func(id string) error {
+		path := filepath.Join(c.s.root, "duplicate.toml")
+		text := fmt.Sprintf("[lobby]\naddress = %q\n\n[agents.%[2]s]\ndesc = '%[2]s'\ndata-dir = 'duplicate'\nprovider = 'deepseek'\ntimeout = '1m'\nendpoint = '127.0.0.1:0'\n", t.registry.peer, id)
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			return err
+		}
+		c.execute("serve", "--agent", id, "--config", path)
+		return nil
 	})
 	sc.Step(`^both team agents send greetings simultaneously$`, func() {
 		t.concurrent = []*cliScenario{{s: c.s}, {s: c.s}}
@@ -125,10 +145,10 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 		}
 		group.Wait()
 	})
-	sc.Step(`^both team agents receive their peer's answer$`, func() error {
+	sc.Step(`^both team agents finish their reasoning without blocking$`, func() error {
 		for i, want := range []string{"bob: hello from alice", "alice: hello from bob"} {
 			p := t.concurrent[i]
-			if p.err != nil || strings.TrimSpace(p.output) != want {
+			if p.err != nil || strings.TrimSpace(p.output) != want && strings.TrimSpace(p.output) != "peer busy; continued locally" {
 				return fmt.Errorf("concurrent send = %q, error %v; want %q", p.output, p.err, want)
 			}
 		}
@@ -201,7 +221,10 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 }
 
 func (t *teamScenario) startAgents(a, b string) error {
-	config := fmt.Sprintf("[defaults]\nregistry = %q\ndata-dir = 'cli'\nprovider = 'deepseek'\nlisten = '127.0.0.1:0'\n[agents.%s]\n[agents.%s]\n", t.registry.peer, a, b)
+	config := fmt.Sprintf("[lobby]\naddress = %q\n", t.registry.peer)
+	for _, id := range []string{a, b} {
+		config += fmt.Sprintf("[agents.%[1]s]\ndesc = '%[1]s'\ndata-dir = 'cli'\nprovider = 'deepseek'\ntimeout = '1m'\nendpoint = '127.0.0.1:0'\n", id)
+	}
 	if err := os.WriteFile(t.c.configPath(), []byte(config), 0o600); err != nil {
 		return err
 	}
@@ -216,7 +239,13 @@ func (t *teamScenario) startAgents(a, b string) error {
 }
 
 func (t *teamScenario) send(c *cliScenario, from, to, text string) {
-	c.execute("send", "--agent", from, "--registry", t.registry.peer, "--to", to, text)
+	if _, err := os.Stat(t.c.configPath()); err != nil {
+		if err := t.c.writeAgentConfig(t.registry.peer); err != nil {
+			c.output, c.err = err.Error(), err
+			return
+		}
+	}
+	c.execute("ask", "--agent", from, "--config", t.c.configPath(), "ask "+to+": "+text)
 }
 
 func (t *teamScenario) stopAgents() error {

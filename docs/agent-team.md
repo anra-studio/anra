@@ -17,7 +17,7 @@ window callback. User messages, model responses, tool calls, and tool results
 are persisted as ADK events and reconstructed on later invocations.
 
 Tools are registered internally. The runtime includes tape-go's native Bash
-tool and Anra's peer discovery/messaging tools. `WithPeers` supplies their
+tool and Anra's peer discovery/messaging tools. `WithRegistry` supplies their
 network services; `WithBorrowClient` connects the built-in context borrowing
 capability. There is no public option for injecting arbitrary tools. Anra does
 not maintain a second agent loop. Its storage adapter preserves tool entry kinds

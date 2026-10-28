@@ -68,6 +68,11 @@ message Decision {
   View view = 3;
 }
 
+message AnchorRef {
+  Source source = 1 [(buf.validate.field).required = true];
+  string seq = 2 [(buf.validate.field).string.pattern = "^[1-9][0-9]*$"];
+}
+
 message BorrowRequest {
   string request_id = 1 [(buf.validate.field).string = {
     min_bytes: 1
@@ -82,6 +87,7 @@ message BorrowRequest {
     max_bytes: 8192
   }];
   EntryRange bounds = 4;
+  AnchorRef publication = 5;
 }
 
 message BorrowResponse {

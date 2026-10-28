@@ -1,22 +1,19 @@
-package cmd
+package discovery
 
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scbizu/anra/pkg/discovery"
 )
 
-func registerAgent(parent context.Context, endpoint string, record discovery.Record) (context.Context, func(), error) {
-	if endpoint == "" {
-		return parent, func() {}, nil
-	}
-	client, err := discovery.NewClient(endpoint)
-	if err != nil {
-		return nil, nil, err
-	}
+// MaintainRegistration registers a card and renews its lease until cancellation.
+// The returned context is canceled with a cause on a permanent registry rejection.
+// The caller must call cleanup to stop renewal and unregister, even after the
+// parent is canceled. Cleanup is safe to call more than once.
+func (client *Client) MaintainRegistration(parent context.Context, record Record) (context.Context, func(), error) {
 	lease := uuid.NewString()
 	ttl, err := client.Register(parent, record, lease)
 	if err != nil {
@@ -34,7 +31,7 @@ func registerAgent(parent context.Context, endpoint string, record discovery.Rec
 				return
 			case <-ticker.C:
 				if nextTTL, err := client.Register(ctx, record, lease); err != nil {
-					var rejection *discovery.HTTPError
+					var rejection *HTTPError
 					if errors.As(err, &rejection) && rejection.StatusCode >= 400 && rejection.StatusCode < 500 {
 						cancel(err)
 						return
@@ -46,12 +43,12 @@ func registerAgent(parent context.Context, endpoint string, record discovery.Rec
 			}
 		}
 	}()
-	cleanup := func() {
+	cleanup := sync.OnceFunc(func() {
 		cancel(context.Canceled)
 		<-done
 		ctx, stop := context.WithTimeout(context.Background(), 2*time.Second)
 		defer stop()
 		_ = client.Unregister(ctx, record.Name, lease)
-	}
+	})
 	return ctx, cleanup, nil
 }

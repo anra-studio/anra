@@ -21,6 +21,7 @@ import (
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	a2a "github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/agent"
+	"github.com/scbizu/anra/pkg/discovery"
 	"github.com/scbizu/tape-go/pkg/runner"
 	entry "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -37,9 +38,11 @@ type scenario struct {
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	localTape, peerTape *bbolt.Bbolt
+	coreTape            *bbolt.Bbolt
 	service             *a2a.Service
 	server              *httptest.Server
 	modelServer         *httptest.Server
+	providerControl     *providerControl
 	card                *sdk.AgentCard
 	client              *a2a.Client
 	ordinary            *a2aclient.Client
@@ -58,13 +61,15 @@ type scenario struct {
 func initializeScenario(sc *godog.ScenarioContext) {
 	s := &scenario{}
 	initializeCLI(sc, s)
+	initializeCollaboration(sc, s)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		root, err := os.MkdirTemp("", "anra-e2e-")
 		if err != nil {
 			return ctx, err
 		}
 		*s = scenario{root: root}
-		s.modelServer = newModelServer()
+		s.providerControl = newProviderControl()
+		s.modelServer = newModelServer(s.providerControl)
 		s.ctx, s.cancel = context.WithTimeout(ctx, 20*time.Second)
 		s.clock.Store(time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC).UnixNano())
 		return s.ctx, nil
@@ -72,6 +77,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	sc.After(func(ctx context.Context, sc *godog.Scenario, scenarioErr error) (context.Context, error) {
 		err := s.stopPeer()
 		if s.modelServer != nil {
+			s.providerControl.unblock()
 			s.modelServer.Close()
 		}
 		if s.localTape != nil {
@@ -279,7 +285,11 @@ func (s *scenario) startPeer() error {
 	if err != nil {
 		return err
 	}
-	lender, err := agent.New("researcher-local", s.peerTape, agent.WithLLM(modelFunc(func(context.Context, runner.Request) (runner.Response, error) {
+	s.coreTape, err = s.openTape("messaging", "researcher-core")
+	if err != nil {
+		return err
+	}
+	lender, err := agent.New("researcher-core", s.coreTape, agent.WithLLM(modelFunc(func(context.Context, runner.Request) (runner.Response, error) {
 		return runner.Response{Output: "research response"}, nil
 	})))
 	if err != nil {
@@ -314,6 +324,12 @@ func (s *scenario) startPeer() error {
 }
 
 func (s *scenario) stopPeer() error {
+	if s.coreTape != nil {
+		if err := s.coreTape.Close(); err != nil {
+			return err
+		}
+		s.coreTape = nil
+	}
 	if s.server != nil {
 		s.server.Close()
 		s.server = nil
@@ -669,8 +685,12 @@ func (s *scenario) checkLocalOwnership() error {
 	if err != nil {
 		return err
 	}
-	if len(stored.Raw) != 6 {
-		return fmt.Errorf("borrower has %d entries, want 6", len(stored.Raw))
+	conversation, err := inspectLifecycle(stored.Raw)
+	if err != nil {
+		return err
+	}
+	if len(conversation) != 4 {
+		return fmt.Errorf("borrower has %d entries, want 4 conversation entries", len(stored.Raw))
 	}
 	for _, e := range stored.Raw {
 		if e.GetOwner() != "borrower-local" {
@@ -731,4 +751,24 @@ func (s *scenario) wireRequest(problem string) error {
 	}
 	s.wireCode = failure.Code
 	return nil
+}
+
+// peerRecord discovers a peer's card directly, for fixtures that hold only a
+// URL rather than a directory record.
+func peerRecord(ctx context.Context, h *http.Client, base string) (discovery.Record, error) {
+	cardURL := strings.TrimRight(base, "/") + a2asrv.WellKnownAgentCardPath
+	card, err := a2a.Discover(ctx, h, cardURL)
+	if err != nil {
+		return discovery.Record{}, err
+	}
+	return discovery.Record{Name: card.Name, CardURL: cardURL, Card: card}, nil
+}
+
+// messageClient builds a client for a peer found by URL instead of the directory.
+func messageClient(ctx context.Context, h *http.Client, base string) (*a2a.MessageClient, error) {
+	record, err := peerRecord(ctx, h, base)
+	if err != nil {
+		return nil, err
+	}
+	return a2a.NewMessageClient(ctx, h, record)
 }

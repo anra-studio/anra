@@ -15,13 +15,13 @@ import (
 	"google.golang.org/genai"
 )
 
-// WithPeers configures the network services used by the built-in peer tools.
-func WithPeers(directory *discovery.Client, client *http.Client) Option {
+// WithRegistry configures the network services used by the built-in peer tools.
+func WithRegistry(directory *discovery.Client, client *http.Client) Option {
 	return func(a *Anra) error {
 		if directory == nil || client == nil {
 			return errors.New("agent: peer services must not be nil")
 		}
-		a.runtime.directory, a.runtime.peerHTTP = directory, client
+		a.runtime.registry, a.runtime.peerHTTP = directory, client
 		return nil
 	}
 }
@@ -42,11 +42,18 @@ func (a *Anra) builtinTools() ([]tool.Tool, error) {
 	if err != nil {
 		return nil, err
 	}
-	peers, err := a2a.PeerTools(a.runtime.directory, a.runtime.peerHTTP, a.principal)
+	peers, err := a2a.PeerTools(a.runtime.registry, a.runtime.peerHTTP, a.principal)
 	if err != nil {
 		return nil, err
 	}
 	tools := []tool.Tool{bash, peers["discover_peers"], peers["send_peer_message"]}
+	if a.runtime.borrowClient == nil {
+		borrow, err := a2a.NewPeerBorrowTool(a.runtime.registry, a.runtime.peerHTTP, a.principal)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, borrow)
+	}
 	if a.runtime.borrowClient != nil {
 		tools = append(tools, borrowTool{a2a.BorrowTool{Client: a.runtime.borrowClient}})
 	}

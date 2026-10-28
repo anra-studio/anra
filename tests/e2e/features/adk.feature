@@ -40,7 +40,7 @@ Feature: ADK runs each agent with its configured model and built-in tools
       | echo provider      | unknown provider  |
       | tool flag          | unknown flag      |
       | tool config        | parse config      |
-      | invalid API base   | --api-base        |
+      | invalid API base   | DEEPSEEK_API_BASE |
 
   Scenario: Existing model and tool history remains readable after adopting ADK
     Given an agent with persisted legacy model and tool history

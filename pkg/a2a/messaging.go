@@ -3,68 +3,109 @@ package a2a
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
+	"github.com/scbizu/anra/pkg/discovery"
+	"github.com/scbizu/anra/pkg/model/delegator"
 )
 
 type MessageClient struct {
-	client *a2aclient.Client
-	Name   string
+	client        *a2aclient.Client
+	Name          string
+	collaboration bool
+	Card          *sdk.AgentCard
 }
 
-func NewMessageClient(ctx context.Context, h *http.Client, base string) (*MessageClient, error) {
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return nil, errors.New("peer must be an HTTP(S) base URL")
+// NewMessageClient builds a client from the card the directory registered for
+// the peer. The record is the only discovery step: the card is not fetched
+// again, so a client always talks to the card the peer registered.
+func NewMessageClient(ctx context.Context, h *http.Client, record discovery.Record) (*MessageClient, error) {
+	if h == nil || record.Card == nil {
+		return nil, ErrInvalidParams
 	}
-	card, err := Discover(ctx, h, strings.TrimRight(base, "/")+a2asrv.WellKnownAgentCardPath)
+	card := record.Card
+	if card.Name != record.Name {
+		return nil, errors.New("discovered card name mismatch")
+	}
+	// BaseURL checks the card URL and every advertised interface origin.
+	base, err := discovery.BaseURL(record)
 	if err != nil {
-		return nil, fmt.Errorf("discover peer: %w", err)
+		return nil, err
 	}
-	for _, endpoint := range card.SupportedInterfaces {
-		if endpoint == nil {
-			return nil, errors.New("peer advertised an empty interface")
+	for _, ext := range card.Capabilities.Extensions {
+		if ext.URI != ExtensionURI {
+			continue
 		}
-		remote, err := url.Parse(endpoint.URL)
-		if err != nil || remote.Scheme != u.Scheme || remote.Host != u.Host {
-			return nil, errors.New("peer advertised an endpoint outside its origin")
+		endpoint, ok := ext.Params["endpoint"].(string)
+		if !ok {
+			return nil, ErrInvalidParams
+		}
+		remote, err := url.Parse(endpoint)
+		if err != nil || remote.User != nil || remote.RawQuery != "" || remote.Fragment != "" || remote.Scheme+"://"+remote.Host != base {
+			return nil, errors.New("peer advertised a TapeView endpoint outside its origin")
 		}
 	}
 	client, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(h))
 	if err != nil {
 		return nil, err
 	}
-	return &MessageClient{client: client, Name: card.Name}, nil
+	return &MessageClient{client: client, Name: record.Name, collaboration: advertisesCollaboration(card), Card: card}, nil
 }
 
-// Send uses the official A2A transport and requires a direct text response.
-func (r *MessageClient) Send(ctx context.Context, input string) (string, error) {
-	result, err := r.client.SendMessage(ctx, &sdk.SendMessageRequest{Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(input))})
+// Send returns a typed outcome when the peer advertises collaboration.
+func (r *MessageClient) Send(ctx context.Context, input string) (CollaborationResult, error) {
+	request := sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(input))
+	if r.collaboration {
+		request.Extensions = []string{CollaborationURI}
+		metadata, err := encodeCollaborationMetadata(delegator.FromContext(ctx).Metadata())
+		if err != nil {
+			return CollaborationResult{}, err
+		}
+		request.Metadata = map[string]any{CollaborationURI: metadata}
+	}
+	result, err := r.client.SendMessage(ctx, &sdk.SendMessageRequest{Message: request})
 	if err != nil {
-		return "", err
+		return CollaborationResult{}, err
 	}
 	message, ok := result.(*sdk.Message)
-	if !ok {
-		return "", errors.New("peer returned a task instead of a text answer")
+	if !ok || message.Role != sdk.MessageRoleAgent {
+		return CollaborationResult{}, errors.New("peer returned no direct answer")
 	}
-	var text []string
+	var parts []string
 	for _, part := range message.Parts {
 		if part == nil {
-			return "", errors.New("peer returned an empty message part")
+			return CollaborationResult{}, ErrInvalidParams
 		}
 		if _, ok := part.Content.(sdk.Text); !ok {
-			return "", errors.New("peer returned a non-text answer")
+			return CollaborationResult{}, ErrUnsupported
 		}
-		text = append(text, part.Text())
+		parts = append(parts, part.Text())
 	}
-	if strings.TrimSpace(strings.Join(text, "\n")) == "" {
-		return "", errors.New("peer returned an empty answer")
+	output := strings.Join(parts, "\n")
+	if r.collaboration {
+		if !collaborationEnabled(message) {
+			return CollaborationResult{}, ErrInactive
+		}
+		metadata := new(cp.ResponseMetadata)
+		if err := decodeCollaborationMetadata(message.Metadata[CollaborationURI], metadata); err != nil {
+			return CollaborationResult{}, err
+		}
+		response := CollaborationResult{ResponseMetadata: metadata}
+		if metadata.Status == cp.Status_STATUS_COMPLETED {
+			if strings.TrimSpace(output) == "" {
+				return CollaborationResult{}, ErrInvalidParams
+			}
+			response.Answer = output
+		}
+		return response, nil
 	}
-	return strings.Join(text, "\n"), nil
+	if strings.TrimSpace(output) == "" {
+		return CollaborationResult{}, errors.New("peer returned an empty answer")
+	}
+	return CollaborationResult{ResponseMetadata: &cp.ResponseMetadata{Status: cp.Status_STATUS_COMPLETED}, Answer: output}, nil
 }

@@ -1,35 +1,24 @@
-// Package discovery provides a leased directory of trusted Anra Agent Cards.
-package discovery
+// Package registry serves the leased Agent Card directory used by discovery clients.
+// It does not run models or own agent storage.
+package registry
 
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	sdk "github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/scbizu/anra/pkg/discovery"
 )
-
-const AgentsPath = "/agents"
 
 var validName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// Record is public directory information; the lease credential is never exposed.
-type Record struct {
-	Name      string         `json:"name"`
-	CardURL   string         `json:"cardUrl"`
-	Card      *sdk.AgentCard `json:"card"`
-	ExpiresAt time.Time      `json:"expiresAt"`
-}
-
 type registration struct {
-	Record
+	discovery.Record
 	Lease string `json:"lease"`
 }
 
@@ -38,7 +27,7 @@ type leaseResponse struct {
 }
 
 type registered struct {
-	record Record
+	record discovery.Record
 	lease  string
 }
 
@@ -57,10 +46,10 @@ func NewHandler(ttl time.Duration) (http.Handler, error) {
 	}
 	r := &registry{entries: make(map[string]registered), ttl: ttl}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+AgentsPath, r.list)
-	mux.HandleFunc("GET "+AgentsPath+"/{name}", r.get)
-	mux.HandleFunc("PUT "+AgentsPath+"/{name}", r.put)
-	mux.HandleFunc("DELETE "+AgentsPath+"/{name}", r.remove)
+	mux.HandleFunc("GET "+discovery.AgentsPath, r.list)
+	mux.HandleFunc("GET "+discovery.AgentsPath+"/{name}", r.get)
+	mux.HandleFunc("PUT "+discovery.AgentsPath+"/{name}", r.put)
+	mux.HandleFunc("DELETE "+discovery.AgentsPath+"/{name}", r.remove)
 	return mux, nil
 }
 
@@ -76,11 +65,11 @@ func (r *registry) list(w http.ResponseWriter, _ *http.Request) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prune()
-	values := make([]Record, 0, len(r.entries))
+	values := make([]discovery.Record, 0, len(r.entries))
 	for _, value := range r.entries {
 		values = append(values, value.record)
 	}
-	slices.SortFunc(values, func(a, b Record) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(values, func(a, b discovery.Record) int { return strings.Compare(a.Name, b.Name) })
 	writeJSON(w, values)
 }
 
@@ -107,7 +96,7 @@ func (r *registry) put(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "invalid registration", http.StatusBadRequest)
 		return
 	}
-	if _, err := BaseURL(value.Record); err != nil {
+	if _, err := discovery.BaseURL(value.Record); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -141,25 +130,4 @@ func (r *registry) remove(w http.ResponseWriter, req *http.Request) {
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
-}
-
-// BaseURL validates the card location and its advertised messaging origin.
-func BaseURL(value Record) (string, error) {
-	u, err := url.Parse(value.CardURL)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/.well-known/agent-card.json" {
-		return "", errors.New("discovery: invalid card URL")
-	}
-	if value.Card == nil || len(value.Card.SupportedInterfaces) == 0 {
-		return "", errors.New("discovery: card has no interfaces")
-	}
-	for _, endpoint := range value.Card.SupportedInterfaces {
-		if endpoint == nil {
-			return "", errors.New("discovery: empty card interface")
-		}
-		remote, err := url.Parse(endpoint.URL)
-		if err != nil || remote.Scheme != u.Scheme || remote.Host != u.Host || remote.User != nil {
-			return "", fmt.Errorf("discovery: card interface is outside its origin")
-		}
-	}
-	return u.Scheme + "://" + u.Host, nil
 }

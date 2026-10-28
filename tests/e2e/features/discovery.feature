@@ -7,7 +7,7 @@ Feature: Running agents register cards and communicate by name
 
   Scenario: Both servers discover each other and exchange greetings in both directions
     Given team agents "alice" and "bob" are serving
-    When I list the team's registered peers
+    When I read the team directory
     Then the team directory lists "alice" and "bob"
     When running agent "alice" sends "hello from alice" to "bob"
     Then the CLI answer is "bob: hello from alice"
@@ -15,22 +15,22 @@ Feature: Running agents register cards and communicate by name
     Then the CLI answer is "alice: hello from bob"
     When I stop the team agents
     Then the CLI agent "alice" has this conversation on its tape
-      | role      | text                  |
-      | user      | hello from alice      |
-      | assistant | bob: hello from alice |
-      | user      | hello from bob        |
-      | assistant | alice: hello from bob |
+      | role      | text                      |
+      | user      | ask bob: hello from alice |
+      | assistant | bob: hello from alice     |
+      | user      | hello from bob            |
+      | assistant | alice: hello from bob     |
     And the CLI agent "bob" has this conversation on its tape
-      | role      | text                  |
-      | user      | hello from alice      |
-      | assistant | bob: hello from alice |
-      | user      | hello from bob        |
-      | assistant | alice: hello from bob |
+      | role      | text                      |
+      | user      | hello from alice          |
+      | assistant | bob: hello from alice     |
+      | user      | ask alice: hello from bob |
+      | assistant | alice: hello from bob     |
 
-  Scenario: Both servers can send while receiving a concurrent greeting
+  Scenario: Concurrent greetings finish with peer findings or BUSY
     Given team agents "alice" and "bob" are serving
     When both team agents send greetings simultaneously
-    Then both team agents receive their peer's answer
+    Then both team agents finish their reasoning without blocking
 
   Scenario: A restarted server registers its new address and retains its tape
     Given team agents "alice" and "bob" are serving
@@ -52,9 +52,12 @@ Feature: Running agents register cards and communicate by name
     Given team agents "alice" and "bob" are serving
     When I stop team agent "bob"
     And running agent "alice" attempts to greet "bob"
-    Then the CLI command fails with "agent is not registered"
+    Then the CLI answer is "Unable to consult peer: agent is not registered"
     When I stop the team agents
-    Then the CLI agent "alice" has an empty tape
+    Then the CLI agent "alice" has this conversation on its tape
+      | role      | text                                            |
+      | user      | ask bob: hello                                  |
+      | assistant | Unable to consult peer: agent is not registered |
 
   Scenario: Running agents register again after the directory restarts
     Given team agents "alice" and "bob" are serving
@@ -65,7 +68,7 @@ Feature: Running agents register cards and communicate by name
 
   Scenario: A CLI sender must itself be a running registered server
     When running agent "alice" attempts to greet "bob"
-    Then the CLI command fails with "must be serving"
+    Then the CLI command fails with "agent is not registered"
     And no CLI tape directory is created
 
   Scenario: A running agent name cannot be taken by another server
@@ -81,11 +84,11 @@ Feature: Running agents register cards and communicate by name
     Then its registration eventually expires
     And team agent "alice" is still registered
     When running agent "alice" attempts to greet "bob"
-    Then the CLI command fails with "agent is not registered"
+    Then the CLI answer is "Unable to consult peer: agent is not registered"
 
   Scenario: Trusted agents register and communicate without a shared credential
     Given team agents "alice" and "bob" are serving
-    When I list the team's registered peers
+    When I read the team directory
     Then the team directory lists "alice" and "bob"
     And the team cards require no bearer credential
     When running agent "alice" sends "hello without a token" to "bob"
@@ -94,5 +97,5 @@ Feature: Running agents register cards and communicate by name
   Scenario: A different lease cannot renew or remove an active registration
     Given team agents "alice" and "bob" are serving
     When another lease attempts to renew or remove agent "alice"
-    And I list the team's registered peers
+    And I read the team directory
     Then the team directory lists "alice" and "bob"

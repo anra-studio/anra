@@ -4,8 +4,8 @@ The repository keeps BDD end-to-end scenarios as its shared acceptance contract.
 Read the [agent features](../tests/e2e/features/agent.feature) and
 [peer features](../tests/e2e/features/peers.feature), plus the
 [CLI features](../tests/e2e/features/cli.feature) and
-[TOML configuration features](../tests/e2e/features/config.feature), plus the
-[environment features](../tests/e2e/features/env.feature), to review what Anra
+[TOML configuration features](../tests/e2e/features/config.feature) and
+[application embedding features](../tests/e2e/features/application.feature), to review what Anra
 promises.
 The [running-agent discovery features](../tests/e2e/features/discovery.feature)
 cover two registered servers, bidirectional and concurrent greetings, restart,
@@ -75,10 +75,10 @@ a real model's answer quality. Library scenarios use public Go APIs and peer
 HTTP endpoints. CLI scenarios build `cmd/anra` once per suite and launch real
 processes using tape-go's ADK runtime and real provider HTTP requests to a
 deterministic local model fixture, temporary disk storage, and localhost HTTP. They check local persistence, two-agent messaging, receiver restart,
-missing or malformed caller identities, TOML agent selection, Viper environment settings,
-configuration precedence, running-agent discovery, and invalid configuration.
+missing or malformed caller identities, required `--config` files, TOML agent selection, rejected
+flag and environment overrides, running-agent discovery, and invalid configuration.
 All CLI sends use registered agent names. Direct peer flags and TOML settings
-are rejected; the legacy peer environment variable cannot select a destination.
+are rejected, as are agent-setting flags and `ANRA_*` variables.
 Directory lease expiry uses bounded polling of the public directory API;
 the crashing process is killed while the remaining agent continues renewing.
 Each subprocess has
@@ -86,8 +86,10 @@ inherited `ANRA_` settings and model credentials removed from its environment;
 scenario fixtures supply only deterministic settings and model fixture keys.
 TapeView scenarios also use trusted caller identities without shared tokens,
 including denial when another identified peer tries to use a borrower's grant.
-The suite does not exercise an
-application UI.
+The application embedding scenarios call `config`, `peer`, `discovery`, and
+`registry` directly, checking storage interoperability with CLI processes,
+peer communication, restart, invalid identities and readiness failure cleanup.
+The suite does not exercise an application UI.
 
 ## Temporary unit checks
 

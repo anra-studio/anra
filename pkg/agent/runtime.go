@@ -6,17 +6,19 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/discovery"
+	"github.com/scbizu/anra/pkg/model/delegator"
 	tapeagent "github.com/scbizu/tape-go/pkg/agent"
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
+	"github.com/scbizu/tape-go/pkg/tape/view"
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
 	adkrunner "google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 )
 
@@ -31,10 +33,11 @@ var (
 type runtimeConfig struct {
 	llm               model.LLM
 	systemInstruction string
-	directory         *discovery.Client
+	registry          *discovery.Client
 	peerHTTP          *http.Client
 	borrowClient      *a2a.Client
 	maxTurns          int
+	timeout           time.Duration
 	adapter           *tapeagent.TapeAdapter
 	runner            *adkrunner.Runner
 	sessionID         string
@@ -66,6 +69,18 @@ func WithMaxTurns(limit int) Option {
 	}
 }
 
+// WithTimeout caps each invocation, including its peer calls. Cleanup uses a
+// separate bounded context so cancellation cannot strand an open start.
+func WithTimeout(limit time.Duration) Option {
+	return func(a *Anra) error {
+		if limit <= 0 {
+			return errors.New("agent: timeout must be positive")
+		}
+		a.runtime.timeout = limit
+		return nil
+	}
+}
+
 type turnCountKey struct{}
 
 func (a *Anra) initialize() error {
@@ -75,7 +90,7 @@ func (a *Anra) initialize() error {
 		return err
 	}
 	a.runtime.sessionID = state.SessionID
-	wrapped := &eventStorage{TapeStorage: a.tape}
+	wrapped := &eventStorage{TapeStorage: a.tape, aborted: append([]view.EntryRange(nil), a.execution.aborted...)}
 	adapter, err := tapeagent.NewTapeAdapter(&tape.Tape{TapeStorage: wrapped, OwnerID: a.principal}, appName)
 	if err != nil {
 		return err
@@ -119,18 +134,31 @@ func (a *Anra) initialize() error {
 }
 
 // Run delegates the model/tool loop and event persistence to ADK and tape-go.
-func (a *Anra) Run(ctx context.Context, input string) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.runtime.runner == nil {
+func (a *Anra) Run(ctx context.Context, input string) (answer string, runErr error) {
+	if a.runtime.llm == nil {
 		return "", ErrRuntimeNotConfigured
 	}
 	if strings.TrimSpace(input) == "" {
 		return "", errors.New("agent: empty runtime input")
 	}
+	ctx, runCancel := context.WithTimeout(ctx, a.runtime.timeout)
+	defer runCancel()
+	ctx, cancel := delegator.Begin(ctx)
+	defer cancel()
+	done, err := a.admit(ctx, cancel)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		defer close(done)
+		if err := a.finish(answer, runErr); err != nil {
+			answer = ""
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 	count := 0
 	ctx = context.WithValue(ctx, turnCountKey{}, &count)
-	var answer string
+
 	for event, err := range a.runtime.runner.Run(ctx, a.principal, a.runtime.sessionID, genai.NewContentFromText(input, genai.RoleUser), adkagent.RunConfig{}) {
 		if err != nil {
 			return "", fmt.Errorf("agent: ADK run: %w", err)
@@ -150,49 +178,11 @@ func (a *Anra) Run(ctx context.Context, input string) (string, error) {
 			}
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if answer == "" {
 		return "", errors.New("agent: ADK run returned no answer")
 	}
 	return answer, nil
-}
-
-// Exchange records an explicit transport exchange without invoking a local model.
-// The network call does not hold the runtime lock, allowing concurrent reception.
-func (a *Anra) Exchange(ctx context.Context, input string, respond func(context.Context, string) (string, error)) (string, error) {
-	if strings.TrimSpace(input) == "" || respond == nil {
-		return "", errors.New("agent: exchange requires a message and responder")
-	}
-	a.mu.Lock()
-	err := a.appendContent(ctx, genai.NewContentFromText(input, genai.RoleUser))
-	a.mu.Unlock()
-	if err != nil {
-		return "", err
-	}
-	answer, err := respond(ctx, input)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(answer) == "" {
-		return "", errors.New("agent: empty peer answer")
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if err := a.appendContent(ctx, genai.NewContentFromText(answer, genai.RoleModel)); err != nil {
-		return "", err
-	}
-	return answer, nil
-}
-
-func (a *Anra) appendContent(ctx context.Context, content *genai.Content) error {
-	stored, err := a.runtime.adapter.Get(ctx, &session.GetRequest{AppName: appName, UserID: a.principal, SessionID: a.runtime.sessionID})
-	if err != nil {
-		return err
-	}
-	event := session.NewEvent("")
-	event.Author = appName
-	if content.Role == genai.RoleUser {
-		event.Author = "user"
-	}
-	event.Content = content
-	return a.runtime.adapter.AppendEvent(ctx, stored.Session, event)
 }

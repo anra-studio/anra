@@ -91,7 +91,7 @@ Discover configured, trusted peer card URLs. An optional directory can provide
 these same references. `RankPeers` ranks visible native card skill descriptions
 and returns the peers worth visiting, best first, or no match. The CLI's
 `registry` command provides a leased team directory of Agent Cards.
-`serve --registry <url>` registers automatically, and named sends resolve the
+`serve` registers automatically with the config's `[lobby].address`, and model-directed peer calls resolve the
 current destination card through that directory. See
 [CLI discovery](cli.md#running-servers-and-discovery). The registry is an Anra
 directory service; core A2A communication still uses the official SDK.
@@ -285,3 +285,58 @@ References: [A2A extensions](https://a2a-protocol.org/latest/topics/extensions/)
 
 Client validation boundaries and the simplification experiments are recorded in
 [A2A client ablation](designs/a2a-client-ablation.md).
+
+## Nonblocking collaboration and published context
+
+`a2a.AdvertiseCollaboration(card)` enables negotiation of
+`urn:anra:a2a:collaboration:v1` in message extensions and metadata.
+`MessageClient.Send` returns `CollaborationResult`; callers must inspect `Status`
+before using `Answer`. Its embedded generated `ResponseMetadata` uses the enums
+in `gen/anra/a2a/collaboration/v1`; `STATUS_BUSY` means no reasoning invocation
+was admitted. Generic
+A2A clients receive clear unaccepted text and no publication hint.
+
+Delegation and response metadata are defined in
+`proto/anra/a2a/collaboration/v1/collaboration.proto` and carried as ProtoJSON
+under the extension URI. Protovalidate enforces the metadata structure and
+status/detail combinations. Answer text stays in standard A2A parts.
+The `pkg/model/delegator` model owns root creation, deadline caps, ancestry, and
+BUSY progress. `Begin` creates an invocation,
+`Next` prepares a peer edge, `Observe` records the peer outcome, and `Borrowed`
+records progress after the grant is read. A2A adapters encode/decode owned
+metadata snapshots; peer tools do not mutate the protobuf fields or BUSY maps.
+Transport identity stays in the A2A adapter. The wire uses generated enum names;
+CLI and tool labels remain
+readable lowercase strings. There is no legacy metadata decoder.
+Delegation has no hop counter or ancestry-length limit. Deadline expiry and
+cancellation remain ordinary context errors; the encoded metadata size bound
+and local model-turn limit continue to apply.
+
+Use `a2a.AdvertisePublications(card, baseURL + a2a.ViewPath)` and configure
+`Service` with `Publications: runtime` and `Exporter: a2a.PublicationExporter{}`.
+The runtime resolves committed publications locally without acquiring reasoning
+admission. TapeView issues separate requester-bound grants for trusted peers.
+`Policy` remains available for legacy raw ranges; it is not
+required when `Publications` is configured. The CLI mounts both core messaging
+and borrowing with `NewPeerHandler`.
+
+The model-facing borrow tool accepts a peer, request ID, purpose, and query. The
+lender selects its latest eligible publication without entering reasoning. BUSY
+references are hints; the model does not supply a publication selector. Progress
+tracking uses the source and snapshot actually granted and read, so borrowing
+unchanged findings does not enable repeated reasoning requests.
+
+The wire API retains optional `BorrowRequest.publication` (`AnchorRef`) for
+explicit snapshot requests, subject to the lender's validation. The
+card must advertise `publicationBorrowVersion: 1`. A publication at P yields
+`[P,P+1)` with snapshot P; the exported payload is
+`application/vnd.anra.published-context+json;version=1`. Its `sourceHead` and
+`covers` describe provenance and do not authorize reading those underlying raw
+entries. Clients reject a grant with a different source, range, or snapshot before
+reading. Existing text grants keep their original representation.
+
+The runtime publishes eligible final answers by default in the terminal anchor
+atomically with closing. No publication-sharing bootstrap option is required.
+Only the published projection is borrowable; coverage does not expose raw tape.
+The full lifecycle, recovery, and delegation contract is in the
+[technical specification](designs/anchor-busy-collaboration-spec.md).

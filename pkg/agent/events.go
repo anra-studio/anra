@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"github.com/scbizu/anra/pkg/model/anchor"
 	"maps"
 
 	"github.com/scbizu/tape-go/pkg/runner"
@@ -16,7 +17,10 @@ import (
 
 // eventStorage preserves the tape's tool entry kinds and projects the former
 // Anra message payload into ADK events on read. Existing tapes remain append-only.
-type eventStorage struct{ storage.TapeStorage }
+type eventStorage struct {
+	storage.TapeStorage
+	aborted []view.EntryRange
+}
 
 func (s *eventStorage) Unwrap() storage.TapeStorage { return s.TapeStorage }
 
@@ -48,6 +52,29 @@ func (s *eventStorage) Range(ctx context.Context, r view.EntryRange, opts ...sto
 	if err != nil {
 		return result, err
 	}
+	filtered := result.Raw[:0]
+	for _, raw := range result.Raw {
+		if raw.GetKind().IsAnchor() && raw.GetKind() == "anchor:custom" {
+			record, err := anchor.Decode(raw)
+			if err != nil {
+				return view.EntryView{}, err
+			}
+			if record != nil {
+				continue
+			}
+		}
+		skip := false
+		for _, interval := range s.aborted {
+			if raw.GetID().Cmp(interval.SeqS) >= 0 && raw.GetID().Cmp(interval.SeqE) < 0 {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			filtered = append(filtered, raw)
+		}
+	}
+	result.Raw = filtered
 	for i, raw := range result.Raw {
 		value, ok := customEntry(raw)
 		if !ok {

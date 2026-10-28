@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 
 	"github.com/scbizu/tape-go/pkg/runner"
 	"google.golang.org/adk/model"
@@ -86,7 +87,17 @@ type completionMessage struct {
 
 // newModelServer speaks the real provider HTTP protocol. No fixture provider or
 // mock runtime is exposed by the production binary.
-func newModelServer() *httptest.Server {
+type providerControl struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newProviderControl() *providerControl {
+	return &providerControl{entered: make(chan struct{}, 1), release: make(chan struct{})}
+}
+func (c *providerControl) unblock() { c.once.Do(func() { close(c.release) }) }
+func newModelServer(control *providerControl) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer e2e-model-key" {
 			http.Error(w, "invalid fixture key", http.StatusUnauthorized)
@@ -109,19 +120,52 @@ func newModelServer() *httptest.Server {
 			return
 		}
 		identity := "unknown"
+		role := ""
 		input := ""
 		for _, message := range request.Messages {
 			if message.Role == "system" {
-				if _, name, ok := strings.Cut(message.Content, "You are Anra agent "); ok {
-					identity = strings.SplitN(name, ".\n", 2)[0]
-					identity = strings.TrimSuffix(identity, ".")
+				// The configured role and description come first, before ADK's
+				// appended agent metadata. Fixture agents start with their name.
+				instruction, _, _ := strings.Cut(message.Content, "You are an agent.")
+				role = strings.TrimSpace(instruction)
+				if fields := strings.Fields(role); len(fields) > 0 {
+					identity = fields[0]
 				}
 			}
 			if message.Role == "user" {
 				input = message.Content
 			}
 		}
+		if input == "crash before completion" {
+			select {
+			case control.entered <- struct{}{}:
+			default:
+			}
+			select {
+			case <-control.release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		if input == "verify recovered history" {
+			for _, prior := range request.Messages {
+				if prior.Content == "crash before completion" {
+					http.Error(w, "unfinished user history replayed", 400)
+					return
+				}
+				for _, call := range prior.ToolCalls {
+					if call.ID == "interrupted-call" {
+						http.Error(w, "unmatched tool call replayed", 400)
+						return
+					}
+				}
+			}
+		}
 		message := map[string]any{"role": "assistant", "content": identity + ": " + input}
+		if input == "report your configured role" {
+			// Report the configured instruction before ADK's appended agent metadata.
+			message["content"] = strings.Join(strings.Fields(role), " ")
+		}
 		finish := "stop"
 		last := request.Messages[len(request.Messages)-1]
 		if input == "recall the peer answer" {
@@ -190,6 +234,31 @@ func newModelServer() *httptest.Server {
 				} else {
 					message["content"] = nil
 					message["tool_calls"] = []any{map[string]any{"id": "fixture-" + next, "type": "function", "function": map[string]any{"name": next, "arguments": args}}}
+					finish = "tool_calls"
+				}
+			}
+		}
+		if rest, ok := strings.CutPrefix(input, "ask "); ok {
+			peer, question, ok := strings.Cut(rest, ": ")
+			if ok {
+				if last.Role == "tool" {
+					var result struct {
+						Answer string `json:"answer"`
+						Status string `json:"status"`
+						Error  string `json:"error"`
+					}
+					_ = json.Unmarshal([]byte(last.Content), &result)
+					if result.Error != "" {
+						message["content"] = "Unable to consult peer: agent is not registered"
+					} else if result.Status == "busy" || result.Status == "no_new_context" {
+						message["content"] = "peer busy; continued locally"
+					} else {
+						message["content"] = result.Answer
+					}
+				} else {
+					args, _ := json.Marshal(map[string]string{"peer": peer, "message": question})
+					message["content"] = nil
+					message["tool_calls"] = []any{map[string]any{"id": "fixture-delegate", "type": "function", "function": map[string]any{"name": "send_peer_message", "arguments": string(args)}}}
 					finish = "tool_calls"
 				}
 			}

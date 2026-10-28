@@ -48,7 +48,7 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 	c := &cliScenario{s: s}
 	team := initializeTeam(sc, c)
 	initializeConfig(sc, c, team)
-	initializeEnvironment(sc, c, team)
+	initializeApplication(sc, c)
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		*c = cliScenario{s: s}
 		return ctx, nil
@@ -58,11 +58,11 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^I run the local CLI agent "([^"]*)" with "([^"]*)"$`, c.runLocal)
 	sc.Step(`^I request CLI help for "([^"]*)"$`, func(command string) {
-		args := []string{"--data-dir", c.dataDir()}
+		args := []string{"--help"}
 		if command != "root" {
-			args = append(args, command)
+			args = []string{command, "--help"}
 		}
-		c.execute(append(args, "--help")...)
+		c.execute(args...)
 	})
 	sc.Step(`^the CLI help lists "([^"]*)"$`, func(want string) error {
 		if c.err != nil || !strings.Contains(c.output, want) {
@@ -71,15 +71,12 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		return nil
 	})
 	sc.Step(`^I run the CLI agent "([^"]*)" with "([^"]*)" and flags (before the command|after the message)$`, func(id, text, placement string) error {
-		flags := []string{"--agent", id, "--data-dir", c.dataDir()}
-		var args []string
+		flags := []string{"--agent", id, "--config", c.ensureConfig()}
 		if placement == "before the command" {
-			args = append(flags, "run", "--provider", "deepseek", text)
+			c.execute(append(flags, "run", text)...)
 		} else {
-			args = append([]string{"run", text}, flags...)
-			args = append(args, "--provider", "deepseek")
+			c.execute(append([]string{"run", text}, flags...)...)
 		}
-		c.execute(args...)
 		return c.err
 	})
 	sc.Step(`^the CLI answer is "([^"]*)"$`, func(want string) error {
@@ -88,7 +85,12 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^the CLI agent "([^"]*)" is serving with a deterministic model$`, c.start)
+	sc.Step(`^the CLI agent "([^"]*)" is serving with a deterministic model$`, func(id string) error {
+		if err := c.writeAgentConfig(team.registry.peer); err != nil {
+			return err
+		}
+		return c.start(id)
+	})
 	sc.Step(`^I stop the serving CLI agent$`, c.stop)
 	sc.Step(`^the CLI agent "([^"]*)" has this conversation on its tape$`, c.conversation)
 	sc.Step(`^the CLI agent "([^"]*)" has an empty tape$`, func(id string) error {
@@ -99,7 +101,7 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		if identity != "missing" {
 			h = a2a.TrustedHTTPClient(identity)
 		}
-		client, err := a2a.NewMessageClient(c.s.ctx, h, c.peer)
+		client, err := messageClient(c.s.ctx, h, c.peer)
 		if err == nil {
 			_, err = client.Send(c.s.ctx, "hello")
 		}
@@ -136,7 +138,7 @@ func (c *cliScenario) dataDir() string { return filepath.Join(c.s.root, "cli") }
 func cliEnv() []string {
 	var env []string
 	for _, value := range os.Environ() {
-		if !strings.HasPrefix(value, "DEEPSEEK_API_KEY=") && !strings.HasPrefix(value, "ANRA_") {
+		if !strings.HasPrefix(value, "DEEPSEEK_API_") && !strings.HasPrefix(value, "ANRA_") {
 			env = append(env, value)
 		}
 	}
@@ -144,7 +146,7 @@ func cliEnv() []string {
 }
 
 func (c *cliScenario) environment() []string {
-	env := append(cliEnv(), "DEEPSEEK_API_KEY=e2e-model-key", "ANRA_API_BASE="+c.s.modelServer.URL)
+	env := append(cliEnv(), "DEEPSEEK_API_KEY=e2e-model-key", "DEEPSEEK_API_BASE="+c.s.modelServer.URL)
 	for key, value := range c.env {
 		env = append(env, key+"="+value)
 	}
@@ -159,12 +161,12 @@ func (c *cliScenario) execute(args ...string) {
 }
 
 func (c *cliScenario) runLocal(id, text string) error {
-	c.execute("run", "--agent", id, "--data-dir", c.dataDir(), "--provider", "deepseek", text)
+	c.execute("run", "--agent", id, "--config", c.ensureConfig(), text)
 	return c.err
 }
 
 func (c *cliScenario) start(id string) error {
-	return c.startProcess(id, "serve", "--agent", id, "--data-dir", c.dataDir(), "--provider", "deepseek", "--listen", "127.0.0.1:0")
+	return c.startProcess(id, "serve", "--agent", id, "--config", c.ensureConfig())
 }
 
 func (c *cliScenario) startProcess(id string, args ...string) error {
@@ -257,10 +259,14 @@ func (c *cliScenario) conversationAt(dir, id, session string, table *godog.Table
 	if err != nil {
 		return err
 	}
-	if len(entries.Raw) != want {
-		return fmt.Errorf("CLI tape has %d entries, want %d", len(entries.Raw), want)
+	conversation, err := inspectLifecycle(entries.Raw)
+	if err != nil {
+		return err
 	}
-	for i, raw := range entries.Raw {
+	if len(conversation) != want {
+		return fmt.Errorf("CLI tape has %d entries, want %d", len(conversation), want)
+	}
+	for i, raw := range conversation {
 		role := map[entry.EntryKind]string{entry.EntryUser: "user", entry.EntryAssistant: "assistant"}[raw.GetKind()]
 		row := table.Rows[i+1].Cells
 		if role != row[0].Value || raw.GetSummary() != row[1].Value || raw.GetOwner() != id {
@@ -271,29 +277,23 @@ func (c *cliScenario) conversationAt(dir, id, session string, table *godog.Table
 }
 
 func (c *cliScenario) invalid(problem string) error {
-	common := []string{"--agent", "alice", "--data-dir", c.dataDir()}
-	args := append([]string{"run"}, common...)
+	args := []string{"run", "--agent", "alice", "--config", c.ensureConfig()}
 	switch problem {
 	case "missing message":
-		args = append(args, "--provider", "deepseek")
 	case "invalid agent":
-		args = append(args, "--agent", "../alice", "--provider", "deepseek", "hello")
+		args = append(args, "--agent", "../alice", "hello")
 	case "missing key":
 		if c.env == nil {
 			c.env = make(map[string]string)
 		}
 		c.env["DEEPSEEK_API_KEY"] = ""
 		args = append(args, "hello")
-	case "missing destination":
-		args = append(append([]string{"send"}, common...), "hello")
+	case "removed send":
+		args = []string{"send", "--agent", "alice", "--config", c.ensureConfig(), "hello"}
 	case "peer flag":
-		args = []string{"send", "--peer", "http://127.0.0.1:1", "hello"}
-	case "URL destination":
-		args = []string{"send", "--to", "http://127.0.0.1:1", "hello"}
-	case "missing registry":
-		args = []string{"send", "--to", "bob", "hello"}
-	case "unknown provider":
-		args = append(args, "--provider", "unknown", "hello")
+		args = []string{"ask", "--peer", "http://127.0.0.1:1", "hello"}
+	case "removed destination flag":
+		args = []string{"ask", "--agent", "alice", "--config", c.ensureConfig(), "--to", "bob", "hello"}
 	case "unknown command":
 		args = []string{"unknown"}
 	default:

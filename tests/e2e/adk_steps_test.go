@@ -81,14 +81,14 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		return nil
 	})
 	sc.Step(`^I ask running agent "([^"]*)" to "([^"]*)"$`, func(id, text string) error {
-		c.execute("ask", "--agent", id, "--registry", t.registry.peer, text)
+		c.execute("ask", "--agent", id, "--config", c.ensureConfig(), text)
 		if c.err != nil {
 			return fmt.Errorf("%w: %s", c.err, c.output)
 		}
 		return nil
 	})
 	sc.Step(`^I run the local CLI agent with its built-in Bash tool$`, func() error {
-		c.execute("run", "--agent", "alice", "--data-dir", c.dataDir(), "run the built-in bash tool")
+		c.execute("run", "--agent", "alice", "--config", c.ensureConfig(), "run the built-in bash tool")
 		if c.err != nil {
 			return fmt.Errorf("%w: %s", c.err, c.output)
 		}
@@ -112,8 +112,14 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		if err != nil {
 			return err
 		}
+		if _, err := inspectLifecycle(values.Raw); err != nil {
+			return err
+		}
 		calls, results := map[string]bool{}, map[string]bool{}
 		for _, raw := range values.Raw {
+			if raw.GetKind().IsAnchor() {
+				continue
+			}
 			var extensions map[string]any
 			switch value := raw.(type) {
 			case entry.CustomEntry:
@@ -156,25 +162,27 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		return nil
 	})
 	sc.Step(`^I run the CLI with unsupported ADK configuration "([^"]*)"$`, func(problem string) error {
-		args := []string{"run", "--agent", "alice", "--data-dir", c.dataDir()}
+		args := []string{"run", "--agent", "alice"}
 		switch problem {
 		case "runner flag":
 			args = append(args, "--runner", "echo")
 		case "echo provider":
-			args = append(args, "--provider", "echo")
+			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \"echo\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0600); err != nil {
+				return err
+			}
 		case "tool flag":
 			args = append(args, "--tools", "unknown")
 		case "tool config":
-			if err := os.WriteFile(c.configPath(), []byte("[agents.alice]\ntools = [\"bash\"]\n"), 0600); err != nil {
+			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ntools = [\"bash\"]\n"), 0600); err != nil {
 				return err
 			}
-			args = append(args, "--config", c.configPath())
 		case "invalid API base":
-			args = append(args, "--api-base", "invalid")
+			c.ensureConfig()
+			c.env = map[string]string{"DEEPSEEK_API_BASE": "invalid"}
 		default:
 			return fmt.Errorf("unknown ADK problem %q", problem)
 		}
-		c.execute(append(args, "hello")...)
+		c.execute(append(args, "--config", c.configPath(), "hello")...)
 		return nil
 	})
 }

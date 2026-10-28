@@ -94,10 +94,11 @@ type Config struct {
 	JournalPath string `validate:"excluded_with=Journal"`
 	// Journal is an open store bound to Source, shared with other services and
 	// owned by the caller, which closes it.
-	Journal  Journal          `validate:"required_without=JournalPath,excluded_with=JournalPath"`
-	Policy   Policy           `validate:"required,structonly"`
-	Exporter Exporter         `validate:"-"`
-	Now      func() time.Time `validate:"-"`
+	Journal      Journal          `validate:"required_without=JournalPath,excluded_with=JournalPath"`
+	Publications Publications     `validate:"-"`
+	Policy       Policy           `validate:"required_without=Publications,structonly"`
+	Exporter     Exporter         `validate:"-"`
+	Now          func() time.Time `validate:"-"`
 }
 
 // Service queries durable grant indexes on demand; no journal entries or grant
@@ -208,7 +209,12 @@ func (s *Service) Borrow(ctx context.Context, p string, req *pb.BorrowRequest) (
 		return nil, err
 	}
 	head := h.Scope.SeqE
-	sel, err := s.config.Policy.Select(ctx, p, proto.Clone(req).(*pb.BorrowRequest), head)
+	var sel Selection
+	if s.config.Publications != nil || req.Publication != nil {
+		sel, head, err = s.publicationSelection(ctx, p, req)
+	} else {
+		sel, err = s.config.Policy.Select(ctx, p, proto.Clone(req).(*pb.BorrowRequest), head)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +332,19 @@ func (s *Service) Resolve(ctx context.Context, p, requestID string, sel Selectio
 	if err != nil {
 		return nil, err
 	}
-	d, err := s.decide(ctx, r.Request, sel, h.Scope.SeqE)
+	head := h.Scope.SeqE
+	if s.config.Publications != nil || r.Request.Publication != nil {
+		// Resolve cannot expand publication permissions or change the selected snapshot.
+		allowed, pinned, e := s.publicationSelection(ctx, p, r.Request)
+		if e != nil {
+			return nil, e
+		}
+		if sel.Status == Granted {
+			sel = allowed
+			head = pinned
+		}
+	}
+	d, err := s.decide(ctx, r.Request, sel, head)
 	if err != nil {
 		return nil, err
 	}

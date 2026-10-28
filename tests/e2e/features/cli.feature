@@ -1,6 +1,7 @@
 Feature: Run tape-backed agents from the terminal
   People can use Anra locally and send messages between independently stored
-  agents without requiring model credentials for a hello demonstration.
+  agents. Agent settings come from the --config file; flags only select an
+  agent and a destination.
 
   Scenario Outline: Discover command usage without configuring an agent
     When I request CLI help for "<command>"
@@ -8,11 +9,11 @@ Feature: Run tape-backed agents from the terminal
     And no CLI tape directory is created
 
     Examples:
-      | command | item       |
-      | root    | serve      |
-      | run     | --provider |
-      | serve   | --listen   |
-      | send    | --to       |
+      | command | item     |
+      | root    | serve    |
+      | run     | --config |
+      | serve   | --agent  |
+      | ask     | --agent  |
 
   Scenario Outline: Place shared flags before the command or after the message
     When I run the CLI agent "alice" with "hello" and flags <placement>
@@ -46,11 +47,11 @@ Feature: Run tape-backed agents from the terminal
     Then the CLI answer is "bob: hello again"
     When I stop the team agents
     Then the CLI agent "alice" has this conversation on its tape
-      | role      | text                  |
-      | user      | hello from alice      |
-      | assistant | bob: hello from alice |
-      | user      | hello again           |
-      | assistant | bob: hello again      |
+      | role      | text                      |
+      | user      | ask bob: hello from alice |
+      | assistant | bob: hello from alice     |
+      | user      | ask bob: hello again      |
+      | assistant | bob: hello again          |
     And the CLI agent "bob" has this conversation on its tape
       | role      | text                  |
       | user      | hello from alice      |
@@ -59,7 +60,8 @@ Feature: Run tape-backed agents from the terminal
       | assistant | bob: hello again      |
 
   Scenario Outline: Peer messages require a valid caller identity
-    Given the CLI agent "bob" is serving with a deterministic model
+    Given a running team Agent Card directory
+    And the CLI agent "bob" is serving with a deterministic model
     When a peer sends a greeting with identity "<identity>"
     Then the CLI command fails
     When I stop the serving CLI agent
@@ -76,13 +78,11 @@ Feature: Run tape-backed agents from the terminal
     And no CLI tape directory is created
 
     Examples:
-      | problem             | error                                |
-      | missing message     | non-empty message                    |
-      | invalid agent       | --agent must start                   |
-      | missing key         | DEEPSEEK_API_KEY                     |
-      | missing destination | required flag(s): --to               |
-      | peer flag           | unknown flag: --peer                 |
-      | URL destination     | --to must be an agent name           |
-      | missing registry    | registry must be an HTTP(S) base URL |
-      | unknown provider    | unknown provider                     |
-      | unknown command     | unknown command                      |
+      | problem                  | error                |
+      | missing message          | non-empty message    |
+      | invalid agent            | --agent must start   |
+      | missing key              | DEEPSEEK_API_KEY     |
+      | removed send             | unknown command      |
+      | peer flag                | unknown flag: --peer |
+      | removed destination flag | unknown flag: --to   |
+      | unknown command          | unknown command      |

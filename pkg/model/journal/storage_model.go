@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	"github.com/scbizu/anra/pkg/model/anchor"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -92,10 +93,11 @@ type storedView struct {
 	ExpiresAt    time.Time       `json:"expiresAt"`
 }
 type storedRequest struct {
-	RequestID string         `json:"requestId"`
-	Purpose   string         `json:"purpose"`
-	Query     string         `json:"query"`
-	Bounds    *tv.EntryRange `json:"bounds,omitempty"`
+	RequestID   string         `json:"requestId"`
+	Purpose     string         `json:"purpose"`
+	Query       string         `json:"query"`
+	Bounds      *tv.EntryRange `json:"bounds,omitempty"`
+	Publication *pb.AnchorRef  `json:"publication,omitempty"`
 }
 
 type storedStatus string
@@ -111,7 +113,7 @@ func storeSource(s *pb.Source) storedSource {
 func (s storedSource) message() *pb.Source { return &pb.Source{AgentId: s.AgentID, TapeId: s.TapeID} }
 
 func storeRequest(r *pb.BorrowRequest) (storedRequest, error) {
-	out := storedRequest{RequestID: r.GetRequestId(), Purpose: r.GetPurpose(), Query: r.GetQuery()}
+	out := storedRequest{RequestID: r.GetRequestId(), Purpose: r.GetPurpose(), Query: r.GetQuery(), Publication: anchor.CloneRef(r.Publication)}
 	if r.GetBounds() != nil {
 		b, err := rangeFromProto(r.Bounds)
 		if err != nil {
@@ -122,7 +124,7 @@ func storeRequest(r *pb.BorrowRequest) (storedRequest, error) {
 	return out, nil
 }
 func (r storedRequest) message() *pb.BorrowRequest {
-	out := &pb.BorrowRequest{RequestId: r.RequestID, Purpose: r.Purpose, Query: r.Query}
+	out := &pb.BorrowRequest{RequestId: r.RequestID, Purpose: r.Purpose, Query: r.Query, Publication: anchor.CloneRef(r.Publication)}
 	if r.Bounds != nil {
 		out.Bounds = rangeToProto(*r.Bounds)
 	}
