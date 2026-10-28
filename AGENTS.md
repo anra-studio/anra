@@ -1,20 +1,3 @@
-# Domain modeling and maintainability
-
-- Treat each feature as a change to the system's domain model. Before coding,
-  understand the underlying intent and identify the relevant concepts,
-  responsibilities, relationships, state transitions, and invariants.
-- Let that understanding guide module boundaries and interfaces. Give each
-  domain concept a clear owner, keep related behavior together, and express
-  business rules explicitly instead of scattering special cases across layers.
-- Fit new behavior into a coherent model and refine existing abstractions when
-  the requirement exposes a missing concept. Shipping a feature includes making
-  its logic understandable and maintainable; satisfying the immediate behavior
-  through ad hoc branches, duplicated rules, or vaguely named helpers is not
-  sufficient.
-- Keep abstractions proportional to the problem. Reuse established concepts
-  where they fit, and introduce new ones only when they clarify actual behavior
-  or responsibilities. Avoid speculative frameworks and unrelated refactoring.
-
 # Repository testing policy
 
 - The committed acceptance contract is the executable BDD E2E suite under
