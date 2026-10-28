@@ -35,10 +35,6 @@ func inspectLifecycle(entries []entry.EntryLike) ([]entry.EntryLike, error) {
 				}
 				active = nil
 				closes++
-			case "context.published":
-				if active == nil {
-					return nil, fmt.Errorf("publication outside invocation")
-				}
 			}
 			continue
 		}

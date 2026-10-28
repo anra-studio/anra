@@ -20,30 +20,31 @@ import (
 var ErrBusy = errors.New("agent: busy; request was not accepted")
 var ErrFenced = errors.New("agent: execution requires storage reconciliation")
 
-type BusyError struct{ publication *pb.AnchorRef }
+type BusyError struct{ view *pb.TapeView }
 
 var _ a2a.BusyError = (*BusyError)(nil)
 
-func (*BusyError) Error() string                    { return ErrBusy.Error() }
-func (*BusyError) Unwrap() error                    { return ErrBusy }
-func (e *BusyError) BusyPublication() *pb.AnchorRef { return anchor.CloneRef(e.publication) }
+func (*BusyError) Error() string            { return ErrBusy.Error() }
+func (*BusyError) Unwrap() error            { return ErrBusy }
+func (e *BusyError) BusyView() *pb.TapeView { return anchor.CloneRef(e.view) }
 
 type invocation struct {
 	id, epoch string
 	start     te.Seq
 }
 type execution struct {
-	source       *pb.Source
-	epoch        string
-	active       *invocation
-	latest       *pb.AnchorRef
-	publications map[string]*anchor.Publication
-	seen         map[string]bool
-	aborted      []tv.EntryRange
-	fenced       bool
-	closing      bool
-	cancel       context.CancelFunc
-	done         chan struct{}
+	source    *pb.Source
+	sessionID string
+	epoch     string
+	active    *invocation
+	latest    *pb.TapeView
+	views     map[string]tv.TapeView
+	seen      map[string]bool
+	aborted   []tv.EntryRange
+	fenced    bool
+	closing   bool
+	cancel    context.CancelFunc
+	done      chan struct{}
 }
 
 func (a *Anra) tapeContext(ctx context.Context) context.Context {
@@ -55,9 +56,9 @@ func (a *Anra) Source() *pb.Source {
 	return proto.Clone(a.execution.source).(*pb.Source)
 }
 
-// Publication resolves an immutable publication for an identified peer without
+// View resolves an immutable view for an identified peer without
 // entering ADK. TapeView Borrow issues and enforces requester-bound grants.
-func (a *Anra) Publication(_ context.Context, requester string, ref *pb.AnchorRef) (*pb.AnchorRef, error) {
+func (a *Anra) View(_ context.Context, requester string, ref *pb.TapeView) (*pb.TapeView, error) {
 	if requester == "" {
 		return nil, nil
 	}
@@ -66,10 +67,25 @@ func (a *Anra) Publication(_ context.Context, requester string, ref *pb.AnchorRe
 	if ref == nil {
 		ref = a.execution.latest
 	}
-	if ref == nil || !proto.Equal(ref.Source, a.execution.source) || a.execution.publications[ref.Seq] == nil {
+	if ref == nil || !proto.Equal(ref.Source, a.execution.source) {
 		return nil, nil
 	}
-	return anchor.CloneRef(ref), nil
+	window, ok := a.execution.views[ref.SnapshotHead]
+	if !ok {
+		return nil, nil
+	}
+	selected := a.viewRef(window)
+	if !proto.Equal(ref, selected) {
+		return nil, nil
+	}
+	return selected, nil
+}
+func (a *Anra) viewRef(window tv.TapeView) *pb.TapeView {
+	return &pb.TapeView{
+		Source:       proto.Clone(a.execution.source).(*pb.Source),
+		SnapshotHead: window.Scope.SeqE.String(),
+		Scope:        &pb.EntryRange{SeqS: window.Scope.SeqS.String(), SeqE: window.Scope.SeqE.String()},
+	}
 }
 func (a *Anra) apply(raw te.EntryLike) error {
 	r, err := anchor.Decode(raw)
@@ -87,30 +103,23 @@ func (a *Anra) apply(raw te.EntryLike) error {
 		}
 		x.source = proto.Clone(r.Source).(*pb.Source)
 	case "invocation.started":
-		if x.source == nil || x.active != nil || x.seen[r.InvocationID] || !proto.Equal(r.BasePublication, x.latest) {
+		if x.source == nil || x.active != nil || x.seen[r.InvocationID] || !proto.Equal(r.BaseView, x.latest) {
 			return errors.New("agent: inconsistent invocation start")
 		}
 		x.seen[r.InvocationID] = true
 		x.active = &invocation{id: r.InvocationID, epoch: r.OwnerEpoch, start: raw.GetID()}
-	case "context.published", "invocation.closed":
+	case "invocation.closed":
 		if x.active == nil || x.active.id != r.InvocationID || x.active.start.String() != r.StartSeq {
 			return errors.New("agent: unmatched invocation record")
 		}
-		if r.Publication != nil {
-			for _, coverage := range r.Publication.Covers {
-				if te.MustParseSeq(coverage.SeqS).Cmp(x.active.start) <= 0 {
-					return errors.New("agent: coverage outside invocation")
-				}
-			}
-			x.publications[raw.GetID().String()] = r.Publication
-			x.latest = &pb.AnchorRef{Source: proto.Clone(x.source).(*pb.Source), Seq: raw.GetID().String()}
+		if r.Outcome == "completed" {
+			window := tv.TapeView{SessionID: x.sessionID, Owner: a.principal, Scope: tv.EntryRange{SeqS: x.active.start.Next(), SeqE: raw.GetID()}}
+			x.views[raw.GetID().String()] = window
+			x.latest = a.viewRef(window)
+		} else {
+			x.aborted = append(x.aborted, tv.EntryRange{SeqS: x.active.start, SeqE: raw.GetID().Next()})
 		}
-		if r.Type == "invocation.closed" {
-			if r.Outcome != "completed" {
-				x.aborted = append(x.aborted, tv.EntryRange{SeqS: x.active.start, SeqE: raw.GetID().Next()})
-			}
-			x.active = nil
-		}
+		x.active = nil
 	}
 	return nil
 }
@@ -132,13 +141,14 @@ func (a *Anra) appendAnchor(ctx context.Context, r anchor.Record) error {
 	return nil
 }
 func (a *Anra) recoverExecution() error {
-	a.execution = execution{epoch: uuid.New().String(), publications: map[string]*anchor.Publication{}, seen: map[string]bool{}}
+	a.execution = execution{epoch: uuid.New().String(), views: map[string]tv.TapeView{}, seen: map[string]bool{}}
 	ctx, cancel := context.WithTimeout(a.tapeContext(context.Background()), 5*time.Second)
 	defer cancel()
 	state, err := a.tape.Get(ctx)
 	if err != nil {
 		return err
 	}
+	a.execution.sessionID = state.SessionID
 	if !state.Scope.SeqE.IsZero() {
 		entries, err := a.tape.Range(ctx, tv.EntryRange{SeqS: te.SeqFromUint64(1), SeqE: state.Scope.SeqE.Next()})
 		if err != nil {
@@ -176,13 +186,13 @@ func (a *Anra) admit(ctx context.Context, cancel context.CancelFunc) (chan struc
 		return nil, ErrFenced
 	}
 	if a.execution.active != nil {
-		var ref *pb.AnchorRef
+		var ref *pb.TapeView
 		if identified {
 			ref = anchor.CloneRef(a.execution.latest)
 		}
-		return nil, &BusyError{publication: ref}
+		return nil, &BusyError{view: ref}
 	}
-	if err := a.appendAnchor(ctx, anchor.Record{Type: "invocation.started", InvocationID: uuid.New().String(), OwnerEpoch: a.execution.epoch, BasePublication: anchor.CloneRef(a.execution.latest)}); err != nil {
+	if err := a.appendAnchor(ctx, anchor.Record{Type: "invocation.started", InvocationID: uuid.New().String(), OwnerEpoch: a.execution.epoch, BaseView: anchor.CloneRef(a.execution.latest)}); err != nil {
 		return nil, err
 	}
 	a.execution.cancel = cancel
@@ -190,7 +200,7 @@ func (a *Anra) admit(ctx context.Context, cancel context.CancelFunc) (chan struc
 	return a.execution.done, nil
 }
 
-func (a *Anra) finish(answer string, runErr error) error {
+func (a *Anra) finish(runErr error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	a.mu.Lock()
@@ -205,23 +215,8 @@ func (a *Anra) finish(answer string, runErr error) error {
 		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
 			r.Outcome = "cancelled"
 		}
-	} else if publishableAnswer(answer) {
-		state, err := a.tape.Get(a.tapeContext(ctx))
-		if err != nil {
-			a.execution.fenced = true
-			return err
-		}
-		// Only the completed final assistant entry is published; no private interval.
-		head := state.Scope.SeqE
-		entries, err := a.tape.Range(a.tapeContext(ctx), tv.EntryRange{SeqS: head, SeqE: head.Next()})
-		if err != nil {
-			a.execution.fenced = true
-			return err
-		}
-		if len(entries.Raw) == 1 && entries.Raw[0].GetKind() == te.EntryAssistant && entries.Raw[0].GetSummary() == answer {
-			r.Publication = &anchor.Publication{Summary: answer, SourceHead: head.String(), Covers: []*pb.EntryRange{{SeqS: head.String(), SeqE: head.Next().String()}}}
-		}
 	}
+
 	if err := a.appendAnchor(ctx, r); err != nil {
 		return err
 	}
@@ -232,14 +227,4 @@ func (a *Anra) finish(answer string, runErr error) error {
 		}
 	}
 	return nil
-}
-
-// Keep the repeated summary and payload within the existing exported-entry limit.
-// Oversized answers still complete; they simply do not become publications.
-func publishableAnswer(answer string) bool {
-	if len(answer) > 2048 {
-		return false
-	}
-	encoded, err := json.Marshal(answer)
-	return err == nil && len(encoded) <= 3072
 }

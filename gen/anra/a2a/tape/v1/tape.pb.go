@@ -319,28 +319,31 @@ func (x *Decision) GetView() *View {
 	return nil
 }
 
-type AnchorRef struct {
+// TapeView identifies an immutable, lender-selected context window, without a
+// grant. Its head is the closing anchor; scope excludes that control entry.
+type TapeView struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Source        *Source                `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	Seq           string                 `protobuf:"bytes,2,opt,name=seq,proto3" json:"seq,omitempty"`
+	SnapshotHead  string                 `protobuf:"bytes,2,opt,name=snapshot_head,json=snapshotHead,proto3" json:"snapshot_head,omitempty"`
+	Scope         *EntryRange            `protobuf:"bytes,3,opt,name=scope,proto3" json:"scope,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *AnchorRef) Reset() {
-	*x = AnchorRef{}
+func (x *TapeView) Reset() {
+	*x = TapeView{}
 	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *AnchorRef) String() string {
+func (x *TapeView) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*AnchorRef) ProtoMessage() {}
+func (*TapeView) ProtoMessage() {}
 
-func (x *AnchorRef) ProtoReflect() protoreflect.Message {
+func (x *TapeView) ProtoReflect() protoreflect.Message {
 	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -352,32 +355,41 @@ func (x *AnchorRef) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use AnchorRef.ProtoReflect.Descriptor instead.
-func (*AnchorRef) Descriptor() ([]byte, []int) {
+// Deprecated: Use TapeView.ProtoReflect.Descriptor instead.
+func (*TapeView) Descriptor() ([]byte, []int) {
 	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *AnchorRef) GetSource() *Source {
+func (x *TapeView) GetSource() *Source {
 	if x != nil {
 		return x.Source
 	}
 	return nil
 }
 
-func (x *AnchorRef) GetSeq() string {
+func (x *TapeView) GetSnapshotHead() string {
 	if x != nil {
-		return x.Seq
+		return x.SnapshotHead
 	}
 	return ""
 }
 
+func (x *TapeView) GetScope() *EntryRange {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
 type BorrowRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Purpose       string                 `protobuf:"bytes,2,opt,name=purpose,proto3" json:"purpose,omitempty"`
-	Query         string                 `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
-	Bounds        *EntryRange            `protobuf:"bytes,4,opt,name=bounds,proto3" json:"bounds,omitempty"`
-	Publication   *AnchorRef             `protobuf:"bytes,5,opt,name=publication,proto3" json:"publication,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Purpose   string                 `protobuf:"bytes,2,opt,name=purpose,proto3" json:"purpose,omitempty"`
+	Query     string                 `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
+	Bounds    *EntryRange            `protobuf:"bytes,4,opt,name=bounds,proto3" json:"bounds,omitempty"`
+	// Optional exact snapshot for protocol clients. Model tools leave selection
+	// to the lender. A reference never transfers another requester's grant.
+	View          *TapeView `protobuf:"bytes,5,opt,name=view,proto3" json:"view,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -440,9 +452,9 @@ func (x *BorrowRequest) GetBounds() *EntryRange {
 	return nil
 }
 
-func (x *BorrowRequest) GetPublication() *AnchorRef {
+func (x *BorrowRequest) GetView() *TapeView {
 	if x != nil {
-		return x.Publication
+		return x.View
 	}
 	return nil
 }
@@ -1005,10 +1017,12 @@ const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\x0e2 .anra.a2a.tape.v1.DecisionStatusB\n" +
 	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06status\x12*\n" +
 	"\x04view\x18\x03 \x01(\v2\x16.anra.a2a.tape.v1.ViewR\x04view:x\xbaHu\x1as\n" +
-	"\x16decision.view_presence\x123view must be present exactly when status is granted\x1a$(this.status == 1) == has(this.view)\"m\n" +
-	"\tAnchorRef\x128\n" +
-	"\x06source\x18\x01 \x01(\v2\x18.anra.a2a.tape.v1.SourceB\x06\xbaH\x03\xc8\x01\x01R\x06source\x12&\n" +
-	"\x03seq\x18\x02 \x01(\tB\x14\xbaH\x11r\x0f2\r^[1-9][0-9]*$R\x03seq\"\xf7\x01\n" +
+	"\x16decision.view_presence\x123view must be present exactly when status is granted\x1a$(this.status == 1) == has(this.view)\"\xb4\x02\n" +
+	"\bTapeView\x128\n" +
+	"\x06source\x18\x01 \x01(\v2\x18.anra.a2a.tape.v1.SourceB\x06\xbaH\x03\xc8\x01\x01R\x06source\x129\n" +
+	"\rsnapshot_head\x18\x02 \x01(\tB\x14\xbaH\x11r\x0f2\r^[1-9][0-9]*$R\fsnapshotHead\x12:\n" +
+	"\x05scope\x18\x03 \x01(\v2\x1c.anra.a2a.tape.v1.EntryRangeB\x06\xbaH\x03\xc8\x01\x01R\x05scope:w\xbaHt\x1ar\n" +
+	"\x19tape_view.committed_scope\x12-scope must end at the committed snapshot head\x1a&this.scope.seq_e == this.snapshot_head\"\xe8\x01\n" +
 	"\rBorrowRequest\x12)\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tB\n" +
@@ -1017,8 +1031,8 @@ const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\xbaH\ar\x05 \x01(\x80@R\apurpose\x12 \n" +
 	"\x05query\x18\x03 \x01(\tB\n" +
 	"\xbaH\ar\x05 \x01(\x80@R\x05query\x124\n" +
-	"\x06bounds\x18\x04 \x01(\v2\x1c.anra.a2a.tape.v1.EntryRangeR\x06bounds\x12=\n" +
-	"\vpublication\x18\x05 \x01(\v2\x1b.anra.a2a.tape.v1.AnchorRefR\vpublication\"P\n" +
+	"\x06bounds\x18\x04 \x01(\v2\x1c.anra.a2a.tape.v1.EntryRangeR\x06bounds\x12.\n" +
+	"\x04view\x18\x05 \x01(\v2\x1a.anra.a2a.tape.v1.TapeViewR\x04view\"P\n" +
 	"\x0eBorrowResponse\x12>\n" +
 	"\bdecision\x18\x01 \x01(\v2\x1a.anra.a2a.tape.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"7\n" +
 	"\n" +
@@ -1086,7 +1100,7 @@ var file_anra_a2a_tape_v1_tape_proto_goTypes = []any{
 	(*EntryRange)(nil),            // 2: anra.a2a.tape.v1.EntryRange
 	(*View)(nil),                  // 3: anra.a2a.tape.v1.View
 	(*Decision)(nil),              // 4: anra.a2a.tape.v1.Decision
-	(*AnchorRef)(nil),             // 5: anra.a2a.tape.v1.AnchorRef
+	(*TapeView)(nil),              // 5: anra.a2a.tape.v1.TapeView
 	(*BorrowRequest)(nil),         // 6: anra.a2a.tape.v1.BorrowRequest
 	(*BorrowResponse)(nil),        // 7: anra.a2a.tape.v1.BorrowResponse
 	(*GetRequest)(nil),            // 8: anra.a2a.tape.v1.GetRequest
@@ -1106,29 +1120,30 @@ var file_anra_a2a_tape_v1_tape_proto_depIdxs = []int32{
 	17, // 2: anra.a2a.tape.v1.View.expires_at:type_name -> google.protobuf.Timestamp
 	0,  // 3: anra.a2a.tape.v1.Decision.status:type_name -> anra.a2a.tape.v1.DecisionStatus
 	3,  // 4: anra.a2a.tape.v1.Decision.view:type_name -> anra.a2a.tape.v1.View
-	1,  // 5: anra.a2a.tape.v1.AnchorRef.source:type_name -> anra.a2a.tape.v1.Source
-	2,  // 6: anra.a2a.tape.v1.BorrowRequest.bounds:type_name -> anra.a2a.tape.v1.EntryRange
-	5,  // 7: anra.a2a.tape.v1.BorrowRequest.publication:type_name -> anra.a2a.tape.v1.AnchorRef
-	4,  // 8: anra.a2a.tape.v1.BorrowResponse.decision:type_name -> anra.a2a.tape.v1.Decision
-	4,  // 9: anra.a2a.tape.v1.GetResponse.decision:type_name -> anra.a2a.tape.v1.Decision
-	17, // 10: anra.a2a.tape.v1.ExportedEntry.timestamp:type_name -> google.protobuf.Timestamp
-	11, // 11: anra.a2a.tape.v1.ExportedEntry.payload:type_name -> anra.a2a.tape.v1.Payload
-	1,  // 12: anra.a2a.tape.v1.Page.source:type_name -> anra.a2a.tape.v1.Source
-	12, // 13: anra.a2a.tape.v1.Page.entries:type_name -> anra.a2a.tape.v1.ExportedEntry
-	13, // 14: anra.a2a.tape.v1.ReadResponse.page:type_name -> anra.a2a.tape.v1.Page
-	6,  // 15: anra.a2a.tape.v1.TapeViewService.Borrow:input_type -> anra.a2a.tape.v1.BorrowRequest
-	8,  // 16: anra.a2a.tape.v1.TapeViewService.Get:input_type -> anra.a2a.tape.v1.GetRequest
-	10, // 17: anra.a2a.tape.v1.TapeViewService.Read:input_type -> anra.a2a.tape.v1.ReadRequest
-	15, // 18: anra.a2a.tape.v1.TapeViewService.Release:input_type -> anra.a2a.tape.v1.ReleaseRequest
-	7,  // 19: anra.a2a.tape.v1.TapeViewService.Borrow:output_type -> anra.a2a.tape.v1.BorrowResponse
-	9,  // 20: anra.a2a.tape.v1.TapeViewService.Get:output_type -> anra.a2a.tape.v1.GetResponse
-	14, // 21: anra.a2a.tape.v1.TapeViewService.Read:output_type -> anra.a2a.tape.v1.ReadResponse
-	16, // 22: anra.a2a.tape.v1.TapeViewService.Release:output_type -> anra.a2a.tape.v1.ReleaseResponse
-	19, // [19:23] is the sub-list for method output_type
-	15, // [15:19] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	1,  // 5: anra.a2a.tape.v1.TapeView.source:type_name -> anra.a2a.tape.v1.Source
+	2,  // 6: anra.a2a.tape.v1.TapeView.scope:type_name -> anra.a2a.tape.v1.EntryRange
+	2,  // 7: anra.a2a.tape.v1.BorrowRequest.bounds:type_name -> anra.a2a.tape.v1.EntryRange
+	5,  // 8: anra.a2a.tape.v1.BorrowRequest.view:type_name -> anra.a2a.tape.v1.TapeView
+	4,  // 9: anra.a2a.tape.v1.BorrowResponse.decision:type_name -> anra.a2a.tape.v1.Decision
+	4,  // 10: anra.a2a.tape.v1.GetResponse.decision:type_name -> anra.a2a.tape.v1.Decision
+	17, // 11: anra.a2a.tape.v1.ExportedEntry.timestamp:type_name -> google.protobuf.Timestamp
+	11, // 12: anra.a2a.tape.v1.ExportedEntry.payload:type_name -> anra.a2a.tape.v1.Payload
+	1,  // 13: anra.a2a.tape.v1.Page.source:type_name -> anra.a2a.tape.v1.Source
+	12, // 14: anra.a2a.tape.v1.Page.entries:type_name -> anra.a2a.tape.v1.ExportedEntry
+	13, // 15: anra.a2a.tape.v1.ReadResponse.page:type_name -> anra.a2a.tape.v1.Page
+	6,  // 16: anra.a2a.tape.v1.TapeViewService.Borrow:input_type -> anra.a2a.tape.v1.BorrowRequest
+	8,  // 17: anra.a2a.tape.v1.TapeViewService.Get:input_type -> anra.a2a.tape.v1.GetRequest
+	10, // 18: anra.a2a.tape.v1.TapeViewService.Read:input_type -> anra.a2a.tape.v1.ReadRequest
+	15, // 19: anra.a2a.tape.v1.TapeViewService.Release:input_type -> anra.a2a.tape.v1.ReleaseRequest
+	7,  // 20: anra.a2a.tape.v1.TapeViewService.Borrow:output_type -> anra.a2a.tape.v1.BorrowResponse
+	9,  // 21: anra.a2a.tape.v1.TapeViewService.Get:output_type -> anra.a2a.tape.v1.GetResponse
+	14, // 22: anra.a2a.tape.v1.TapeViewService.Read:output_type -> anra.a2a.tape.v1.ReadResponse
+	16, // 23: anra.a2a.tape.v1.TapeViewService.Release:output_type -> anra.a2a.tape.v1.ReleaseResponse
+	20, // [20:24] is the sub-list for method output_type
+	16, // [16:20] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_anra_a2a_tape_v1_tape_proto_init() }

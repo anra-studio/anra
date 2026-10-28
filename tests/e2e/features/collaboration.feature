@@ -1,6 +1,6 @@
 Feature: Anchor-backed nonblocking peer collaboration
   Reasoning owns one tape invocation at a time. BUSY is an unaccepted request,
-  while immutable permitted publications remain independently borrowable.
+  while immutable permitted views remain independently borrowable.
 
   Scenario: Collaboration metadata uses generated ProtoJSON over standard A2A
     Given a collaboration agent
@@ -12,33 +12,38 @@ Feature: Anchor-backed nonblocking peer collaboration
     Then collaboration rejects request metadata with <problem> before reasoning
 
     Examples:
-      | problem              |
-      | missing root         |
-      | oversized root       |
-      | missing deadline     |
-      | invalid deadline     |
-      | empty ancestor       |
-      | oversized ancestor   |
-      | excessive context    |
-      | malformed context    |
-      | unknown field        |
+      | problem                      |
+      | missing root                 |
+      | oversized root               |
+      | missing deadline             |
+      | invalid deadline             |
+      | empty ancestor               |
+      | oversized ancestor           |
+      | excessive context            |
+      | malformed context            |
+      | missing context scope        |
+      | reversed context scope       |
+      | uncommitted context boundary |
+      | unknown field                |
 
   Scenario Outline: Invalid response metadata is rejected through the A2A client
     Given a collaboration agent
     Then the client rejects response metadata with <problem>
 
     Examples:
-      | problem                    |
-      | unspecified status         |
-      | unknown status             |
-      | unknown retry              |
-      | completed retry hint       |
-      | completed publication      |
-      | malformed busy publication |
-      | answer in metadata         |
-      | empty completed answer     |
-      | local suppression status   |
-      | legacy lowercase status    |
+      | problem                   |
+      | unspecified status        |
+      | unknown status            |
+      | unknown retry             |
+      | completed retry hint      |
+      | completed view            |
+      | malformed busy view       |
+      | missing busy scope        |
+      | uncommitted busy boundary |
+      | answer in metadata        |
+      | empty completed answer    |
+      | local suppression status  |
+      | legacy lowercase status   |
 
   Scenario: Only one simultaneous request enters reasoning
     Given a collaboration agent
@@ -49,36 +54,40 @@ Feature: Anchor-backed nonblocking peer collaboration
     And Alice is held inside its model call
     When Bob asks the occupied Alice for reasoning
     Then the response is BUSY without another invocation or model call
-    And BUSY reveals no publication or private control fields
+    And BUSY reveals no view or private control fields
     And a guessed reference cannot obtain private or control entries
 
-  Scenario: Completed answers publish by default and can be borrowed while the owner thinks
+  Scenario: Completed context windows can be borrowed while the owner thinks
     Given a collaboration agent
     And Alice has completed a shareable answer
     And Alice is held inside its model call
     When Bob asks the occupied Alice for reasoning
     Then the response is BUSY without another invocation or model call
-    When Bob borrows the BUSY publication while Alice remains occupied
-    Then the publication grant contains exactly the immutable anchor projection
+    When Bob borrows the BUSY view while Alice remains occupied
+    Then the view grant contains exactly the completed context window
     And another trusted requester gets its own grant but cannot read or release Bob's grant
-    And publication requests reject a changed reference and incompatible bounds
-    When Alice finishes and publishes a newer answer
+    And view requests reject a changed reference and incompatible bounds
+    When Alice finishes and commits a newer context window
     And Alice restarts with the same source and the grant remains readable
-    Then the publication grant contains exactly the immutable anchor projection
+    Then the view grant contains exactly the completed context window
 
-  Scenario Outline: Publication grants obey their terminal permission rules
+  Scenario Outline: View grants obey their terminal permission rules
     Given a collaboration agent
     And Alice has completed a shareable answer
     And Alice is held inside its model call
     When Bob asks the occupied Alice for reasoning
-    And Bob borrows the BUSY publication while Alice remains occupied
-    Then the publication grant is ended by <termination>
+    And Bob borrows the BUSY view while Alice remains occupied
+    Then the view grant is ended by <termination>
 
     Examples:
       | termination |
       | release     |
       | revocation  |
       | expiry      |
+
+  Scenario: A TapeView retains the completed tool conversation and long final answer
+    Given a collaboration agent
+    Then Bob borrows Alice's completed tool conversation as a TapeView while she thinks
 
   Scenario: An ancestor callback uses BUSY and borrowed findings to finish
     Given a collaboration agent
@@ -116,12 +125,12 @@ Feature: Anchor-backed nonblocking peer collaboration
     Given a collaboration agent
     Then an expired delegation deadline rejects reasoning before model or peer calls
 
-  Scenario: Publication borrowing requires the advertised version
+  Scenario: View borrowing requires the advertised version
     Given a collaboration agent
     And Alice has completed a shareable answer
-    Then legacy lenders cannot silently accept publication references
+    Then legacy lenders cannot silently accept view references
 
-  Scenario: Killing a process preserves publications and recovers its open invocation
+  Scenario: Killing a process preserves views and recovers its open invocation
     Given a running team Peer directory
     And team agents "alice" and "bob" are serving
     And Alice is interrupted while reasoning after a published answer
@@ -131,7 +140,7 @@ Feature: Anchor-backed nonblocking peer collaboration
     And the interrupted tape retains an unmatched tool call and state delta
     And its presence eventually becomes unknown
     And I restart team agent "alice"
-    Then the recovered agent keeps its source, publication, grant, and physical history
+    Then the recovered agent keeps its source, view, grant, and physical history
     When I stop the team agents
     Then exactly one abandoned close excludes the unfinished invocation
 
@@ -161,16 +170,16 @@ Feature: Anchor-backed nonblocking peer collaboration
     Given a collaboration agent
     Then shutdown drains active reasoning before storage closes
 
-  Scenario: Supplied publication references are borrowed under the recipient's identity
+  Scenario: Supplied view references are borrowed under the recipient's identity
     Given a collaboration agent
     And Alice has completed a shareable answer
     And Alice is held inside its model call
     Then Bob borrows supplied context without reentering Alice
 
-  Scenario Outline: Mismatched grants cannot expand a publication reference
+  Scenario Outline: Mismatched grants cannot expand a view reference
     Given a collaboration agent
     And Alice has completed a shareable answer
-    Then a client rejects a publication grant with mismatched <provenance>
+    Then a client rejects a view grant with mismatched <provenance>
 
     Examples:
       | provenance |

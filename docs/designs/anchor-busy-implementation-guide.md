@@ -1,6 +1,11 @@
 # Implementing anchor-backed BUSY collaboration
 
-Status: implementation reference for [issue #5](https://github.com/scbizu/anra/issues/5).
+> Historical publication design. Superseded by the implemented
+> [anchor-backed TapeView specification](anchor-tape-view-collaboration-spec.md).
+> Current code lends committed conversation windows; it has no publication
+> records, publication exporter, or intermediate publication tool.
+
+Historical implementation reference for [issue #5](https://github.com/scbizu/anra/issues/5).
 The [technical specification](anchor-busy-collaboration-spec.md) defines behavior;
 this guide maps it to the inspected Anra code. Function/type names proposed here
 are design sketches; consult the implemented APIs for exact signatures.

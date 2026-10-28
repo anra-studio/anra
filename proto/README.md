@@ -8,7 +8,7 @@ Anra discovery resolves typed Peer metadata.
 
 `anra/a2a/collaboration/v1/collaboration.proto` defines the delegation and
 response metadata for `urn:anra:a2a:collaboration:v1`. It imports TapeView's
-`AnchorRef` and adds no RPC service. These generated messages travel as ProtoJSON
+`TapeView` and adds no RPC service. These generated messages travel as ProtoJSON
 objects in the official A2A Message's extension metadata. Answer text remains in
 standard A2A text parts.
 
@@ -85,8 +85,8 @@ grant journal. `Resolve` and `Revoke` remain lender-local methods. A caller's
 identity is never accepted from protobuf request fields.
 
 Sequence fields are arbitrary-precision canonical decimal strings, including
-`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. `BorrowRequest.publication` optionally pins an `AnchorRef`
-(source plus positive sequence); clients require `publicationBorrowVersion: 1`
+`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. `BorrowRequest.view` optionally pins an `TapeView`
+(source, closing-anchor snapshot head, and exact context scope); clients require `viewBorrowVersion: 1`
 in the card before sending it and verify exact grant provenance before reading. ProtoJSON
 range fields are `seqS` and `seqE`. Local domain/journal JSON uses `SeqS` and
 `SeqE`; it is independent of the protobuf wire format. Status is an enum with an invalid unspecified value.
@@ -136,10 +136,10 @@ state: it creates roots, caps deadlines, and forks the path for each edge.
 Generated metadata stays private to the model;
 transport adapters receive owned snapshots.
 
-`ResponseMetadata` defines `Status`, `RetryHint`, and an optional publication.
-Only `STATUS_BUSY` may carry publication or retry hints. Status must be a defined,
+`ResponseMetadata` defines `Status`, `RetryHint`, and an optional TapeView.
+Only `STATUS_BUSY` may carry a view or retry hints. Status must be a defined,
 nonzero enum value. Canonical ProtoJSON uses `STATUS_COMPLETED`, `STATUS_BUSY`,
-and `RETRY_HINT_AFTER_NEW_PUBLICATION`. Unknown fields,
+and `RETRY_HINT_AFTER_NEW_VIEW`. Unknown fields,
 unknown enum values, invalid references, and invalid field combinations are
 rejected. There is no decoder for the former lowercase wire statuses.
 

@@ -32,7 +32,7 @@ type Delegator struct {
 
 type busyPeers struct {
 	mu    sync.Mutex
-	peers map[string]*pb.AnchorRef
+	peers map[string]*pb.TapeView
 }
 
 // Accept validates inbound metadata and records an owned copy in the context.
@@ -70,7 +70,7 @@ func FromContext(ctx context.Context) *Delegator {
 }
 
 func newDelegator(metadata *cp.DelegationMetadata) *Delegator {
-	return &Delegator{metadata: metadata, busy: &busyPeers{peers: map[string]*pb.AnchorRef{}}}
+	return &Delegator{metadata: metadata, busy: &busyPeers{peers: map[string]*pb.TapeView{}}}
 }
 
 func boundedDeadline(ctx context.Context) time.Time {
@@ -89,7 +89,7 @@ func (d *Delegator) Metadata() *cp.DelegationMetadata {
 // Next prepares one edge without modifying the current or any sibling path.
 // No network call is permitted when the peer has unchanged BUSY context or the
 // deadline has expired. References are hints, never transferable grants.
-func (d *Delegator) Next(ctx context.Context, self, peer string, refs []*pb.AnchorRef) (context.Context, error) {
+func (d *Delegator) Next(ctx context.Context, self, peer string, refs []*pb.TapeView) (context.Context, error) {
 	d.busy.mu.Lock()
 	_, seen := d.busy.peers[peer]
 	d.busy.mu.Unlock()
@@ -109,7 +109,7 @@ func (d *Delegator) Next(ctx context.Context, self, peer string, refs []*pb.Anch
 			if ref == nil {
 				return ctx, errors.New("delegator: nil context reference")
 			}
-			next.Context = append(next.Context, proto.Clone(ref).(*pb.AnchorRef))
+			next.Context = append(next.Context, proto.Clone(ref).(*pb.TapeView))
 		}
 	}
 	next.Ancestors = append(next.Ancestors, self)
@@ -120,15 +120,15 @@ func (d *Delegator) Next(ctx context.Context, self, peer string, refs []*pb.Anch
 	return context.WithValue(ctx, contextKey{}, edge), nil
 }
 
-// Observe records a validated peer outcome. A BUSY publication is copied so
+// Observe records a validated peer outcome. A BUSY view is copied so
 // later changes to transport results cannot change invocation-local memory.
 func (d *Delegator) Observe(peer string, response *cp.ResponseMetadata) {
 	if response.GetStatus() != cp.Status_STATUS_BUSY {
 		return
 	}
-	var ref *pb.AnchorRef
-	if response.Publication != nil {
-		ref = proto.Clone(response.Publication).(*pb.AnchorRef)
+	var ref *pb.TapeView
+	if response.View != nil {
+		ref = proto.Clone(response.View).(*pb.TapeView)
 	}
 	d.busy.mu.Lock()
 	d.busy.peers[peer] = ref
@@ -151,7 +151,7 @@ func (d *Delegator) Borrowed(peer string, view *pb.View) {
 		delete(d.busy.peers, peer)
 		return
 	}
-	previous, previousErr := entry.ParseSeq(reported.Seq)
+	previous, previousErr := entry.ParseSeq(reported.SnapshotHead)
 	next, nextErr := entry.ParseSeq(view.SnapshotHead)
 	if previousErr == nil && nextErr == nil && next.Cmp(previous) > 0 {
 		delete(d.busy.peers, peer)

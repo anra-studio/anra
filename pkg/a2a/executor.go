@@ -22,11 +22,11 @@ type Runtime interface {
 
 // BusyError is the error a Runtime returns when it declines a request because
 // it is already reasoning. The executor reports it as a BUSY outcome rather
-// than a failure. BusyPublication is the latest published reference the caller
+// than a failure. BusyView is the latest committed TapeView the caller
 // may ask to borrow, or nil.
 type BusyError interface {
 	error
-	BusyPublication() *pb.AnchorRef
+	BusyView() *pb.TapeView
 }
 
 // NewExecutor bridges text-only A2A messages to Anra's tape-backed runtime and
@@ -115,15 +115,15 @@ func requestDelegation(ctx context.Context, m *sdk.Message) (context.Context, bo
 
 // runLocal runs the request and describes the outcome. A busy agent is not an
 // error: it answers with text saying the request was not accepted and a
-// publication hint, which the caller decides whether to expose.
+// view hint, which the caller decides whether to expose.
 func runLocal(ctx context.Context, runtime Runtime, input string) (*cp.ResponseMetadata, string, error) {
 	output, err := runtime.Run(ctx, input)
 	var busy BusyError
 	if errors.As(err, &busy) {
 		return &cp.ResponseMetadata{
-			Status:      cp.Status_STATUS_BUSY,
-			Retry:       cp.RetryHint_RETRY_HINT_AFTER_NEW_PUBLICATION,
-			Publication: busy.BusyPublication(),
+			Status: cp.Status_STATUS_BUSY,
+			Retry:  cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW,
+			View:   busy.BusyView(),
 		}, "Agent is busy; request was not accepted.", nil
 	}
 	if err != nil {

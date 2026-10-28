@@ -75,4 +75,4 @@ Tape storage, View handling, and memory checkpointing/retrieval belong to
 tape-go. Its decision extension can be configured at the storage boundary;
 Anra does not duplicate its memory policy or index.
 
-See [A2A integration](a2a-integration.md) for the protocol and permission model.
+See [A2A adapter](a2a-adapter.md) for the protocol and permission model.

@@ -1,7 +1,7 @@
 # A2A Tape View Borrowing Extension
 
 Status: v1 implemented in `pkg/a2a`; RPC names and schemas below are a project
-extension, not A2A core methods. See [integration and limits](../a2a-integration.md).
+extension, not A2A core methods. See [integration and limits](../a2a-adapter.md).
 
 ## Project ownership
 
@@ -204,7 +204,7 @@ projection. Already delivered context cannot be recalled by revocation.
 
 Responses distinguish pending decisions, denials, invalid params, request-ID
 conflicts, unavailable views, and storage failures. Concrete extension error
-codes and payload size/page limits are fixed in the [integration contract](../a2a-integration.md). Errors
+codes and payload size/page limits are fixed in the [integration contract](../a2a-adapter.md). Errors
 for unauthorized view IDs must not reveal another requester's grant details.
 
 ## Integration and compatibility

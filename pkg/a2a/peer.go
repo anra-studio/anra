@@ -27,7 +27,7 @@ func Card(value *pv.Peer) (*sdk.AgentCard, error) {
 	}
 	AdvertiseCollaboration(card)
 	if peermodel.HasSkill(value, peermodel.BorrowContext) {
-		if err := AdvertisePublications(card, value.Address+ViewPath); err != nil {
+		if err := AdvertiseViews(card, value.Address+ViewPath); err != nil {
 			return nil, err
 		}
 	}
@@ -48,5 +48,5 @@ func NewPeerClient(h *http.Client, value *pv.Peer) (*Client, error) {
 		return nil, ErrInactive
 	}
 	transport := connecthttp.NewTransport(h, value.Address, connecthttp.WithReadMaxBytes(MaxBodyBytes), connecthttp.WithSendMaxBytes(MaxBodyBytes))
-	return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)), publicationVersion: true}, nil
+	return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)), viewVersion: true}, nil
 }

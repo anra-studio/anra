@@ -340,7 +340,7 @@ Peer does not establish that its address is currently usable.
 
 The adapter owns A2A-specific fields, transport names, fixed route paths and
 extension versions. Its mapping must preserve the current collaboration and
-publication-borrowing contracts. Skill metadata alone cannot infer protocol
+committed TapeView borrowing contracts. Skill metadata alone cannot infer protocol
 version support; adapter code declares the versions it implements.
 
 An internal registration sends the Peer directly. When registering with an
@@ -352,7 +352,7 @@ Core A2A messaging continues to use the official SDK. TapeView continues to use
 its generated Connect interface. Connect derives RPC paths from Protobuf service
 and method names; adapters combine those paths with the Peer address. See
 [Connect routing](https://connectrpc.com/docs/go/routing/) and the current
-[A2A integration](a2a-integration.md).
+[A2A adapter](a2a-adapter.md).
 
 RPC reflection may expose the registry and TapeView schemas for debugging tools.
 It describes an already located RPC endpoint. Peer lookup, skills, runtime

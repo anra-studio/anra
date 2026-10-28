@@ -28,7 +28,7 @@ import (
 )
 
 func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
-	var ref *pb.AnchorRef
+	var ref *pb.TapeView
 	var grant *pb.Decision
 	var card *sdk.AgentCard
 	var stopped chan error
@@ -60,16 +60,16 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 		if err != nil {
 			return err
 		}
-		if result.Status != cp.Status_STATUS_BUSY || result.Publication == nil {
+		if result.Status != cp.Status_STATUS_BUSY || result.View == nil {
 			return fmt.Errorf("expected busy published source: %+v", result)
 		}
-		ref = result.Publication
+		ref = result.View
 		card = client.Card
 		views, err := a2a.NewClient(a2a.TrustedHTTPClient("bob"), card)
 		if err != nil {
 			return err
 		}
-		grant, err = views.Borrow(c.s.ctx, &pb.BorrowRequest{RequestId: "crash-grant", Purpose: "resume research", Query: "published answer", Publication: ref})
+		grant, err = views.Borrow(c.s.ctx, &pb.BorrowRequest{RequestId: "crash-grant", Purpose: "resume research", Query: "published answer", View: ref})
 		if err != nil {
 			return err
 		}
@@ -108,7 +108,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 		_, err = tape.Store(ctx, entry.CustomEntry{Entry: entry.NewEntry(entry.WithEntryOwner("alice"), entry.WithEntryKind(entry.EntryToolCall)), Extensions: map[string]any{"adk:event": string(encoded)}})
 		return err
 	})
-	sc.Step(`^the recovered agent keeps its source, publication, grant, and physical history$`, func() error {
+	sc.Step(`^the recovered agent keeps its source, view, grant, and physical history$`, func() error {
 		c.execute("ask", "--agent", "alice", "--config", c.configPath(), "verify recovered history")
 		if c.err != nil {
 			return fmt.Errorf("recovered model failed: %s %v", c.output, c.err)
@@ -128,8 +128,8 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 		if err != nil {
 			return err
 		}
-		if len(pages) != 1 || len(pages[0].Entries) != 1 || pages[0].Entries[0].Summary != "alice: publish before crash" {
-			return errors.New("precrash publication changed")
+		if len(pages) != 1 || len(pages[0].Entries) != 2 || pages[0].Entries[0].Summary != "publish before crash" || pages[0].Entries[1].Summary != "alice: publish before crash" {
+			return errors.New("precrash view changed")
 		}
 		return nil
 	})

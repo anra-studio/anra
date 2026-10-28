@@ -1,8 +1,34 @@
-# Peer A2A and tape borrowing
+# A2A adapter
 
-Anra owns peer communication and context sharing. Tape-go remains the local
-append-only storage/runtime foundation. Each peer has its own runtime, owner,
-and tape; there is no coordinator requirement or shared team tape.
+The A2A adapter exposes Anra peers through A2A messages, Agent Cards, and
+protocol extensions. Anra owns peer identity, skills, runtime behavior, and
+context-sharing rules. Tape-go remains the local append-only storage/runtime
+foundation. Each peer has its own runtime, owner, and tape.
+
+## Adapter boundary
+
+The registry stores canonical `Peer` metadata: `id`, `description`, `address`,
+and repeated `skill`, with observed presence recorded separately. The adapter
+generates an Agent Card from that metadata when publishing or constructing an
+A2A client. Registration does not translate a Peer into an Agent Card or store
+one in the registry. See the [registry contract](registry.md).
+
+| Concern | Owner | A2A adapter responsibility |
+| --- | --- | --- |
+| Peer identity, address, and skills | Peer model | Translate `Peer` into an Agent Card with `a2a.Card` |
+| Registration, discovery, and presence | Registry and discovery packages | Consume resolved Peer metadata to construct protocol clients |
+| Reasoning and invocation admission | Agent runtime | Translate A2A messages into runtime calls and results into responses |
+| Delegation and collaboration progress | Delegator model | Encode and decode model-owned metadata in A2A extensions |
+| Context selection, windows, and grants | Anra context-sharing logic | Expose borrowing operations through the TapeView extension |
+
+Protocol paths, SDK types, extension URIs, and wire encoding belong at this
+boundary. Reusable runtime and context-sharing rules should be callable by
+other hosts or adapters, including a web UI.
+
+The current `pkg/a2a` package also contains the borrowing `Service`, policies,
+and grant lifecycle logic. It therefore contains more than adapter code today.
+Separating those reusable rules from protocol handling is a remaining package
+refactor; the APIs below describe the current implementation.
 
 `pkg/a2a` uses the official `a2a-go/v2 v2.5.0` SDK for core A2A JSON-RPC. The
 optional `urn:anra:a2a:tape-view:v1` extension uses a generated Connect service
@@ -10,7 +36,26 @@ advertised as a single endpoint in the Agent Card. Its protobuf service and
 generated Connect v2 bindings live under `proto/` and `gen/`. Borrowing does not
 create A2A tasks.
 
-## Lender setup
+## Messaging
+
+Core text communication uses the official `a2aclient.NewFromCard`. Anra callers
+use `NewMessageClient(ctx, httpClient, peer)` to construct that client from
+canonical Peer metadata; external callers holding an Agent Card use
+`NewMessageClientFromCard`.
+
+`NewExecutor` bridges text-only user messages to `Anra.Run` and emits direct
+agent Messages; non-text input and task continuation are rejected. Task-based
+executors and custom task stores can be supplied directly to `NewPeerHandler`
+through SDK interfaces. The historical tape-backed task persistence profile is
+not restored by this release. Core message IDs are not a durable runtime
+deduplication key; the borrowing extension's request IDs are.
+
+For a messaging-only server, `NewMessageHandler(card, core, a2a.TrustedPeerIdentity)`
+serves card discovery and caller-identified A2A endpoints without a borrowing
+service or grant journal. The CLI mounts both messaging and borrowing with
+`NewPeerHandler`.
+
+## Borrowing: lender setup
 
 Initialize the source tape under the lender's **local** owner using tape-go's
 bbolt backend, then configure a dedicated grant journal. `Config.Tape` is an
@@ -85,7 +130,7 @@ can be wrapped in `ScoreRanker{Scorer, Limit, MinScore}`: highest score, then
 highest confidence, then original candidate order. This local adapter seam can wrap tape-go's decision classifier; A2A permission
 policy remains in Anra.
 
-## Borrower setup and model consumption
+## Borrowing: borrower setup and model consumption
 
 Anra callers resolve typed Peer metadata and observed presence from the persistent
 registry. `NewMessageClient(ctx, httpClient, entry.Peer)` constructs the core
@@ -131,18 +176,6 @@ The lender resolves pending requests with the local `Service.Resolve` method.
 The borrower can release a grant with `Client.Release`; the lender can revoke it
 with `Service.Revoke`. Neither resolve nor revoke is a remote borrower RPC.
 The borrowing tool leaves the grant open until explicit release or expiry.
-
-Core text communication uses the official `a2aclient.NewFromCard`. `NewExecutor`
-bridges text-only user messages to `Anra.Run` and emits direct agent Messages;
-non-text input and task continuation are rejected. Task-based executors and
-custom task stores can be supplied directly to `NewPeerHandler` through SDK
-interfaces. The historical tape-backed task persistence profile is not restored
-by this release. Core message IDs are not a durable runtime deduplication key;
-the extension's request IDs are.
-
-For a messaging-only server, `NewMessageHandler(card, core, a2a.TrustedPeerIdentity)`
-serves the same discovery and caller-identified A2A endpoints without a borrowing
-service or grant journal. This is the handler used by [`anra serve`](cli.md).
 
 ## Wire contract and limits
 
@@ -291,7 +324,7 @@ References: [A2A extensions](https://a2a-protocol.org/latest/topics/extensions/)
 Client validation boundaries and the simplification experiments are recorded in
 [A2A client ablation](designs/a2a-client-ablation.md).
 
-## Nonblocking collaboration and published context
+## Nonblocking collaboration and committed TapeViews
 
 `a2a.AdvertiseCollaboration(card)` enables negotiation of
 `urn:anra:a2a:collaboration:v1` in message extensions and metadata.
@@ -299,7 +332,7 @@ Client validation boundaries and the simplification experiments are recorded in
 before using `Answer`. Its embedded generated `ResponseMetadata` uses the enums
 in `gen/anra/a2a/collaboration/v1`; `STATUS_BUSY` means no reasoning invocation
 was admitted. Generic
-A2A clients receive clear unaccepted text and no publication hint.
+A2A clients receive clear unaccepted text and no view hint.
 
 Delegation and response metadata are defined in
 `proto/anra/a2a/collaboration/v1/collaboration.proto` and carried as ProtoJSON
@@ -317,31 +350,31 @@ Delegation has no hop counter or ancestry-length limit. Deadline expiry and
 cancellation remain ordinary context errors; the encoded metadata size bound
 and local model-turn limit continue to apply.
 
-Use `a2a.AdvertisePublications(card, baseURL + a2a.ViewPath)` and configure
-`Service` with `Publications: runtime` and `Exporter: a2a.PublicationExporter{}`.
-The runtime resolves committed publications locally without acquiring reasoning
-admission. TapeView issues separate requester-bound grants for trusted peers.
-`Policy` remains available for legacy raw ranges; it is not
-required when `Publications` is configured. The CLI mounts both core messaging
-and borrowing with `NewPeerHandler`.
+Use `a2a.AdvertiseViews(card, baseURL + a2a.ViewPath)` and configure `Service`
+with `Views: runtime`. It defaults to `a2a.ContextExporter{}` for these windows.
+The runtime resolves committed TapeViews locally without acquiring reasoning
+admission. `Policy` remains available for separately configured range selection;
+it is not required when `Views` is configured. The CLI mounts messaging and
+borrowing with `NewPeerHandler`.
 
-The model-facing borrow tool accepts a peer, request ID, purpose, and query. The
-lender selects its latest eligible publication without entering reasoning. BUSY
-references are hints; the model does not supply a publication selector. Progress
-tracking uses the source and snapshot actually granted and read, so borrowing
-unchanged findings does not enable repeated reasoning requests.
+The model-facing borrow tool accepts a peer, request ID, purpose, and query.
+The lender selects its latest completed invocation's TapeView without entering
+reasoning. BUSY responses and incoming delegation context carry ungranted
+`TapeView` hints. Each recipient obtains its own requester-bound grant. Reading
+an unchanged snapshot does not enable another reasoning request in that invocation.
 
-The wire API retains optional `BorrowRequest.publication` (`AnchorRef`) for
-explicit snapshot requests, subject to the lender's validation. The
-card must advertise `publicationBorrowVersion: 1`. A publication at P yields
-`[P,P+1)` with snapshot P; the exported payload is
-`application/vnd.anra.published-context+json;version=1`. Its `sourceHead` and
-`covers` describe provenance and do not authorize reading those underlying raw
-entries. Clients reject a grant with a different source, range, or snapshot before
-reading. Existing text grants keep their original representation.
+Protocol clients can pin `BorrowRequest.view`, a generated `TapeView` containing
+`source`, `snapshotHead`, and `scope`. Cards advertise `viewBorrowVersion: 1`.
+For a start anchor S and successful close C, the scope is `[S+1,C)` and the
+snapshot head is C. The grant must match that exact source, scope, and head;
+clients reject substitutions before reading.
 
-The runtime publishes eligible final answers by default in the terminal anchor
-atomically with closing. No publication-sharing bootstrap option is required.
-Only the published projection is borrowable; coverage does not expose raw tape.
-The full lifecycle, recovery, and delegation contract is in the
-[technical specification](designs/anchor-busy-collaboration-spec.md).
+The window contains the completed user/model/tool conversation. Its exporter
+returns structured content as `application/vnd.anra.context-entry+json;version=1`,
+excluding thought parts, execution anchors, event metadata, arbitrary extensions,
+and state deltas. Tool content is borrowed context and never executed by reading.
+Closing an invocation does not copy its answer into a separate publication.
+Failure, cancellation, and abandonment preserve the preceding successful window.
+Grant expiry, release, revocation, idempotence, and recovery remain enforced by
+the TapeView service and journal. The lifecycle and implementation guide are in
+[the TapeView specification](designs/anchor-tape-view-collaboration-spec.md).

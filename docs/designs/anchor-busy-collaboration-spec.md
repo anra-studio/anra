@@ -1,6 +1,11 @@
 # Anchor-backed execution and peer collaboration
 
-Status: implemented for final-answer publication; tracked in [issue #5](https://github.com/scbizu/anra/issues/5).
+> Historical publication design. Superseded by the implemented
+> [anchor-backed TapeView specification](anchor-tape-view-collaboration-spec.md).
+> Current code lends committed conversation windows; it has no publication
+> records, publication exporter, or intermediate publication tool.
+
+Historical status: implemented for final-answer publication before TapeView replacement; tracked in [issue #5](https://github.com/scbizu/anra/issues/5).
 The optional intermediate `publish_context` tool is reserved for a later change.
 Read the [implementation guide](anchor-busy-implementation-guide.md) with this spec.
 
@@ -652,7 +657,7 @@ use, in accordance with `AGENTS.md`.
 - [Issue #5](https://github.com/scbizu/anra/issues/5)
 - [Implementation guide](anchor-busy-implementation-guide.md)
 - [Existing TapeView design](a2a-tape-view-extension-design.md)
-- [A2A integration](../a2a-integration.md)
+- [A2A adapter](../a2a-adapter.md)
 - [Testing policy](../testing.md)
 - Source seams: `pkg/agent/{agent,runtime,events,tools}.go`,
   `pkg/a2a/{executor,messaging,peer_tools,service,connect,http}.go`,

@@ -41,15 +41,15 @@ func (c *collaborationScenario) protobufRoundtrip() error {
 		return err
 	}
 	delegation := delegationFixture()
-	delegation.Context = []*pb.AnchorRef{c.originalRef}
+	delegation.Context = []*pb.TapeView{c.originalRef}
 	metadata, err := metadataObject(delegation)
 	if err != nil {
 		return err
 	}
 	for _, expected := range []cp.Status{cp.Status_STATUS_COMPLETED, cp.Status_STATUS_BUSY} {
-		var publication *pb.AnchorRef
+		var view *pb.TapeView
 		if expected == cp.Status_STATUS_BUSY {
-			publication, err = c.nodes["alice"].a.Publication(c.s.ctx, "bob", nil)
+			view, err = c.nodes["alice"].a.View(c.s.ctx, "bob", nil)
 			if err != nil {
 				return err
 			}
@@ -84,10 +84,10 @@ func (c *collaborationScenario) protobufRoundtrip() error {
 			return fmt.Errorf("response is not generated ProtoJSON: %s", wire)
 		}
 		if expected == cp.Status_STATUS_COMPLETED {
-			if reply.Parts[0].Text() != "answer: protobuf roundtrip" || response.Publication != nil || response.Retry != cp.RetryHint_RETRY_HINT_UNSPECIFIED {
+			if reply.Parts[0].Text() != "answer: protobuf roundtrip" || response.View != nil || response.Retry != cp.RetryHint_RETRY_HINT_UNSPECIFIED {
 				return fmt.Errorf("invalid completed response: %s", wire)
 			}
-		} else if response.Retry != cp.RetryHint_RETRY_HINT_AFTER_NEW_PUBLICATION || !proto.Equal(response.Publication, publication) || !strings.Contains(reply.Parts[0].Text(), "request was not accepted") {
+		} else if response.Retry != cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW || !proto.Equal(response.View, view) || !strings.Contains(reply.Parts[0].Text(), "request was not accepted") {
 			return fmt.Errorf("invalid busy response: %s", wire)
 		}
 	}
@@ -99,7 +99,7 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	if err != nil {
 		return err
 	}
-	ref := map[string]any{"source": map[string]any{"agentId": "alice", "tapeId": "source"}, "seq": "1"}
+	ref := map[string]any{"source": map[string]any{"agentId": "alice", "tapeId": "source"}, "snapshotHead": "3", "scope": map[string]any{"seqS": "1", "seqE": "3"}}
 	switch problem {
 	case "missing root":
 		delete(metadata, "rootRequestId")
@@ -116,7 +116,16 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	case "excessive context":
 		metadata["context"] = []any{ref, ref, ref, ref, ref, ref, ref, ref, ref}
 	case "malformed context":
-		ref["seq"] = "01"
+		ref["snapshotHead"] = "01"
+		metadata["context"] = []any{ref}
+	case "missing context scope":
+		delete(ref, "scope")
+		metadata["context"] = []any{ref}
+	case "reversed context scope":
+		ref["scope"] = map[string]any{"seqS": "3", "seqE": "1"}
+		metadata["context"] = []any{ref}
+	case "uncommitted context boundary":
+		ref["snapshotHead"] = "4"
 		metadata["context"] = []any{ref}
 	case "unknown field":
 		metadata["caller"] = "body-controlled-identity"
@@ -152,7 +161,7 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
 	metadata := map[string]any{"status": cp.Status_STATUS_COMPLETED.String()}
 	answer := "completed answer"
-	ref := map[string]any{"source": map[string]any{"agentId": "peer", "tapeId": "source"}, "seq": "1"}
+	ref := map[string]any{"source": map[string]any{"agentId": "peer", "tapeId": "source"}, "snapshotHead": "3", "scope": map[string]any{"seqS": "1", "seqE": "3"}}
 	switch problem {
 	case "unspecified status":
 		delete(metadata, "status")
@@ -162,13 +171,21 @@ func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
 		metadata["status"] = cp.Status_STATUS_BUSY.String()
 		metadata["retry"] = 99
 	case "completed retry hint":
-		metadata["retry"] = cp.RetryHint_RETRY_HINT_AFTER_NEW_PUBLICATION.String()
-	case "completed publication":
-		metadata["publication"] = ref
-	case "malformed busy publication":
+		metadata["retry"] = cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW.String()
+	case "completed view":
+		metadata["view"] = ref
+	case "malformed busy view":
 		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		ref["seq"] = "01"
-		metadata["publication"] = ref
+		ref["snapshotHead"] = "01"
+		metadata["view"] = ref
+	case "missing busy scope":
+		metadata["status"] = cp.Status_STATUS_BUSY.String()
+		delete(ref, "scope")
+		metadata["view"] = ref
+	case "uncommitted busy boundary":
+		metadata["status"] = cp.Status_STATUS_BUSY.String()
+		ref["snapshotHead"] = "4"
+		metadata["view"] = ref
 	case "answer in metadata":
 		metadata["answer"] = "answer belongs in A2A parts"
 	case "empty completed answer":

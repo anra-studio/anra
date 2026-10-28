@@ -29,7 +29,7 @@ func (n *Node) Serve(ctx context.Context, listener net.Listener, ready func(net.
 	}
 	metadata := &pv.Peer{Id: id, Description: "Anra tape-backed agent", Address: base, Skill: []*pv.Skill{
 		{Id: peermodel.Chat, Name: "Chat", Description: "Talk to this agent"},
-		{Id: peermodel.BorrowContext, Name: "Borrow context", Description: "Request a permitted completed publication"},
+		{Id: peermodel.BorrowContext, Name: "Borrow context", Description: "Request a permitted completed view"},
 	}}
 	card, err := a2a.Card(metadata)
 	if err != nil {
@@ -40,7 +40,7 @@ func (n *Node) Serve(ctx context.Context, listener net.Listener, ready func(net.
 	if err != nil {
 		return err
 	}
-	views, err := a2a.NewService(a2a.Config{Source: a.Source(), Owner: id, Tape: a.Tape(), JournalPath: filepath.Join(settings.DataDir, id+".grants.db"), Publications: a, Exporter: a2a.PublicationExporter{}})
+	views, err := a2a.NewService(a2a.Config{Source: a.Source(), Owner: id, Tape: a.Tape(), JournalPath: filepath.Join(settings.DataDir, id+".grants.db"), Views: a, Exporter: a2a.ContextExporter{}})
 	if err != nil {
 		return err
 	}

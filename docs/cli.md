@@ -173,18 +173,18 @@ counter, queue, or automatic retry.
 
 The built-in `borrow_peer_context` tool discovers a named peer's TapeView
 endpoint and sends `peer`, `requestId`, `purpose`, and `query`. The lender selects
-its latest eligible publication locally, including while busy. The model does
-not choose an anchor. Grants contain exactly that immutable anchor,
-with its original source and coverage. Borrowing works while the owner is busy.
-Incoming publication references are exposed by `discover_peers` as hints; the
-lender owns the borrow selection. Borrowing records the grant and returned provenance as a tool result on the borrower's
-tape. References never confer another agent's grant.
+a TapeView of its latest completed invocation, including while busy. The model
+does not choose a snapshot. Grants pin its source, exact scope, and closing anchor.
+Incoming TapeViews are exposed by `discover_peers` as ungranted hints; the lender
+owns selection. Borrowing records the grant and returned provenance as a tool
+result on the borrower's tape. References never confer another agent's grant.
 
-The agent lifecycle publishes eligible completed final answers up to 2 KiB by
-default. Trusted callers borrow those projections through TapeView, which issues
-separate requester-bound grants. Unfinished events and raw control records remain
-private. This first implementation publishes final answers; it does not expose an
-intermediate `publish_context` tool.
+A completed window contains its user message, assistant messages, and structured
+tool calls/results. Failed or unfinished work, thought parts, state deltas, and
+control anchors are excluded. The closing anchor records completion without
+copying the final answer. Existing entry/page size limits still apply; there is
+no separate 2 KiB publication limit. Trusted callers receive separate
+requester-bound grants for these immutable windows.
 
 The CLI uses `[lobby].address` to find the selected server; its peer tools resolve
 the destination's canonical Peer and observed presence. There is no `--peer` flag or TOML `peer`

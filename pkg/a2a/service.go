@@ -94,11 +94,11 @@ type Config struct {
 	JournalPath string `validate:"excluded_with=Journal"`
 	// Journal is an open store bound to Source, shared with other services and
 	// owned by the caller, which closes it.
-	Journal      Journal          `validate:"required_without=JournalPath,excluded_with=JournalPath"`
-	Publications Publications     `validate:"-"`
-	Policy       Policy           `validate:"required_without=Publications,structonly"`
-	Exporter     Exporter         `validate:"-"`
-	Now          func() time.Time `validate:"-"`
+	Journal  Journal          `validate:"required_without=JournalPath,excluded_with=JournalPath"`
+	Views    Views            `validate:"-"`
+	Policy   Policy           `validate:"required_without=Views,structonly"`
+	Exporter Exporter         `validate:"-"`
+	Now      func() time.Time `validate:"-"`
 }
 
 // Service queries durable grant indexes on demand; no journal entries or grant
@@ -124,7 +124,11 @@ func NewService(c Config) (*Service, error) {
 	c.Source = proto.Clone(c.Source).(*pb.Source)
 	c.Journal = store
 	if c.Exporter == nil {
-		c.Exporter = TextExporter{}
+		if c.Views != nil {
+			c.Exporter = ContextExporter{}
+		} else {
+			c.Exporter = TextExporter{}
+		}
 	}
 	if c.Now == nil {
 		c.Now = time.Now
@@ -210,8 +214,8 @@ func (s *Service) Borrow(ctx context.Context, p string, req *pb.BorrowRequest) (
 	}
 	head := h.Scope.SeqE
 	var sel Selection
-	if s.config.Publications != nil || req.Publication != nil {
-		sel, head, err = s.publicationSelection(ctx, p, req)
+	if s.config.Views != nil || req.View != nil {
+		sel, head, err = s.viewSelection(ctx, p, req)
 	} else {
 		sel, err = s.config.Policy.Select(ctx, p, proto.Clone(req).(*pb.BorrowRequest), head)
 	}
@@ -333,9 +337,9 @@ func (s *Service) Resolve(ctx context.Context, p, requestID string, sel Selectio
 		return nil, err
 	}
 	head := h.Scope.SeqE
-	if s.config.Publications != nil || r.Request.Publication != nil {
-		// Resolve cannot expand publication permissions or change the selected snapshot.
-		allowed, pinned, e := s.publicationSelection(ctx, p, r.Request)
+	if s.config.Views != nil || r.Request.View != nil {
+		// Resolve cannot expand view permissions or change the selected snapshot.
+		allowed, pinned, e := s.viewSelection(ctx, p, r.Request)
 		if e != nil {
 			return nil, e
 		}

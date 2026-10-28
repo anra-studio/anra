@@ -76,19 +76,19 @@ func (Status) EnumDescriptor() ([]byte, []int) {
 type RetryHint int32
 
 const (
-	RetryHint_RETRY_HINT_UNSPECIFIED           RetryHint = 0
-	RetryHint_RETRY_HINT_AFTER_NEW_PUBLICATION RetryHint = 1
+	RetryHint_RETRY_HINT_UNSPECIFIED    RetryHint = 0
+	RetryHint_RETRY_HINT_AFTER_NEW_VIEW RetryHint = 1
 )
 
 // Enum value maps for RetryHint.
 var (
 	RetryHint_name = map[int32]string{
 		0: "RETRY_HINT_UNSPECIFIED",
-		1: "RETRY_HINT_AFTER_NEW_PUBLICATION",
+		1: "RETRY_HINT_AFTER_NEW_VIEW",
 	}
 	RetryHint_value = map[string]int32{
-		"RETRY_HINT_UNSPECIFIED":           0,
-		"RETRY_HINT_AFTER_NEW_PUBLICATION": 1,
+		"RETRY_HINT_UNSPECIFIED":    0,
+		"RETRY_HINT_AFTER_NEW_VIEW": 1,
 	}
 )
 
@@ -127,7 +127,7 @@ type DelegationMetadata struct {
 	Deadline      *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=deadline,proto3" json:"deadline,omitempty"`
 	Ancestors     []string               `protobuf:"bytes,3,rep,name=ancestors,proto3" json:"ancestors,omitempty"`
 	// Hints only: each recipient borrows under its own identity from the lender.
-	Context       []*v1.AnchorRef `protobuf:"bytes,4,rep,name=context,proto3" json:"context,omitempty"`
+	Context       []*v1.TapeView `protobuf:"bytes,4,rep,name=context,proto3" json:"context,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -183,7 +183,7 @@ func (x *DelegationMetadata) GetAncestors() []string {
 	return nil
 }
 
-func (x *DelegationMetadata) GetContext() []*v1.AnchorRef {
+func (x *DelegationMetadata) GetContext() []*v1.TapeView {
 	if x != nil {
 		return x.Context
 	}
@@ -196,7 +196,7 @@ type ResponseMetadata struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        Status                 `protobuf:"varint,1,opt,name=status,proto3,enum=anra.a2a.collaboration.v1.Status" json:"status,omitempty"`
 	Retry         RetryHint              `protobuf:"varint,2,opt,name=retry,proto3,enum=anra.a2a.collaboration.v1.RetryHint" json:"retry,omitempty"`
-	Publication   *v1.AnchorRef          `protobuf:"bytes,3,opt,name=publication,proto3" json:"publication,omitempty"`
+	View          *v1.TapeView           `protobuf:"bytes,3,opt,name=view,proto3" json:"view,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -245,9 +245,9 @@ func (x *ResponseMetadata) GetRetry() RetryHint {
 	return RetryHint_RETRY_HINT_UNSPECIFIED
 }
 
-func (x *ResponseMetadata) GetPublication() *v1.AnchorRef {
+func (x *ResponseMetadata) GetView() *v1.TapeView {
 	if x != nil {
-		return x.Publication
+		return x.View
 	}
 	return nil
 }
@@ -256,26 +256,26 @@ var File_anra_a2a_collaboration_v1_collaboration_proto protoreflect.FileDescript
 
 const file_anra_a2a_collaboration_v1_collaboration_proto_rawDesc = "" +
 	"\n" +
-	"-anra/a2a/collaboration/v1/collaboration.proto\x12\x19anra.a2a.collaboration.v1\x1a\x1banra/a2a/tape/v1/tape.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf8\x01\n" +
+	"-anra/a2a/collaboration/v1/collaboration.proto\x12\x19anra.a2a.collaboration.v1\x1a\x1banra/a2a/tape/v1/tape.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf7\x01\n" +
 	"\x12DelegationMetadata\x122\n" +
 	"\x0froot_request_id\x18\x01 \x01(\tB\n" +
 	"\xbaH\ar\x05 \x01(\x80\x02R\rrootRequestId\x12>\n" +
 	"\bdeadline\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\bdeadline\x12-\n" +
-	"\tancestors\x18\x03 \x03(\tB\x0f\xbaH\f\x92\x01\t\"\ar\x05 \x01(\x80\x01R\tancestors\x12?\n" +
-	"\acontext\x18\x04 \x03(\v2\x1b.anra.a2a.tape.v1.AnchorRefB\b\xbaH\x05\x92\x01\x02\x10\bR\acontext\"\x81\x03\n" +
+	"\tancestors\x18\x03 \x03(\tB\x0f\xbaH\f\x92\x01\t\"\ar\x05 \x01(\x80\x01R\tancestors\x12>\n" +
+	"\acontext\x18\x04 \x03(\v2\x1a.anra.a2a.tape.v1.TapeViewB\b\xbaH\x05\x92\x01\x02\x10\bR\acontext\"\xe4\x02\n" +
 	"\x10ResponseMetadata\x12E\n" +
 	"\x06status\x18\x01 \x01(\x0e2!.anra.a2a.collaboration.v1.StatusB\n" +
 	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06status\x12D\n" +
-	"\x05retry\x18\x02 \x01(\x0e2$.anra.a2a.collaboration.v1.RetryHintB\b\xbaH\x05\x82\x01\x02\x10\x01R\x05retry\x12=\n" +
-	"\vpublication\x18\x03 \x01(\v2\x1b.anra.a2a.tape.v1.AnchorRefR\vpublication:\xa0\x01\xbaH\x9c\x01\x1a\x99\x01\n" +
-	"\x15response.busy_details\x12?publication and retry hints are allowed only for busy responses\x1a?this.status == 2 || (!has(this.publication) && this.retry == 0)*G\n" +
+	"\x05retry\x18\x02 \x01(\x0e2$.anra.a2a.collaboration.v1.RetryHintB\b\xbaH\x05\x82\x01\x02\x10\x01R\x05retry\x12.\n" +
+	"\x04view\x18\x03 \x01(\v2\x1a.anra.a2a.tape.v1.TapeViewR\x04view:\x92\x01\xbaH\x8e\x01\x1a\x8b\x01\n" +
+	"\x15response.busy_details\x128view and retry hints are allowed only for busy responses\x1a8this.status == 2 || (!has(this.view) && this.retry == 0)*G\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10STATUS_COMPLETED\x10\x01\x12\x0f\n" +
-	"\vSTATUS_BUSY\x10\x02*M\n" +
+	"\vSTATUS_BUSY\x10\x02*F\n" +
 	"\tRetryHint\x12\x1a\n" +
-	"\x16RETRY_HINT_UNSPECIFIED\x10\x00\x12$\n" +
-	" RETRY_HINT_AFTER_NEW_PUBLICATION\x10\x01BFZDgithub.com/scbizu/anra/gen/anra/a2a/collaboration/v1;collaborationv1b\x06proto3"
+	"\x16RETRY_HINT_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19RETRY_HINT_AFTER_NEW_VIEW\x10\x01BFZDgithub.com/scbizu/anra/gen/anra/a2a/collaboration/v1;collaborationv1b\x06proto3"
 
 var (
 	file_anra_a2a_collaboration_v1_collaboration_proto_rawDescOnce sync.Once
@@ -297,14 +297,14 @@ var file_anra_a2a_collaboration_v1_collaboration_proto_goTypes = []any{
 	(*DelegationMetadata)(nil),    // 2: anra.a2a.collaboration.v1.DelegationMetadata
 	(*ResponseMetadata)(nil),      // 3: anra.a2a.collaboration.v1.ResponseMetadata
 	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
-	(*v1.AnchorRef)(nil),          // 5: anra.a2a.tape.v1.AnchorRef
+	(*v1.TapeView)(nil),           // 5: anra.a2a.tape.v1.TapeView
 }
 var file_anra_a2a_collaboration_v1_collaboration_proto_depIdxs = []int32{
 	4, // 0: anra.a2a.collaboration.v1.DelegationMetadata.deadline:type_name -> google.protobuf.Timestamp
-	5, // 1: anra.a2a.collaboration.v1.DelegationMetadata.context:type_name -> anra.a2a.tape.v1.AnchorRef
+	5, // 1: anra.a2a.collaboration.v1.DelegationMetadata.context:type_name -> anra.a2a.tape.v1.TapeView
 	0, // 2: anra.a2a.collaboration.v1.ResponseMetadata.status:type_name -> anra.a2a.collaboration.v1.Status
 	1, // 3: anra.a2a.collaboration.v1.ResponseMetadata.retry:type_name -> anra.a2a.collaboration.v1.RetryHint
-	5, // 4: anra.a2a.collaboration.v1.ResponseMetadata.publication:type_name -> anra.a2a.tape.v1.AnchorRef
+	5, // 4: anra.a2a.collaboration.v1.ResponseMetadata.view:type_name -> anra.a2a.tape.v1.TapeView
 	5, // [5:5] is the sub-list for method output_type
 	5, // [5:5] is the sub-list for method input_type
 	5, // [5:5] is the sub-list for extension type_name

@@ -68,9 +68,17 @@ message Decision {
   View view = 3;
 }
 
-message AnchorRef {
+// TapeView identifies an immutable, lender-selected context window, without a
+// grant. Its head is the closing anchor; scope excludes that control entry.
+message TapeView {
+  option (buf.validate.message).cel = {
+    id: "tape_view.committed_scope"
+    message: "scope must end at the committed snapshot head"
+    expression: "this.scope.seq_e == this.snapshot_head"
+  };
   Source source = 1 [(buf.validate.field).required = true];
-  string seq = 2 [(buf.validate.field).string.pattern = "^[1-9][0-9]*$"];
+  string snapshot_head = 2 [(buf.validate.field).string.pattern = "^[1-9][0-9]*$"];
+  EntryRange scope = 3 [(buf.validate.field).required = true];
 }
 
 message BorrowRequest {
@@ -87,7 +95,9 @@ message BorrowRequest {
     max_bytes: 8192
   }];
   EntryRange bounds = 4;
-  AnchorRef publication = 5;
+  // Optional exact snapshot for protocol clients. Model tools leave selection
+  // to the lender. A reference never transfers another requester's grant.
+  TapeView view = 5;
 }
 
 message BorrowResponse {

@@ -9,7 +9,7 @@ Agents can communicate with peers and share relevant context with permission.
 - [Application architecture and embedding](docs/architecture.md)
 - [Command line usage](docs/cli.md)
 - [Agent team design](docs/agent-team.md)
-- [Peer integration](docs/a2a-integration.md)
+- [A2A adapter](docs/a2a-adapter.md)
 - [API and development workflow](proto/README.md)
 - [BDD end-to-end scenarios and testing policy](docs/testing.md)
 
@@ -53,10 +53,10 @@ trusted not to impersonate one another. TapeView borrowing still enforces grants
 selected ranges, expiry, and release for each caller.
 
 Each tape admits one reasoning invocation at a time. A second request receives
-BUSY immediately. A peer can borrow an explicitly shared completed publication
-while its owner keeps thinking, then continue its own model loop. Execution and
-publication records use `anra.dev/anchor/v1`; interrupted work is closed as
-abandoned at restart. See the [collaboration specification](docs/designs/anchor-busy-collaboration-spec.md).
+BUSY immediately. A peer can borrow a lender-selected TapeView of a completed
+invocation while its owner keeps thinking, then continue its own model loop.
+Execution anchors use `anra.dev/anchor/v1`; interrupted work is closed as
+abandoned at restart. See the [collaboration specification](docs/designs/anchor-tape-view-collaboration-spec.md).
 
 Agents run tape-go's ADK runtime with the DeepSeek provider. Tools are built in;
 the CLI and config do not accept injected tools. Agent settings come only from

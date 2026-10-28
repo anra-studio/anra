@@ -151,7 +151,7 @@ func (a *Anra) Run(ctx context.Context, input string) (answer string, runErr err
 	}
 	defer func() {
 		defer close(done)
-		if err := a.finish(answer, runErr); err != nil {
+		if err := a.finish(runErr); err != nil {
 			answer = ""
 			runErr = errors.Join(runErr, err)
 		}

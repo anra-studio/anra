@@ -143,8 +143,8 @@ func (t BorrowTool) Execute(ctx context.Context, args json.RawMessage) (json.Raw
 // Client uses generated protobuf messages directly.
 // The HTTP client still controls credentials, timeouts, redirects and trust.
 type Client struct {
-	rpc                tapev1connect.TapeViewServiceClient
-	publicationVersion bool
+	rpc         tapev1connect.TapeViewServiceClient
+	viewVersion bool
 }
 
 // connectBaseURL returns the Connect base URL for an advertised endpoint. The
@@ -183,8 +183,8 @@ func NewClient(h *http.Client, card *sdk.AgentCard) (*Client, error) {
 			return nil, err
 		}
 		transport := connecthttp.NewTransport(h, base, connecthttp.WithReadMaxBytes(MaxBodyBytes), connecthttp.WithSendMaxBytes(MaxBodyBytes))
-		version, _ := json.Marshal(ext.Params["publicationBorrowVersion"])
-		return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)), publicationVersion: string(version) == "1"}, nil
+		version, _ := json.Marshal(ext.Params["viewBorrowVersion"])
+		return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)), viewVersion: string(version) == "1"}, nil
 	}
 	return nil, ErrInactive
 }
@@ -209,7 +209,7 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 	if err := validateMessage(r); err != nil {
 		return nil, err
 	}
-	if r.Publication != nil && !c.publicationVersion {
+	if r.View != nil && !c.viewVersion {
 		return nil, ErrInactive
 	}
 	ctx, info := connectContext(ctx)
@@ -221,7 +221,7 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 	if err := validateMessage(d); err != nil {
 		return nil, err
 	}
-	if d.RequestId != r.RequestId || (d.Status == Granted && r.Publication != nil && !publicationMatches(r.Publication, d.View)) {
+	if d.RequestId != r.RequestId || (d.Status == Granted && r.View != nil && !viewMatches(r.View, d.View)) {
 		return nil, ErrInvalidParams
 	}
 	return d, nil

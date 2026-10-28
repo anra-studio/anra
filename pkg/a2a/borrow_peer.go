@@ -24,7 +24,7 @@ type borrowPeerArgs struct {
 // NewPeerBorrowTool resolves the lender's current Peer and lets the lender select
 // context. Every request uses this agent's own HTTP client identity.
 func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{Name: "borrow_peer_context", Description: "Ask a named peer for context using a purpose and query. The lender selects an eligible immutable publication, even while busy, and grants access under your own identity. Keep all returned provenance."}, func(ctx tool.Context, args borrowPeerArgs) (map[string]any, error) {
+	return functiontool.New(functiontool.Config{Name: "borrow_peer_context", Description: "Ask a named peer for context using a purpose and query. The lender selects a committed TapeView of messages and tool exchanges, even while busy, and grants access under your own identity. Keep all returned provenance."}, func(ctx tool.Context, args borrowPeerArgs) (map[string]any, error) {
 		if directory == nil || h == nil || args.Peer == self {
 			return nil, errors.New("peer borrowing requires a different discovered peer")
 		}
@@ -60,7 +60,7 @@ func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string)
 		if err := json.Unmarshal(payload, &result); err != nil {
 			return nil, err
 		}
-		// A newly borrowed publication is evidence of progress, unlike a changed prompt.
+		// A newly borrowed view is evidence of progress, unlike a changed prompt.
 		if decision.Status != Granted || decision.View == nil {
 			return result, nil
 		}
