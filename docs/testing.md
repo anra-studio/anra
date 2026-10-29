@@ -2,8 +2,21 @@
 
 The repository keeps BDD end-to-end scenarios as its shared acceptance contract.
 Read the [agent features](../tests/e2e/features/agent.feature) and
-[peer features](../tests/e2e/features/peers.feature) to review what Anra promises.
-The same Given/When/Then steps execute with
+[peer features](../tests/e2e/features/peers.feature), plus the
+[CLI features](../tests/e2e/features/cli.feature) and
+[TOML configuration features](../tests/e2e/features/config.feature) and
+[application embedding features](../tests/e2e/features/application.feature), to review what Anra
+promises.
+The [running-agent discovery features](../tests/e2e/features/discovery.feature)
+cover two registered servers, bidirectional and concurrent greetings, restart,
+conflicting runtimes, ownership rejection, token-free peer communication,
+graceful disconnect and retained identities after crashes. The
+[registry scenarios](../tests/e2e/features/registry.feature) exercise generated
+Connect calls, persistent metadata, controlled-clock presence, conditional updates,
+filtered discovery, tombstones, stale runtimes and lost acknowledgement recovery.
+The [ADK features](../tests/e2e/features/adk.feature) cover built-in tool execution,
+model-driven peer discovery and messaging, persisted tool history, and rejection
+of tool configuration. The same Given/When/Then steps execute with
 [Godog](https://github.com/cucumber/godog/tree/v0.15.1), so the specifications
 and checks stay together. Undefined and pending steps fail the suite.
 
@@ -61,9 +74,27 @@ uses a controlled clock rather than sleeps.
 Model responses and lender permission decisions are deterministic fixtures.
 The suite needs no model credentials or external service once Go dependencies
 are installed. It checks Anra's behavior around model calls; it does not measure
-a real model's answer quality. Anra currently exposes a library, so public Go
-APIs and peer HTTP endpoints are the E2E entry points. The suite does not launch
-a separate process or exercise an application UI.
+a real model's answer quality. Library scenarios use public Go APIs and peer
+HTTP endpoints. CLI scenarios build `cmd/anra` once per suite and launch real
+processes using tape-go's ADK runtime and real provider HTTP requests to a
+deterministic local model fixture, temporary disk storage, and localhost HTTP. They check local persistence, two-agent messaging, receiver restart,
+missing or malformed caller identities, required `--config` files, TOML agent selection, rejected
+flag and environment overrides, running-agent discovery, and invalid configuration.
+All CLI sends use registered agent names. Direct peer flags and TOML settings
+are rejected, as are agent-setting flags and `ANRA_*` variables.
+Process presence transitions use bounded polling of the public registry API;
+the crashing process is killed while the remaining agent keeps heartbeating.
+Registry contract scenarios use a controlled clock, real Connect HTTP calls and
+temporary directory storage. Registry restart resets presence and retains metadata.
+Each subprocess has
+inherited `ANRA_` settings and model credentials removed from its environment;
+scenario fixtures supply only deterministic settings and model fixture keys.
+TapeView scenarios also use trusted caller identities without shared tokens,
+including denial when another identified peer tries to use a borrower's grant.
+The application embedding scenarios call `config`, `peer`, `discovery`, and
+`registry` directly, checking storage interoperability with CLI processes,
+peer communication, restart, invalid identities and readiness failure cleanup.
+The suite does not exercise an application UI.
 
 ## Temporary unit checks
 

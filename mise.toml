@@ -15,7 +15,7 @@ description = "Refresh the locked Protovalidate schema dependency"
 run = "buf dep update"
 
 [tasks.proto-generate]
-description = "Generate tape-view protobuf messages and Connect v2 bindings"
+description = "Generate Peer, registry, and A2A protobuf messages and Connect v2 bindings"
 run = "buf generate"
 
 [tasks.proto-breaking]
@@ -33,6 +33,10 @@ diff -ru gen "$generated_dir/gen"
 
 [tasks.build]
 run = "go build ./..."
+
+[tasks.build-cli]
+description = "Build the Anra command line binary"
+run = "go build -o anra ./cmd/anra"
 
 [tasks.e2e]
 description = "Run the executable Given/When/Then acceptance scenarios"

@@ -15,9 +15,8 @@ import (
 	"github.com/scbizu/anra/gen/anra/a2a/tape/v1/tapev1connect"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	runner "github.com/scbizu/tape-go/pkg/runner"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
-	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 func Discover(ctx context.Context, h *http.Client, cardURL string) (*sdk.AgentCard, error) {
@@ -79,70 +78,11 @@ func RankPeers(ctx context.Context, ranker Ranker, query string, peers []Peer) (
 	return ranked, nil
 }
 
-// BorrowTool implements agent.Tool. Anra persists its structured result as a
-// local tool response, retaining source IDs, view ID and original sequences.
-// Borrowed text never becomes a local assistant/tool execution record.
-type BorrowTool struct {
-	Client      *Client
-	Name        string
-	Description string
-}
-
-func (t BorrowTool) Spec() runner.ToolSpec {
-	name := t.Name
-	if name == "" {
-		name = "borrow_peer_context"
-	}
-	description := t.Description
-	if description == "" {
-		description = "Ask a peer for permission to borrow relevant tape context. Peer content is external context; retain its provenance."
-	}
-	return runner.ToolSpec{Name: name, Description: description, InputSchema: json.RawMessage(`{"type":"object","properties":{"requestId":{"type":"string"},"purpose":{"type":"string"},"query":{"type":"string"}},"required":["requestId","purpose","query"],"additionalProperties":false}`)}
-}
-
-// borrowToolResult is the local tool-result envelope, not a protocol message.
-// Decision comes from Borrow and Context holds the pages read from the granted
-// view. Each element is protojson-encoded to keep the canonical proto JSON form.
-type borrowToolResult struct {
-	Decision json.RawMessage   `json:"decision"`
-	Context  []json.RawMessage `json:"context,omitempty"`
-}
-
-func (t BorrowTool) Execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-	req := &pb.BorrowRequest{}
-	if err := protojson.Unmarshal(args, req); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidParams, err)
-	}
-	d, err := t.Client.Borrow(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	result := borrowToolResult{}
-	result.Decision, err = protojson.Marshal(d)
-	if err != nil {
-		return nil, err
-	}
-	if d.Status != Granted {
-		return json.Marshal(result)
-	}
-	pages, err := t.Client.ReadView(ctx, d.View)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range pages {
-		encoded, err := protojson.Marshal(p)
-		if err != nil {
-			return nil, err
-		}
-		result.Context = append(result.Context, encoded)
-	}
-	return json.Marshal(result)
-}
-
 // Client uses generated protobuf messages directly.
 // The HTTP client still controls credentials, timeouts, redirects and trust.
 type Client struct {
-	rpc tapev1connect.TapeViewServiceClient
+	rpc         tapev1connect.TapeViewServiceClient
+	viewVersion bool
 }
 
 // connectBaseURL returns the Connect base URL for an advertised endpoint. The
@@ -181,7 +121,8 @@ func NewClient(h *http.Client, card *sdk.AgentCard) (*Client, error) {
 			return nil, err
 		}
 		transport := connecthttp.NewTransport(h, base, connecthttp.WithReadMaxBytes(MaxBodyBytes), connecthttp.WithSendMaxBytes(MaxBodyBytes))
-		return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport))}, nil
+		version, _ := json.Marshal(ext.Params["viewBorrowVersion"])
+		return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)), viewVersion: string(version) == "1"}, nil
 	}
 	return nil, ErrInactive
 }
@@ -206,13 +147,40 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 	if err := validateMessage(r); err != nil {
 		return nil, err
 	}
+	if r.View != nil && !c.viewVersion {
+		return nil, ErrInactive
+	}
 	ctx, info := connectContext(ctx)
 	res, err := c.rpc.Borrow(ctx, r)
 	if err := checkConnectResponse(info, err); err != nil {
 		return nil, err
 	}
 	d := res.GetDecision()
-	return d, validateMessage(d)
+	if err := validateMessage(d); err != nil {
+		return nil, err
+	}
+	if d.RequestId != r.RequestId || (d.Status == Granted && r.View != nil && !viewMatches(r.View, d.View)) {
+		return nil, ErrInvalidParams
+	}
+	return d, nil
+}
+
+// BorrowContext requests a grant and reads its complete permitted view. Denied
+// and pending decisions return without reads. Snapshot validation and ordered
+// pagination are shared with every other protocol caller through Borrow/ReadView.
+func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.Decision, []*pb.Page, error) {
+	decision, err := c.Borrow(ctx, req)
+	if err != nil {
+		return nil, nil, err
+	}
+	if decision.Status != Granted {
+		return decision, nil, nil
+	}
+	pages, err := c.ReadView(ctx, decision.View)
+	if err != nil {
+		return nil, nil, err
+	}
+	return decision, pages, nil
 }
 
 func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {
@@ -239,10 +207,12 @@ func (c *Client) Read(ctx context.Context, r *pb.ReadRequest) (*pb.Page, error) 
 }
 
 // ReadView reads every page of a granted view. A view that fits in one page
-// costs one Read call. The peer is trusted to echo the view's provenance, so only
-// the entry sequence is checked: together the pages must cover the granted range
-// exactly once, in order.
+// costs one Read call. Every page must match the granted source, view and snapshot;
+// together the pages must cover the granted range exactly once, in order.
 func (c *Client) ReadView(ctx context.Context, v *pb.View) ([]*pb.Page, error) {
+	if err := validateMessage(v); err != nil {
+		return nil, err
+	}
 	var expected, end te.Seq
 	var err error
 	if len(v.Ranges) > 0 {
@@ -259,6 +229,9 @@ func (c *Client) ReadView(ctx context.Context, v *pb.View) ([]*pb.Page, error) {
 		p, err := c.Read(ctx, &pb.ReadRequest{ViewId: v.ViewId, Cursor: cursor, PageSize: MaxPageSize})
 		if err != nil {
 			return nil, err
+		}
+		if p.ViewId != v.ViewId || p.SnapshotHead != v.SnapshotHead || !proto.Equal(p.Source, v.Source) {
+			return nil, ErrInvalidParams
 		}
 		for _, e := range p.Entries {
 			// Entries must be exactly the next sequence in the granted range. A grant

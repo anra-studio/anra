@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package anra.a2a.collaboration.v1;
+
+import "anra/a2a/tape/v1/tape.proto";
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1;collaborationv1";
+
+// DelegationMetadata is carried in the urn:anra:a2a:collaboration:v1 request
+// metadata of a standard A2A Message. It never supplies the caller's identity.
+message DelegationMetadata {
+  string root_request_id = 1 [(buf.validate.field).string = {
+    min_bytes: 1
+    max_bytes: 256
+  }];
+  google.protobuf.Timestamp deadline = 2 [(buf.validate.field).required = true];
+  repeated string ancestors = 3 [(buf.validate.field).repeated = {
+    items: {
+      string: {
+        min_bytes: 1
+        max_bytes: 128
+      }
+    }
+  }];
+  // Hints only: each recipient borrows under its own identity from the lender.
+  repeated anra.a2a.tape.v1.TapeView context = 4 [(buf.validate.field).repeated.max_items = 8];
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_COMPLETED = 1;
+  STATUS_BUSY = 2;
+}
+
+enum RetryHint {
+  RETRY_HINT_UNSPECIFIED = 0;
+  RETRY_HINT_AFTER_NEW_VIEW = 1;
+}
+
+// ResponseMetadata accompanies a standard A2A response Message. Answer text
+// remains in the Message's text parts. Local tool suppression is not a wire status.
+message ResponseMetadata {
+  option (buf.validate.message).cel = {
+    id: "response.busy_details"
+    message: "view and retry hints are allowed only for busy responses"
+    expression: "this.status == 2 || (!has(this.view) && this.retry == 0)"
+  };
+  Status status = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  RetryHint retry = 2 [(buf.validate.field).enum.defined_only = true];
+  anra.a2a.tape.v1.TapeView view = 3;
+}

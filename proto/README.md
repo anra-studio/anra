@@ -1,9 +1,25 @@
-# Tape-view API contract
+# Anra protobuf contracts
 
 `anra/a2a/tape/v1/tape.proto` defines Anra's permissioned tape-view extension:
 `Borrow`, `Get`, `Read`, and `Release`. The official A2A core remains in
 `github.com/a2aproject/a2a-go/v2`; do not copy its schema or regenerate its
-messages here. Discovery still fetches the official JSON Agent Card.
+messages here. External A2A callers can still fetch the official JSON Agent Card;
+Anra discovery resolves typed Peer metadata.
+
+`anra/a2a/collaboration/v1/collaboration.proto` defines the delegation and
+response metadata for `urn:anra:a2a:collaboration:v1`. It imports TapeView's
+`TapeView` and adds no RPC service. These generated messages travel as ProtoJSON
+objects in the official A2A Message's extension metadata. Answer text remains in
+standard A2A text parts.
+
+`anra/peer/v1/peer.proto` defines canonical Peer/Skill metadata. The
+`anra/registry/v1/registry.proto` contract defines runtime presence and the
+Register, Heartbeat, Disconnect, Lookup, List and Forget RPCs. It is independent
+of the A2A SDK. `pkg/registry` persists ownership and metadata; `pkg/discovery`
+uses the generated client, and `pkg/a2a.Card` produces the A2A representation.
+Presence defaults to `PRESENCE_STATE_UNKNOWN`; the schema intentionally exempts
+that enum's zero value from Buf's usual `UNSPECIFIED` naming rule. See the
+[registry contract](../docs/registry.md) for persistence and mutation semantics.
 
 The layout follows Gate: versioned packages under `proto/`, generated messages
 and Connect bindings under `gen/`, transport adapters under `pkg/a2a`, and root
@@ -52,8 +68,10 @@ package for incompatible wire or semantic changes.
 `NewPeerHandler` mounts the service at `/anra.a2a.tape.v1.TapeViewService/`.
 Call `Advertise(card, publicBaseURL + ViewPath)` to publish its service URL
 as the extension's single `endpoint` parameter. `NewClient` uses the generated
-Connect binding. Standalone servers can mount `NewViewHandler` themselves at
-the same service path.
+Connect binding. Vanguard v0.5.0 also exposes the schema's `google.api.http`
+routes through the same Connect v2.0.0 server. Standalone servers can mount
+`NewViewHandler` themselves at the service path and `ViewRESTPath`.
+See [HTTP routes](../docs/http.md) for the REST API.
 
 Generated clients use `tapev1connect.NewTapeViewServiceClient` with
 `connect.NewClient(connecthttp.NewTransport(httpClient, baseURL))`. Every call
@@ -61,7 +79,8 @@ must include `A2A-Extensions: urn:anra:a2a:tape-view:v1`, set using
 `connect.NewClientContext`. Acknowledgement comes back in response metadata.
 The HTTP client is responsible for credentials, redirects, and endpoint trust.
 `NewClient` handles opt-in, acknowledgement, domain conversions, and public
-error mapping, and is used by `BorrowTool`.
+error mapping. `Client.BorrowContext` combines grant selection and complete
+validated reads for the built-in tools in `pkg/agent/tools` and other hosts.
 
 The schema is a separate extension service, not a new core A2A transport.
 The generated Connect service invokes `Service`, its permission policy, and
@@ -69,7 +88,9 @@ grant journal. `Resolve` and `Revoke` remain lender-local methods. A caller's
 identity is never accepted from protobuf request fields.
 
 Sequence fields are arbitrary-precision canonical decimal strings, including
-`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. ProtoJSON
+`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. `BorrowRequest.view` optionally pins a `TapeView`
+(source, closing-anchor snapshot head, and exact context scope); clients require `viewBorrowVersion: 1`
+in the card before sending it and verify exact grant provenance before reading. ProtoJSON
 range fields are `seqS` and `seqE`. Local domain/journal JSON uses `SeqS` and
 `SeqE`; it is independent of the protobuf wire format. Status is an enum with an invalid unspecified value.
 Times use protobuf Timestamp. `Payload.json_data` contains the exact JSON bytes;
@@ -103,10 +124,41 @@ and `errors.As` for `protovalidate.ValidationError` or configuration
 `validator.ValidationErrors`.
 
 HTTP transport limits encoded/decompressed RPC messages to 1 MiB. Borrowed pages
-retain source, view, snapshot, and sequence provenance checks in `BorrowTool`.
+retain source, view, snapshot, and sequence provenance checks in `Client.ReadView`.
+`Client.BorrowContext` reuses those checks, while `pkg/agent/tools` formats the
+generated results as model-facing ProtoJSON objects.
 The lender's selected turn/anchor range defines the complete view size. There
 is no separate maximum-entry cap or truncation of that range; pagination only
 splits its transport. `Eligible`/`Policy` supplies the turn boundaries.
+
+## Collaboration metadata
+
+`DelegationMetadata` defines the root request ID, required Timestamp deadline,
+ancestors, and optional context references. Its schema limits identifiers and
+context references; ancestry has no hop-count limit. The receiver validates this
+metadata before reasoning admission. `pkg/model/delegator` owns runtime delegation
+state: it creates roots, caps deadlines, and forks the path for each edge.
+Generated metadata stays private to the model;
+transport adapters receive owned snapshots.
+
+`ResponseMetadata` defines `Status`, `RetryHint`, and an optional TapeView.
+Only `STATUS_BUSY` may carry a view or retry hints. Status must be a defined,
+nonzero enum value. Canonical ProtoJSON uses `STATUS_COMPLETED`, `STATUS_BUSY`,
+and `RETRY_HINT_AFTER_NEW_VIEW`. Unknown fields,
+unknown enum values, invalid references, and invalid field combinations are
+rejected. There is no decoder for the former lowercase wire statuses.
+
+Both incoming and outgoing metadata use ProtoJSON plus Protovalidate descriptors;
+the A2A adapter caps each metadata object at 8 KiB. `CollaborationResult` is only
+a local pairing of generated response metadata with text extracted from A2A
+parts. The CLI and model tools render readable lowercase status labels.
+`no_new_context` remains a local tool outcome derived from the Delegator's BUSY
+memory, not a protobuf status or wire outcome. `Begin` starts fresh memory for
+each invocation; outgoing siblings share that invocation's progress without
+sharing a mutable path. A successful read of a newer lender-selected snapshot
+clears suppression through `Borrowed`.
+Deadline expiry and cancellation are ordinary context errors. The transport's
+8 KiB metadata bound still applies to the encoded ancestry and context hints.
 
 | Domain error | Connect code |
 | --- | --- |

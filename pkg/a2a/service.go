@@ -95,7 +95,8 @@ type Config struct {
 	// Journal is an open store bound to Source, shared with other services and
 	// owned by the caller, which closes it.
 	Journal  Journal          `validate:"required_without=JournalPath,excluded_with=JournalPath"`
-	Policy   Policy           `validate:"required,structonly"`
+	Views    Views            `validate:"-"`
+	Policy   Policy           `validate:"required_without=Views,structonly"`
 	Exporter Exporter         `validate:"-"`
 	Now      func() time.Time `validate:"-"`
 }
@@ -123,7 +124,11 @@ func NewService(c Config) (*Service, error) {
 	c.Source = proto.Clone(c.Source).(*pb.Source)
 	c.Journal = store
 	if c.Exporter == nil {
-		c.Exporter = TextExporter{}
+		if c.Views != nil {
+			c.Exporter = ContextExporter{}
+		} else {
+			c.Exporter = TextExporter{}
+		}
 	}
 	if c.Now == nil {
 		c.Now = time.Now
@@ -208,7 +213,12 @@ func (s *Service) Borrow(ctx context.Context, p string, req *pb.BorrowRequest) (
 		return nil, err
 	}
 	head := h.Scope.SeqE
-	sel, err := s.config.Policy.Select(ctx, p, proto.Clone(req).(*pb.BorrowRequest), head)
+	var sel Selection
+	if s.config.Views != nil || req.View != nil {
+		sel, head, err = s.viewSelection(ctx, p, req)
+	} else {
+		sel, err = s.config.Policy.Select(ctx, p, proto.Clone(req).(*pb.BorrowRequest), head)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +336,19 @@ func (s *Service) Resolve(ctx context.Context, p, requestID string, sel Selectio
 	if err != nil {
 		return nil, err
 	}
-	d, err := s.decide(ctx, r.Request, sel, h.Scope.SeqE)
+	head := h.Scope.SeqE
+	if s.config.Views != nil || r.Request.View != nil {
+		// Resolve cannot expand view permissions or change the selected snapshot.
+		allowed, pinned, e := s.viewSelection(ctx, p, r.Request)
+		if e != nil {
+			return nil, e
+		}
+		if sel.Status == Granted {
+			sel = allowed
+			head = pinned
+		}
+	}
+	d, err := s.decide(ctx, r.Request, sel, head)
 	if err != nil {
 		return nil, err
 	}
