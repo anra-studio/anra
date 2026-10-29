@@ -9,9 +9,9 @@ import (
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
-	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
-	pv "github.com/scbizu/anra/gen/anra/peer/v1"
-	"github.com/scbizu/anra/pkg/model/delegator"
+	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
+	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
+	"github.com/anra-studio/anra/pkg/model/delegator"
 )
 
 type MessageClient struct {

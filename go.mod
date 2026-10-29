@@ -1,4 +1,4 @@
-module github.com/scbizu/anra
+module github.com/anra-studio/anra
 
 go 1.27.0
 

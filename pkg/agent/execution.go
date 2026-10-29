@@ -8,9 +8,9 @@ import (
 	"time"
 	"uuid"
 
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
-	"github.com/scbizu/anra/pkg/a2a"
-	"github.com/scbizu/anra/pkg/model/anchor"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/model/anchor"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"

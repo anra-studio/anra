@@ -3,7 +3,7 @@ package anchor
 import (
 	"bytes"
 	"encoding/json"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )

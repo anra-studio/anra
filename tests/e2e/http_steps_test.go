@@ -13,12 +13,12 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"github.com/cucumber/godog"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
-	pv "github.com/scbizu/anra/gen/anra/peer/v1"
-	rv "github.com/scbizu/anra/gen/anra/registry/v1"
-	"github.com/scbizu/anra/pkg/a2a"
-	"github.com/scbizu/anra/pkg/discovery"
-	"github.com/scbizu/anra/pkg/registry"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
+	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
+	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/registry"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )

@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"strings"
 
-	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
-	rv "github.com/scbizu/anra/gen/anra/registry/v1"
-	"github.com/scbizu/anra/pkg/a2a"
-	"github.com/scbizu/anra/pkg/discovery"
-	"github.com/scbizu/anra/pkg/model/delegator"
+	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
+	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/model/delegator"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 )

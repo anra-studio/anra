@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/scbizu/anra/pkg/peer"
+	"github.com/anra-studio/anra/pkg/peer"
 	"github.com/spf13/cobra"
 )
 

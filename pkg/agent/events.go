@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"github.com/scbizu/anra/pkg/model/anchor"
+	"github.com/anra-studio/anra/pkg/model/anchor"
 	"maps"
 
 	"github.com/scbizu/tape-go/pkg/runner"

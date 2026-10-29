@@ -70,8 +70,8 @@ Set either `Journal` or `JournalPath`, never both: `JournalPath` lets the
 service open the file and `Service.Close` release it, while `Journal` shares one
 store between services and leaves it the caller's to close.
 
-The example imports `tapev1 "github.com/scbizu/anra/gen/anra/a2a/tape/v1"` and
-`"github.com/scbizu/anra/pkg/model/journal"`.
+The example imports `tapev1 "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"` and
+`"github.com/anra-studio/anra/pkg/model/journal"`.
 
 ```go
 researcherTape, err := bbolt.NewBboltStorage("researcher-session", "researcher.db")

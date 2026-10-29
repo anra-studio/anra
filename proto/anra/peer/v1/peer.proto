@@ -4,7 +4,7 @@ package anra.peer.v1;
 
 import "buf/validate/validate.proto";
 
-option go_package = "github.com/scbizu/anra/gen/anra/peer/v1;peerv1";
+option go_package = "github.com/anra-studio/anra/gen/anra/peer/v1;peerv1";
 
 // Peer is an identified agent. Its address and skills survive lost contact.
 message Peer {

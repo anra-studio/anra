@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	rv "github.com/scbizu/anra/gen/anra/registry/v1"
-	"github.com/scbizu/anra/pkg/discovery"
-	"github.com/scbizu/anra/pkg/registry"
+	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
+	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/registry"
 	"github.com/spf13/cobra"
 )
 

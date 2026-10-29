@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 
-	"github.com/scbizu/anra/pkg/config"
+	"github.com/anra-studio/anra/pkg/config"
 	"github.com/spf13/cobra"
 )
 

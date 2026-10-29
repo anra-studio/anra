@@ -2,7 +2,7 @@ package e2e_test
 
 import (
 	"fmt"
-	"github.com/scbizu/anra/pkg/model/anchor"
+	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 )
 

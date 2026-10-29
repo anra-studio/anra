@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )

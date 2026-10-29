@@ -5,8 +5,8 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/validate"
-	"github.com/scbizu/anra/gen/anra/registry/v1/registryv1connect"
-	"github.com/scbizu/anra/internal/httpserver"
+	"github.com/anra-studio/anra/gen/anra/registry/v1/registryv1connect"
+	"github.com/anra-studio/anra/internal/httpserver"
 )
 
 // NewHandler mounts the generated Connect and Vanguard REST APIs.

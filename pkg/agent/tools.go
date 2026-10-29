@@ -4,9 +4,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/scbizu/anra/pkg/a2a"
-	agenttools "github.com/scbizu/anra/pkg/agent/tools"
-	"github.com/scbizu/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/a2a"
+	agenttools "github.com/anra-studio/anra/pkg/agent/tools"
+	"github.com/anra-studio/anra/pkg/discovery"
 	tapeagent "github.com/scbizu/tape-go/pkg/agent"
 	tapetools "github.com/scbizu/tape-go/pkg/agent/tools"
 	"google.golang.org/adk/tool"

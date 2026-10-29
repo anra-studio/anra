@@ -8,9 +8,9 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
-	rv "github.com/scbizu/anra/gen/anra/registry/v1"
-	"github.com/scbizu/anra/gen/anra/registry/v1/registryv1connect"
-	peermodel "github.com/scbizu/anra/pkg/model/peer"
+	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
+	"github.com/anra-studio/anra/gen/anra/registry/v1/registryv1connect"
+	peermodel "github.com/anra-studio/anra/pkg/model/peer"
 )
 
 type Client struct {

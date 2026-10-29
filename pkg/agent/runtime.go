@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scbizu/anra/pkg/a2a"
-	"github.com/scbizu/anra/pkg/discovery"
-	"github.com/scbizu/anra/pkg/model/delegator"
+	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/model/delegator"
 	tapeagent "github.com/scbizu/tape-go/pkg/agent"
 	"github.com/scbizu/tape-go/pkg/tape"
 	"github.com/scbizu/tape-go/pkg/tape/owner"

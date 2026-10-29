@@ -6,7 +6,7 @@ import (
 	"slices"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
+	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )

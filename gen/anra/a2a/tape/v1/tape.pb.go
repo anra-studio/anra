@@ -1079,7 +1079,7 @@ const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\x06Borrow\x12\x1f.anra.a2a.tape.v1.BorrowRequest\x1a .anra.a2a.tape.v1.BorrowResponse\"\x1b\x82\xd3\xe4\x93\x02\x15:\x01*\"\x10/v1/tape/borrows\x12i\n" +
 	"\x03Get\x12\x1c.anra.a2a.tape.v1.GetRequest\x1a\x1d.anra.a2a.tape.v1.GetResponse\"%\x82\xd3\xe4\x93\x02\x1f\x12\x1d/v1/tape/borrows/{request_id}\x12o\n" +
 	"\x04Read\x12\x1d.anra.a2a.tape.v1.ReadRequest\x1a\x1e.anra.a2a.tape.v1.ReadResponse\"(\x82\xd3\xe4\x93\x02\"\x12 /v1/tape/views/{view_id}/entries\x12{\n" +
-	"\aRelease\x12 .anra.a2a.tape.v1.ReleaseRequest\x1a!.anra.a2a.tape.v1.ReleaseResponse\"+\x82\xd3\xe4\x93\x02%:\x01*\" /v1/tape/views/{view_id}:releaseB4Z2github.com/scbizu/anra/gen/anra/a2a/tape/v1;tapev1b\x06proto3"
+	"\aRelease\x12 .anra.a2a.tape.v1.ReleaseRequest\x1a!.anra.a2a.tape.v1.ReleaseResponse\"+\x82\xd3\xe4\x93\x02%:\x01*\" /v1/tape/views/{view_id}:releaseB9Z7github.com/anra-studio/anra/gen/anra/a2a/tape/v1;tapev1b\x06proto3"
 
 var (
 	file_anra_a2a_tape_v1_tape_proto_rawDescOnce sync.Once

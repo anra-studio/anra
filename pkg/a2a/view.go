@@ -7,7 +7,7 @@ import (
 	"time"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"

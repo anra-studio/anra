@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
-	"github.com/scbizu/anra/pkg/peer"
+	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
+	"github.com/anra-studio/anra/pkg/peer"
 	"github.com/spf13/cobra"
 )
 

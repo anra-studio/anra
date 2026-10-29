@@ -11,12 +11,12 @@ import (
 	"sync/atomic"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	pv "github.com/scbizu/anra/gen/anra/peer/v1"
-	"github.com/scbizu/anra/pkg/a2a"
-	"github.com/scbizu/anra/pkg/agent"
-	"github.com/scbizu/anra/pkg/config"
-	"github.com/scbizu/anra/pkg/discovery"
-	"github.com/scbizu/anra/pkg/model"
+	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
+	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/agent"
+	"github.com/anra-studio/anra/pkg/config"
+	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/model"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 )

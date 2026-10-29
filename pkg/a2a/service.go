@@ -10,8 +10,8 @@ import (
 	"time"
 	"uuid"
 
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
-	"github.com/scbizu/anra/pkg/model/journal"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/pkg/model/journal"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"

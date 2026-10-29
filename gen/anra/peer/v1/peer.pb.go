@@ -164,7 +164,7 @@ const file_anra_peer_v1_peer_proto_rawDesc = "" +
 	"\x05Skill\x12\x17\n" +
 	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x02id\x12\x1d\n" +
 	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x042\x02\\SR\x04name\x12 \n" +
-	"\vdescription\x18\x03 \x01(\tR\vdescriptionB0Z.github.com/scbizu/anra/gen/anra/peer/v1;peerv1b\x06proto3"
+	"\vdescription\x18\x03 \x01(\tR\vdescriptionB5Z3github.com/anra-studio/anra/gen/anra/peer/v1;peerv1b\x06proto3"
 
 var (
 	file_anra_peer_v1_peer_proto_rawDescOnce sync.Once

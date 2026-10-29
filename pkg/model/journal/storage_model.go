@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
-	"github.com/scbizu/anra/pkg/model/anchor"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/pkg/model/anchor"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/protobuf/types/known/timestamppb"

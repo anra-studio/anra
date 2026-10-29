@@ -13,9 +13,9 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"github.com/cucumber/godog"
-	rv "github.com/scbizu/anra/gen/anra/registry/v1"
-	"github.com/scbizu/anra/pkg/a2a"
-	"github.com/scbizu/anra/pkg/discovery"
+	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
+	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/discovery"
 )
 
 type teamScenario struct {

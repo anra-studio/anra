@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-playground/validator/v10"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"google.golang.org/protobuf/proto"
 )
 

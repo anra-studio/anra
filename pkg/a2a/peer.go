@@ -6,9 +6,9 @@ import (
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/scbizu/anra/gen/anra/a2a/tape/v1/tapev1connect"
-	pv "github.com/scbizu/anra/gen/anra/peer/v1"
-	peermodel "github.com/scbizu/anra/pkg/model/peer"
+	"github.com/anra-studio/anra/gen/anra/a2a/tape/v1/tapev1connect"
+	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
+	peermodel "github.com/anra-studio/anra/pkg/model/peer"
 )
 
 // Card translates Anra's canonical Peer into its A2A representation. Protocol

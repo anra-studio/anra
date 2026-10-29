@@ -10,8 +10,8 @@ import (
 	"uuid"
 
 	"buf.build/go/protovalidate"
-	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"

@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"time"
 
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/timshannon/bolthold"
 	bolt "go.etcd.io/bbolt"
 	"google.golang.org/protobuf/proto"

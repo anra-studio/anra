@@ -8,7 +8,7 @@ import "google/api/annotations.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/scbizu/anra/gen/anra/registry/v1;registryv1";
+option go_package = "github.com/anra-studio/anra/gen/anra/registry/v1;registryv1";
 
 enum PresenceState {
   // buf:lint:ignore ENUM_ZERO_VALUE_SUFFIX

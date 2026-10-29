@@ -11,8 +11,8 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
-	"github.com/scbizu/anra/gen/anra/a2a/tape/v1/tapev1connect"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/gen/anra/a2a/tape/v1/tapev1connect"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"

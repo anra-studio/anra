@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"buf.build/go/protovalidate"
-	pv "github.com/scbizu/anra/gen/anra/peer/v1"
+	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	"google.golang.org/protobuf/proto"
 )
 

@@ -5,7 +5,7 @@
 > Current code lends committed conversation windows; it has no publication
 > records, publication exporter, or intermediate publication tool.
 
-Historical status: implemented for final-answer publication before TapeView replacement; tracked in [issue #5](https://github.com/scbizu/anra/issues/5).
+Historical status: implemented for final-answer publication before TapeView replacement; tracked in [issue #5](https://github.com/anra-studio/anra/issues/5).
 The optional intermediate `publish_context` tool is reserved for a later change.
 Read the [implementation guide](anchor-busy-implementation-guide.md) with this spec.
 
@@ -654,7 +654,7 @@ use, in accordance with `AGENTS.md`.
 
 ## 13. References and review gates
 
-- [Issue #5](https://github.com/scbizu/anra/issues/5)
+- [Issue #5](https://github.com/anra-studio/anra/issues/5)
 - [Implementation guide](anchor-busy-implementation-guide.md)
 - [Existing TapeView design](a2a-tape-view-extension-design.md)
 - [A2A adapter](../a2a-adapter.md)

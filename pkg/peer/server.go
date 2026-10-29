@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	pv "github.com/scbizu/anra/gen/anra/peer/v1"
-	"github.com/scbizu/anra/internal/httpserver"
-	"github.com/scbizu/anra/pkg/a2a"
-	"github.com/scbizu/anra/pkg/discovery"
-	peermodel "github.com/scbizu/anra/pkg/model/peer"
+	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
+	"github.com/anra-studio/anra/internal/httpserver"
+	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/discovery"
+	peermodel "github.com/anra-studio/anra/pkg/model/peer"
 )
 
 // Serve advertises the bound listener, maintains its observed presence, and serves

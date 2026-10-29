@@ -9,9 +9,9 @@ import (
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
-	"github.com/scbizu/anra/pkg/model/delegator"
+	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/pkg/model/delegator"
 )
 
 // Runtime is satisfied by *agent.Anra. The peer owns its runtime and tape;

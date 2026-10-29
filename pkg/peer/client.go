@@ -3,9 +3,9 @@ package peer
 import (
 	"context"
 
-	"github.com/scbizu/anra/pkg/a2a"
-	"github.com/scbizu/anra/pkg/config"
-	"github.com/scbizu/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/config"
+	"github.com/anra-studio/anra/pkg/discovery"
 )
 
 // Ask discovers and calls the configured running agent, without opening local

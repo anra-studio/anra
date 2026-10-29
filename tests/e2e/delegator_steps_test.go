@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/cucumber/godog"
-	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
-	"github.com/scbizu/anra/pkg/model/delegator"
+	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
+	"github.com/anra-studio/anra/pkg/model/delegator"
 	"github.com/scbizu/tape-go/pkg/runner"
 	"google.golang.org/protobuf/proto"
 )

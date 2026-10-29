@@ -5,7 +5,7 @@
 > Current code lends committed conversation windows; it has no publication
 > records, publication exporter, or intermediate publication tool.
 
-Historical implementation reference for [issue #5](https://github.com/scbizu/anra/issues/5).
+Historical implementation reference for [issue #5](https://github.com/anra-studio/anra/issues/5).
 The [technical specification](anchor-busy-collaboration-spec.md) defines behavior;
 this guide maps it to the inspected Anra code. Function/type names proposed here
 are design sketches; consult the implemented APIs for exact signatures.

@@ -8,7 +8,7 @@ package collaborationv1
 
 import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
-	v1 "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	v1 "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -275,7 +275,7 @@ const file_anra_a2a_collaboration_v1_collaboration_proto_rawDesc = "" +
 	"\vSTATUS_BUSY\x10\x02*F\n" +
 	"\tRetryHint\x12\x1a\n" +
 	"\x16RETRY_HINT_UNSPECIFIED\x10\x00\x12\x1d\n" +
-	"\x19RETRY_HINT_AFTER_NEW_VIEW\x10\x01BFZDgithub.com/scbizu/anra/gen/anra/a2a/collaboration/v1;collaborationv1b\x06proto3"
+	"\x19RETRY_HINT_AFTER_NEW_VIEW\x10\x01BKZIgithub.com/anra-studio/anra/gen/anra/a2a/collaboration/v1;collaborationv1b\x06proto3"
 
 var (
 	file_anra_a2a_collaboration_v1_collaboration_proto_rawDescOnce sync.Once

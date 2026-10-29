@@ -7,7 +7,7 @@ package registryv1connect
 import (
 	connect "connectrpc.com/connect/v2"
 	context "context"
-	v1 "github.com/scbizu/anra/gen/anra/registry/v1"
+	v1 "github.com/anra-studio/anra/gen/anra/registry/v1"
 	sync "sync"
 )
 

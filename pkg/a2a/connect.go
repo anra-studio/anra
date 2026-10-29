@@ -6,9 +6,9 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/validate"
-	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
-	"github.com/scbizu/anra/gen/anra/a2a/tape/v1/tapev1connect"
-	"github.com/scbizu/anra/internal/httpserver"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/gen/anra/a2a/tape/v1/tapev1connect"
+	"github.com/anra-studio/anra/internal/httpserver"
 )
 
 const ViewPath = "/" + tapev1connect.TapeViewServiceName

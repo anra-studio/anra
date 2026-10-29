@@ -7,7 +7,7 @@ package tapev1connect
 import (
 	connect "connectrpc.com/connect/v2"
 	context "context"
-	v1 "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
+	v1 "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	sync "sync"
 )
 

@@ -6,7 +6,7 @@ import "anra/a2a/tape/v1/tape.proto";
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1;collaborationv1";
+option go_package = "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1;collaborationv1";
 
 // DelegationMetadata is carried in the urn:anra:a2a:collaboration:v1 request
 // metadata of a standard A2A Message. It never supplies the caller's identity.

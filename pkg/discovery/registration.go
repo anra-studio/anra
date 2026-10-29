@@ -8,9 +8,9 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"github.com/google/uuid"
-	pv "github.com/scbizu/anra/gen/anra/peer/v1"
-	rv "github.com/scbizu/anra/gen/anra/registry/v1"
-	peermodel "github.com/scbizu/anra/pkg/model/peer"
+	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
+	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
+	peermodel "github.com/anra-studio/anra/pkg/model/peer"
 	"google.golang.org/protobuf/proto"
 )
 

@@ -8,7 +8,7 @@ package registryv1
 
 import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
-	v1 "github.com/scbizu/anra/gen/anra/peer/v1"
+	v1 "github.com/anra-studio/anra/gen/anra/peer/v1"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -864,7 +864,7 @@ const file_anra_registry_v1_registry_proto_rawDesc = "" +
 	"Disconnect\x12#.anra.registry.v1.DisconnectRequest\x1a$.anra.registry.v1.DisconnectResponse\"-\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/registry/peers/{id}:disconnect\x12l\n" +
 	"\x06Lookup\x12\x1f.anra.registry.v1.LookupRequest\x1a .anra.registry.v1.LookupResponse\"\x1f\x82\xd3\xe4\x93\x02\x19\x12\x17/v1/registry/peers/{id}\x12a\n" +
 	"\x04List\x12\x1d.anra.registry.v1.ListRequest\x1a\x1e.anra.registry.v1.ListResponse\"\x1a\x82\xd3\xe4\x93\x02\x14\x12\x12/v1/registry/peers\x12l\n" +
-	"\x06Forget\x12\x1f.anra.registry.v1.ForgetRequest\x1a .anra.registry.v1.ForgetResponse\"\x1f\x82\xd3\xe4\x93\x02\x19*\x17/v1/registry/peers/{id}B8Z6github.com/scbizu/anra/gen/anra/registry/v1;registryv1b\x06proto3"
+	"\x06Forget\x12\x1f.anra.registry.v1.ForgetRequest\x1a .anra.registry.v1.ForgetResponse\"\x1f\x82\xd3\xe4\x93\x02\x19*\x17/v1/registry/peers/{id}B=Z;github.com/anra-studio/anra/gen/anra/registry/v1;registryv1b\x06proto3"
 
 var (
 	file_anra_registry_v1_registry_proto_rawDescOnce sync.Once
