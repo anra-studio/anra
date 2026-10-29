@@ -13,7 +13,7 @@ func newRootCommand() *cobra.Command {
 Agents are configured in the TOML file named by --config; --agent selects the
 [agents.<name>] table. Settings are read at startup, so restart a command or
 server to apply a change. run/serve use tape-go's ADK runtime, configured
-models, and built-in tools. DeepSeek requires DEEPSEEK_API_KEY.
+models, and built-in tools. OpenAI-compatible requires OPENAI_API_KEY.
 Registry and peer endpoints must be accessible only to trusted team members.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,

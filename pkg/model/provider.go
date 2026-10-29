@@ -8,29 +8,29 @@ import (
 	"os"
 	"strings"
 
-	deepseek "github.com/cohesion-org/deepseek-go"
-	"github.com/scbizu/tape-go/pkg/provider/ds"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/scbizu/tape-go/pkg/provider/openai"
 	adkmodel "google.golang.org/adk/model"
 )
 
-// New initializes a tape-go model for the agent runtime. DeepSeek credentials
-// and the optional endpoint override come from DEEPSEEK_API_KEY and
-// DEEPSEEK_API_BASE; an empty name uses tape-go's provider default.
+// New initializes a tape-go model for the agent runtime. OpenAI-compatible credentials
+// and the optional endpoint override come from OPENAI_API_KEY and
+// OPENAI_BASE_URL; an empty name uses tape-go's provider default.
 func New(provider, name string) (adkmodel.LLM, error) {
-	if provider != "deepseek" {
-		return nil, fmt.Errorf("unknown provider %q (use deepseek)", provider)
+	if provider != "openai" {
+		return nil, fmt.Errorf("unknown provider %q (use openai)", provider)
 	}
-	key := os.Getenv("DEEPSEEK_API_KEY")
+	key := os.Getenv("OPENAI_API_KEY")
 	if strings.TrimSpace(key) == "" {
-		return nil, errors.New("DEEPSEEK_API_KEY is required for provider deepseek")
+		return nil, errors.New("OPENAI_API_KEY is required for provider openai")
 	}
-	var opts []deepseek.Option
-	if apiBase := os.Getenv("DEEPSEEK_API_BASE"); apiBase != "" {
+	var opts []option.RequestOption
+	if apiBase := os.Getenv("OPENAI_BASE_URL"); apiBase != "" {
 		u, err := url.Parse(apiBase)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return nil, errors.New("DEEPSEEK_API_BASE must be an HTTP(S) provider URL")
+			return nil, errors.New("OPENAI_BASE_URL must be an HTTP(S) provider URL")
 		}
-		opts = append(opts, deepseek.WithBaseURL(strings.TrimRight(apiBase, "/")+"/"))
+		opts = append(opts, option.WithBaseURL(strings.TrimRight(apiBase, "/")+"/"))
 	}
-	return ds.NewModel(key, name, opts...)
+	return openai.NewModel(key, name, opts...)
 }

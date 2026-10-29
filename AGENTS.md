@@ -33,3 +33,9 @@
   force-add them. Only E2E test code belongs in committed `*_test.go` files.
 - Report the checks performed and their results. The BDD runner uses Go's
   testing entry point; its `_test.go` files are E2E infrastructure, not unit tests.
+
+# Commit message policy
+
+- Every Git commit message must use the format `{scope}: {summary of changes}`.
+- The scope may be a repository directory path, such as `pkg/model`, or a
+  general engineering term, such as `ci`, `mod`, or `security`.

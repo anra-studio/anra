@@ -16,8 +16,10 @@ Agents can communicate with peers and share relevant context with permission.
 
 ## Say hello between two running agents
 
-Build the CLI with `mise run build-cli`. Set `DEEPSEEK_API_KEY` for both agent
-servers, then start the shared directory:
+Build the CLI with `mise run build-cli`. Set `OPENAI_API_KEY` for both agent
+servers. For a custom OpenAI-compatible service, set `OPENAI_BASE_URL` to its
+base URL (including `/v1` if required) and configure its model name. Then start
+the shared directory:
 
 ```sh
 ./anra registry --listen 127.0.0.1:9090
@@ -59,7 +61,7 @@ invocation while its owner keeps thinking, then continue its own model loop.
 Execution anchors use `anra.dev/anchor/v1`; interrupted work is closed as
 abandoned at restart. See the [collaboration specification](docs/designs/anchor-tape-view-collaboration-spec.md).
 
-Agents run tape-go's ADK runtime with the DeepSeek provider. Tools are built in;
+Agents run tape-go's ADK runtime with the OpenAI-compatible provider. Tools are built in;
 the CLI and config do not accept injected tools. Agent settings come only from
 the required `--config` file and are read at startup; restart a server to apply
 a change. `[lobby].address` and each agent's `data-dir`, `provider`, `timeout`,

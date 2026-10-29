@@ -127,7 +127,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 	})
 	sc.Step(`^another server attempts to register as "([^"]*)"$`, func(id string) error {
 		path := filepath.Join(c.s.root, "duplicate.toml")
-		text := fmt.Sprintf("[lobby]\naddress = %q\n\n[agents.%[2]s]\ndesc = '%[2]s'\ndata-dir = 'duplicate'\nprovider = 'deepseek'\ntimeout = '1m'\nendpoint = '127.0.0.1:0'\n", t.registry.peer, id)
+		text := fmt.Sprintf("[lobby]\naddress = %q\n\n[agents.%[2]s]\ndesc = '%[2]s'\ndata-dir = 'duplicate'\nprovider = 'openai'\ntimeout = '1m'\nendpoint = '127.0.0.1:0'\n", t.registry.peer, id)
 		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 			return err
 		}
@@ -268,7 +268,7 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 func (t *teamScenario) startAgents(a, b string) error {
 	config := fmt.Sprintf("[lobby]\naddress = %q\n", t.registry.peer)
 	for _, id := range []string{a, b} {
-		config += fmt.Sprintf("[agents.%[1]s]\ndesc = '%[1]s'\ndata-dir = 'cli'\nprovider = 'deepseek'\ntimeout = '1m'\nendpoint = '127.0.0.1:0'\n", id)
+		config += fmt.Sprintf("[agents.%[1]s]\ndesc = '%[1]s'\ndata-dir = 'cli'\nprovider = 'openai'\ntimeout = '1m'\nendpoint = '127.0.0.1:0'\n", id)
 	}
 	if err := os.WriteFile(t.c.configPath(), []byte(config), 0o600); err != nil {
 		return err

@@ -103,11 +103,12 @@ func newModelServer(control *providerControl) *httptest.Server {
 			http.Error(w, "invalid fixture key", http.StatusUnauthorized)
 			return
 		}
-		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
+		if r.URL.Path != "/chat/completions" && r.URL.Path != "/gateway/v1/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
 		var request struct {
+			Model    string              `json:"model"`
 			Messages []completionMessage `json:"messages"`
 			Tools    []struct {
 				Function struct {
@@ -165,6 +166,9 @@ func newModelServer(control *providerControl) *httptest.Server {
 		if input == "report your configured role" {
 			// Report the configured instruction before ADK's appended agent metadata.
 			message["content"] = strings.Join(strings.Fields(role), " ")
+		}
+		if input == "report requested model" {
+			message["content"] = request.Model
 		}
 		finish := "stop"
 		last := request.Messages[len(request.Messages)-1]

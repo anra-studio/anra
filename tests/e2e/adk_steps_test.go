@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
@@ -17,6 +18,19 @@ import (
 
 func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 	c := t.c
+	sc.Step(`^an OpenAI-compatible endpoint with base path "([^"]*)" and model "([^"]*)"$`, func(basePath, name string) error {
+		path := c.ensureConfig()
+		text, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		configured := strings.Replace(string(text), "[agents.alice]", fmt.Sprintf("[agents.alice]\nmodel = %q", name), 1)
+		if err := os.WriteFile(path, []byte(configured), 0600); err != nil {
+			return err
+		}
+		c.env = map[string]string{"OPENAI_BASE_URL": c.s.modelServer.URL + basePath}
+		return nil
+	})
 	sc.Step(`^the environment attempts to select an injected tool$`, func() { c.env = map[string]string{"ANRA_TOOLS": "injected"} })
 	sc.Step(`^an agent with persisted legacy model and tool history$`, func() error {
 		s := c.s
@@ -166,8 +180,12 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		switch problem {
 		case "runner flag":
 			args = append(args, "--runner", "echo")
-		case "echo provider":
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \"echo\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0600); err != nil {
+		case "echo provider", "removed deepseek provider":
+			provider := "echo"
+			if problem == "removed deepseek provider" {
+				provider = "deepseek"
+			}
+			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \""+provider+"\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0600); err != nil {
 				return err
 			}
 		case "tool flag":
@@ -178,7 +196,7 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			}
 		case "invalid API base":
 			c.ensureConfig()
-			c.env = map[string]string{"DEEPSEEK_API_BASE": "invalid"}
+			c.env = map[string]string{"OPENAI_BASE_URL": "invalid"}
 		default:
 			return fmt.Errorf("unknown ADK problem %q", problem)
 		}
