@@ -26,9 +26,8 @@ func New(provider, name string) (adkmodel.LLM, error) {
 	}
 	var opts []option.RequestOption
 	if apiBase := os.Getenv("OPENAI_BASE_URL"); apiBase != "" {
-		u, err := url.Parse(apiBase)
-		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return nil, errors.New("OPENAI_BASE_URL must be an HTTP(S) provider URL")
+		if _, err := url.Parse(apiBase); err != nil {
+			return nil, fmt.Errorf("parse OPENAI_BASE_URL: %w", err)
 		}
 		opts = append(opts, option.WithBaseURL(strings.TrimRight(apiBase, "/")+"/"))
 	}

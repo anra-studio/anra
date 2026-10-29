@@ -196,7 +196,7 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			}
 		case "invalid API base":
 			c.ensureConfig()
-			c.env = map[string]string{"OPENAI_BASE_URL": "invalid"}
+			c.env = map[string]string{"OPENAI_BASE_URL": "http://[invalid"}
 		default:
 			return fmt.Errorf("unknown ADK problem %q", problem)
 		}

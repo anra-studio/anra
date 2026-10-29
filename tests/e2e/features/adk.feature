@@ -8,10 +8,11 @@ Feature: ADK runs each agent with its configured model and built-in tools
     Then the CLI answer is "<requested model>"
 
     Examples:
-      | base         | model        | requested model |
-      | /gateway/v1  | custom-model | custom-model    |
-      | /gateway/v1/ | custom-model | custom-model    |
-      | /gateway/v1  |              | gpt-4o-mini     |
+      | base                 | model        | requested model |
+      | /gateway/v1          | custom-model | custom-model    |
+      | /gateway/v1/         | custom-model | custom-model    |
+      | /gateway/v1/#fixture | custom-model | custom-model    |
+      | /gateway/v1          |              | gpt-4o-mini     |
 
   Scenario: An agent discovers and messages a peer through its model's tools
     Given a running team Peer directory
