@@ -1163,8 +1163,7 @@ func (c *collaborationScenario) rejectMismatchedGrant(problem string) error {
 		return err
 	}
 	req := &pb.BorrowRequest{RequestId: "mismatch", Purpose: "test mismatched provenance", Query: "finding", View: ref}
-	args, _ := protojson.Marshal(req)
-	_, err = (a2a.BorrowTool{Client: client}).Execute(c.s.ctx, args)
+	_, _, err = client.BorrowContext(c.s.ctx, req)
 	if !errors.Is(err, a2a.ErrInvalidParams) || reads.Load() != 0 {
 		return fmt.Errorf("mismatched view consumed: %v reads=%d", err, reads.Load())
 	}

@@ -132,6 +132,8 @@ are visible through discovery and borrowed under the recipient's own identity.
 - `pkg/a2a/view.go`: exact snapshot selection, capability declaration, and content export.
 - `pkg/a2a/service.go` and `pkg/model/journal`: grants and their durable lifecycle.
 - `pkg/model/delegator`: per-invocation path and BUSY progress.
+- `pkg/agent/tools/{peer,borrow}.go`: ADK tool definitions using discovery,
+  Delegator transitions, and shared A2A messaging/borrowing clients.
 - Generated tape/collaboration protobufs: snapshot descriptors and metadata validation.
 
 Acceptance is executable in `tests/e2e/features/collaboration.feature`. Scenarios

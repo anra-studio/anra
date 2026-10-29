@@ -9,17 +9,22 @@ such as a web UI, can use it without importing Cobra or launching a subprocess.
 | --- | --- | --- |
 | `config` | Strict TOML decoding, named-agent selection, resolved startup settings and validation | `Load`, `File.Agent`, `Settings.Validate` |
 | `model` | Model provider construction and provider environment settings | `New` |
-| `agent` | Tape-backed ADK reasoning, built-in tools, admission, recovery and publications | `New`, `Anra.Run`, `Anra.Shutdown` |
+| `agent` | Tape-backed ADK reasoning, built-in tool registration, admission, recovery and committed context windows | `New`, `Anra.Run`, `Anra.Shutdown` |
+| `agent/tools` | Built-in ADK tool schemas, argument handling, delegation transitions and model-facing results | `NewPeerTools`, `NewPeerBorrowTool`, `NewBorrowTool` |
 | `peer` | Compose the configured model, agent and disk storage; serve A2A/TapeView; call a running agent | `Open`, `Node.Run`, `Node.Serve`, `Node.Close`, `Ask` |
 | `discovery` | Typed registry client, presence checks, heartbeat maintenance and owned metadata updates | `NewClient`, `Client.Lookup`, `Client.List`, `Client.Start`, `Registration.Update` |
 | `registry` | Persistent Peer directory, runtime ownership, presence and retirement | `Open`, `NewHandler`, `Serve` |
-| `a2a` | A2A and TapeView protocol adapters, clients and peer tools | `NewExecutor`, `NewPeerHandler`, `NewMessageClient`, `NewService` |
-| `model/anchor`, `model/delegator`, `model/journal` | Durable execution/publication records, delegation state and grant records | Protocol and storage types |
+| `a2a` | A2A and TapeView protocol adapters, clients and borrowing services | `NewExecutor`, `NewPeerHandler`, `NewMessageClient`, `Client.BorrowContext`, `NewService` |
+| `model/anchor`, `model/delegator`, `model/journal` | Durable execution records, delegation state and grant records | Protocol and storage types |
 
 `peer` is the composition layer. `agent` knows neither configuration files nor
 process lifecycle. `discovery` knows the directory's HTTP contract but does not
 host its server; `registry` implements that contract. `a2a` adapts the runtime
 through its `Runtime` interface. No package under `pkg/` imports `cmd/` or Cobra.
+`agent/tools` calls discovery, Delegator, and the reusable A2A clients. `a2a`
+does not depend on ADK tool definitions. `Client.BorrowContext` composes grant
+selection and validated view reads; the tool layer only formats their results
+as canonical ProtoJSON objects for the model.
 The private `internal/httpserver` helper shares cancellation and HTTP shutdown
 between peer and registry servers; it has no terminal output.
 

@@ -348,6 +348,10 @@ BUSY progress. `Begin` creates an invocation,
 `Next` prepares a peer edge, `Observe` records the peer outcome, and `Borrowed`
 records progress after the grant is read. A2A adapters encode/decode owned
 metadata snapshots; peer tools do not mutate the protobuf fields or BUSY maps.
+The model-facing functions live in `pkg/agent/tools/peer.go` and `borrow.go`.
+They reuse A2A messaging clients and `Client.BorrowContext`, which composes
+`Borrow` and `ReadView`. Tool schemas and result formatting stay in that package;
+permission decisions, snapshot validation, pagination, and transport stay in A2A.
 Transport identity stays in the A2A adapter. The wire uses generated enum names;
 CLI and tool labels remain
 readable lowercase strings. There is no legacy metadata decoder.

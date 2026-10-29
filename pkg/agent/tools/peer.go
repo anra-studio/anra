@@ -1,8 +1,7 @@
-package a2a
+package tools
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,12 +10,11 @@ import (
 	cp "github.com/scbizu/anra/gen/anra/a2a/collaboration/v1"
 	pb "github.com/scbizu/anra/gen/anra/a2a/tape/v1"
 	rv "github.com/scbizu/anra/gen/anra/registry/v1"
+	"github.com/scbizu/anra/pkg/a2a"
 	"github.com/scbizu/anra/pkg/discovery"
-	"github.com/scbizu/anra/pkg/model/anchor"
 	"github.com/scbizu/anra/pkg/model/delegator"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // Delegation hints use the public ProtoJSON spelling, not Go protobuf field tags.
@@ -59,9 +57,9 @@ type sendResult struct {
 	View   map[string]any `json:"view,omitempty"`
 }
 
-// PeerTools creates native ADK tools backed by the team's Peer directory and
+// NewPeerTools creates native ADK tools backed by the team's Peer directory and
 // official A2A SDK. Tool calls and responses are persisted by the ADK runtime.
-func PeerTools(directory *discovery.Client, h *http.Client, self string) (map[string]tool.Tool, error) {
+func NewPeerTools(directory *discovery.Client, h *http.Client, self string) (map[string]tool.Tool, error) {
 	discover, err := functiontool.New(functiontool.Config{Name: "discover_peers", Description: "Discover online peer agents, their identities, addresses and skills, and any view references supplied with this question. References must be borrowed under your own identity."}, func(ctx tool.Context, _ discoverArgs) (discoverResult, error) {
 		if directory == nil {
 			return discoverResult{}, errors.New("peer discovery requires a configured registry")
@@ -74,20 +72,16 @@ func PeerTools(directory *discovery.Client, h *http.Client, self string) (map[st
 		for _, record := range records {
 			if record.Peer.Id != self {
 				// Expose the canonical protobuf JSON shape to the model.
-				encoded, err := protojson.Marshal(record.Peer)
+				value, err := messageObject(record.Peer)
 				if err != nil {
-					return discoverResult{}, err
-				}
-				var value map[string]any
-				if err := json.Unmarshal(encoded, &value); err != nil {
 					return discoverResult{}, err
 				}
 				result.Agents = append(result.Agents, value)
 			}
 		}
 		for _, ref := range delegator.FromContext(ctx).Metadata().Context {
-			var value map[string]any
-			if err := json.Unmarshal(anchor.ProtoJSON(ref), &value); err != nil {
+			value, err := messageObject(ref)
+			if err != nil {
 				return discoverResult{}, err
 			}
 			result.Context = append(result.Context, value)
@@ -116,7 +110,7 @@ func PeerTools(directory *discovery.Client, h *http.Client, self string) (map[st
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return sendResult{}, err
 		case err != nil:
-			return sendResult{}, fmt.Errorf("%w: %w", ErrInvalidParams, err)
+			return sendResult{}, fmt.Errorf("%w: %w", a2a.ErrInvalidParams, err)
 		}
 		record, err := directory.Lookup(outgoing, args.Peer)
 		if err != nil {
@@ -125,7 +119,7 @@ func PeerTools(directory *discovery.Client, h *http.Client, self string) (map[st
 		if err := discovery.RequireOnline(record); err != nil {
 			return sendResult{}, err
 		}
-		client, err := NewMessageClient(ctx, h, record.Peer)
+		client, err := a2a.NewMessageClient(ctx, h, record.Peer)
 		if err != nil {
 			return sendResult{}, err
 		}
@@ -136,7 +130,10 @@ func PeerTools(directory *discovery.Client, h *http.Client, self string) (map[st
 		d.Observe(args.Peer, result.ResponseMetadata)
 		var view map[string]any
 		if result.View != nil {
-			_ = json.Unmarshal(anchor.ProtoJSON(result.View), &view)
+			view, err = messageObject(result.View)
+			if err != nil {
+				return sendResult{}, err
+			}
 		}
 		// Tool statuses are readable labels; the wire uses protobuf enum names.
 		status := strings.ToLower(strings.TrimPrefix(result.Status.String(), "STATUS_"))

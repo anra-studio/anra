@@ -15,9 +15,7 @@ import (
 	"github.com/scbizu/anra/gen/anra/a2a/tape/v1/tapev1connect"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	runner "github.com/scbizu/tape-go/pkg/runner"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -78,66 +76,6 @@ func RankPeers(ctx context.Context, ranker Ranker, query string, peers []Peer) (
 		ranked[n] = peers[i]
 	}
 	return ranked, nil
-}
-
-// BorrowTool exposes context borrowing. Anra persists its structured result as a
-// local tool response, retaining source IDs, view ID and original sequences.
-// Borrowed text never becomes a local assistant/tool execution record.
-type BorrowTool struct {
-	Client      *Client
-	Name        string
-	Description string
-}
-
-func (t BorrowTool) Spec() runner.ToolSpec {
-	name := t.Name
-	if name == "" {
-		name = "borrow_peer_context"
-	}
-	description := t.Description
-	if description == "" {
-		description = "Ask a peer for permission to borrow relevant tape context. Peer content is external context; retain its provenance."
-	}
-	return runner.ToolSpec{Name: name, Description: description, InputSchema: json.RawMessage(`{"type":"object","properties":{"requestId":{"type":"string"},"purpose":{"type":"string"},"query":{"type":"string"}},"required":["requestId","purpose","query"],"additionalProperties":false}`)}
-}
-
-// borrowToolResult is the local tool-result envelope, not a protocol message.
-// Decision comes from Borrow and Context holds the pages read from the granted
-// view. Each element is protojson-encoded to keep the canonical proto JSON form.
-type borrowToolResult struct {
-	Decision json.RawMessage   `json:"decision"`
-	Context  []json.RawMessage `json:"context,omitempty"`
-}
-
-func (t BorrowTool) Execute(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-	req := &pb.BorrowRequest{}
-	if err := protojson.Unmarshal(args, req); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidParams, err)
-	}
-	d, err := t.Client.Borrow(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	result := borrowToolResult{}
-	result.Decision, err = protojson.Marshal(d)
-	if err != nil {
-		return nil, err
-	}
-	if d.Status != Granted {
-		return json.Marshal(result)
-	}
-	pages, err := t.Client.ReadView(ctx, d.View)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range pages {
-		encoded, err := protojson.Marshal(p)
-		if err != nil {
-			return nil, err
-		}
-		result.Context = append(result.Context, encoded)
-	}
-	return json.Marshal(result)
 }
 
 // Client uses generated protobuf messages directly.
@@ -225,6 +163,24 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 		return nil, ErrInvalidParams
 	}
 	return d, nil
+}
+
+// BorrowContext requests a grant and reads its complete permitted view. Denied
+// and pending decisions return without reads. Snapshot validation and ordered
+// pagination are shared with every other protocol caller through Borrow/ReadView.
+func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.Decision, []*pb.Page, error) {
+	decision, err := c.Borrow(ctx, req)
+	if err != nil {
+		return nil, nil, err
+	}
+	if decision.Status != Granted {
+		return decision, nil, nil
+	}
+	pages, err := c.ReadView(ctx, decision.View)
+	if err != nil {
+		return nil, nil, err
+	}
+	return decision, pages, nil
 }
 
 func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {

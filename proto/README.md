@@ -79,7 +79,8 @@ must include `A2A-Extensions: urn:anra:a2a:tape-view:v1`, set using
 `connect.NewClientContext`. Acknowledgement comes back in response metadata.
 The HTTP client is responsible for credentials, redirects, and endpoint trust.
 `NewClient` handles opt-in, acknowledgement, domain conversions, and public
-error mapping, and is used by `BorrowTool`.
+error mapping. `Client.BorrowContext` combines grant selection and complete
+validated reads for the built-in tools in `pkg/agent/tools` and other hosts.
 
 The schema is a separate extension service, not a new core A2A transport.
 The generated Connect service invokes `Service`, its permission policy, and
@@ -123,7 +124,9 @@ and `errors.As` for `protovalidate.ValidationError` or configuration
 `validator.ValidationErrors`.
 
 HTTP transport limits encoded/decompressed RPC messages to 1 MiB. Borrowed pages
-retain source, view, snapshot, and sequence provenance checks in `BorrowTool`.
+retain source, view, snapshot, and sequence provenance checks in `Client.ReadView`.
+`Client.BorrowContext` reuses those checks, while `pkg/agent/tools` formats the
+generated results as model-facing ProtoJSON objects.
 The lender's selected turn/anchor range defines the complete view size. There
 is no separate maximum-entry cap or truncation of that range; pagination only
 splits its transport. `Eligible`/`Policy` supplies the turn boundaries.
