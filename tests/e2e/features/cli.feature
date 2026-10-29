@@ -81,7 +81,7 @@ Feature: Run tape-backed agents from the terminal
       | problem                  | error                |
       | missing message          | non-empty message    |
       | invalid agent            | --agent must start   |
-      | missing key              | DEEPSEEK_API_KEY     |
+      | missing key              | OPENAI_API_KEY       |
       | removed send             | unknown command      |
       | peer flag                | unknown flag: --peer |
       | removed destination flag | unknown flag: --to   |

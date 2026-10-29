@@ -121,7 +121,7 @@ func (c *cliScenario) writeAgentConfig(registry string) error {
 	}
 	text := fmt.Sprintf("[lobby]\naddress = %q\n\n", registry)
 	for _, id := range []string{"alice", "bob"} {
-		text += fmt.Sprintf("[agents.%[1]s]\ndesc = \"%[1]s\"\ndata-dir = \"cli\"\nprovider = \"deepseek\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n\n", id)
+		text += fmt.Sprintf("[agents.%[1]s]\ndesc = \"%[1]s\"\ndata-dir = \"cli\"\nprovider = \"openai\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n\n", id)
 	}
 	return os.WriteFile(c.configPath(), []byte(text), 0o600)
 }
@@ -144,7 +144,7 @@ func (c *cliScenario) invalidConfig(problem string) error {
 	case "malformed TOML":
 		text += "\n[broken\n"
 	case "wrong setting type":
-		text = strings.ReplaceAll(text, `provider = "deepseek"`, `provider = 123`)
+		text = strings.ReplaceAll(text, `provider = "openai"`, `provider = 123`)
 	case "wrong lobby address type":
 		text = strings.Replace(text, `address = "http://127.0.0.1:1"`, "address = 123", 1)
 	case "unknown lobby setting":
@@ -164,13 +164,13 @@ func (c *cliScenario) invalidConfig(problem string) error {
 	case "agent registry setting":
 		text += "\nregistry = 'http://127.0.0.1:1'\n"
 	case "defaults section":
-		text += "\n[defaults]\nprovider = 'deepseek'\n"
+		text += "\n[defaults]\nprovider = 'openai'\n"
 	case "default agent setting":
 		text = "default-agent = 'alice'\n" + text
 	case "no agents":
 		text = "[lobby]\naddress = 'http://127.0.0.1:1'\n"
 	case "unknown provider":
-		text = strings.ReplaceAll(text, `provider = "deepseek"`, `provider = "unknown"`)
+		text = strings.ReplaceAll(text, `provider = "openai"`, `provider = "unknown"`)
 	case "missing lobby":
 		text = strings.Replace(text, "[lobby]\naddress = \"http://127.0.0.1:1\"\n\n", "", 1)
 	case "invalid public address":
@@ -180,7 +180,7 @@ func (c *cliScenario) invalidConfig(problem string) error {
 	case "unknown selected agent":
 		args = append(args, "--agent", "charlie")
 	case "invalid agent name":
-		text += "\n[agents.'../outside']\nprovider = 'deepseek'\n"
+		text += "\n[agents.'../outside']\nprovider = 'openai'\n"
 	case "invalid duration":
 		text = strings.Replace(text, `timeout = "2s"`, `timeout = "soon"`, 1)
 	case "zero timeout":

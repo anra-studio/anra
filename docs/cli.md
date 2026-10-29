@@ -25,8 +25,8 @@ address = "http://127.0.0.1:9090"
 
 [agents.alice]
 data-dir = ".anra"
-provider = "deepseek"
-model = "deepseek-flash"
+provider = "openai"
+model = "gpt-4o-mini"
 timeout = "1m"
 role = "e2e-bot"
 desc = "alice is a e2e example bot"
@@ -34,8 +34,8 @@ endpoint = "127.0.0.1:0"
 
 [agents.bob]
 data-dir = ".anra"
-provider = "deepseek"
-model = "deepseek-flash"
+provider = "openai"
+model = "gpt-4o-mini"
 timeout = "1m"
 role = "e2e-bot"
 desc = "bob is a e2e example bot"
@@ -51,7 +51,7 @@ settings.
 | --- | --- | --- |
 | `[lobby].address` | Team Peer registry address; agents find peers only through the lobby | Required |
 | `data-dir` | Tape database directory, relative to the config file | Required |
-| `provider` | Model provider (`deepseek`) | Required |
+| `provider` | Model provider (`openai`) | Required |
 | `model` | Model name; empty uses tape-go's provider default | Optional |
 | `timeout` | Command timeout such as `"30s"`; must be positive | Required |
 | `role` | Role part of the agent's system instruction | Optional |
@@ -73,12 +73,20 @@ storage opens. Help does not require a readable config file. `registry` is the
 one command that takes no config: it uses `--listen`, `--data-dir`, and
 `--heartbeat-timeout`.
 
-The remaining shared flags select the agent and file: `--agent` and `--config`. The model credential comes from `DEEPSEEK_API_KEY`.
-`DEEPSEEK_API_BASE` optionally overrides the provider's HTTP endpoint (the E2Es
-point it at a deterministic local model fixture). Credentials are never TOML
-settings.
+The remaining shared flags select the agent and file: `--agent` and `--config`. The model credential comes from `OPENAI_API_KEY`.
+`OPENAI_BASE_URL` optionally overrides the OpenAI-compatible Chat Completions
+base URL. It defaults to `https://api.openai.com/v1`; include any required path
+prefix, for example `https://gateway.example.com/v1`. Anra appends
+`chat/completions`, and a trailing slash is optional. Credentials are never TOML
+settings. Set `model` to a model supported by your endpoint; the default is
+`gpt-4o-mini`.
 
-Start the directory with `./anra registry`, set `DEEPSEEK_API_KEY` in both
+To migrate an existing configuration, change `provider = "deepseek"` to
+`provider = "openai"`, rename `DEEPSEEK_API_KEY` to `OPENAI_API_KEY`, and rename
+`DEEPSEEK_API_BASE` to `OPENAI_BASE_URL`. Keep the endpoint's model name. The old
+provider and environment variable names are no longer supported.
+
+Start the directory with `./anra registry`, set `OPENAI_API_KEY` in both
 server environments, then start the agents in separate terminals:
 
 ```sh
@@ -103,7 +111,7 @@ answer to stdout, and closes storage. A later command with the same agent
 and data directory reconstructs its conversation from disk.
 
 The runner is tape-go's ADK runtime. The `provider` setting selects the model
-provider; it does not replace the agent loop. Set `DEEPSEEK_API_KEY` in the
+provider; it does not replace the agent loop. Set `OPENAI_API_KEY` in the
 environment before using `run` or `serve`. Leaving `model` empty uses
 tape-go's provider default. An absent key is an error. Production has no echo
 provider; the repository E2Es run a deterministic provider HTTP fixture with a

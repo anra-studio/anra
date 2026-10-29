@@ -2,6 +2,18 @@ Feature: ADK runs each agent with its configured model and built-in tools
   Production agents use tape-go's ADK runtime. Deterministic model fixtures
   exercise real model HTTP requests, tool execution, peer HTTP, and tape storage.
 
+  Scenario Outline: Use an OpenAI-compatible endpoint with a custom base path
+    Given an OpenAI-compatible endpoint with base path "<base>" and model "<model>"
+    When I run the local CLI agent "alice" with "report requested model"
+    Then the CLI answer is "<requested model>"
+
+    Examples:
+      | base                 | model        | requested model |
+      | /gateway/v1          | custom-model | custom-model    |
+      | /gateway/v1/         | custom-model | custom-model    |
+      | /gateway/v1/#fixture | custom-model | custom-model    |
+      | /gateway/v1          |              | gpt-4o-mini     |
+
   Scenario: An agent discovers and messages a peer through its model's tools
     Given a running team Peer directory
     And team agents "alice" and "bob" are serving
@@ -35,12 +47,13 @@ Feature: ADK runs each agent with its configured model and built-in tools
     And no CLI tape directory is created
 
     Examples:
-      | problem            | error             |
-      | runner flag        | unknown flag      |
-      | echo provider      | unknown provider  |
-      | tool flag          | unknown flag      |
-      | tool config        | parse config      |
-      | invalid API base   | DEEPSEEK_API_BASE |
+      | problem                   | error            |
+      | runner flag               | unknown flag     |
+      | echo provider             | unknown provider |
+      | removed deepseek provider | unknown provider |
+      | tool flag                 | unknown flag     |
+      | tool config               | parse config     |
+      | invalid API base          | OPENAI_BASE_URL  |
 
   Scenario: Existing model and tool history remains readable after adopting ADK
     Given an agent with persisted legacy model and tool history

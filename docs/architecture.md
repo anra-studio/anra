@@ -68,7 +68,7 @@ A host can also build a `config.Settings` value directly. `peer.Open` validates
 it before opening storage, including the identity used in database filenames.
 For custom runtime composition, use `agent.New` with initialized tape storage;
 `model.New` is independent of the agent loop. Provider credentials continue to
-come from `DEEPSEEK_API_KEY` and `DEEPSEEK_API_BASE`.
+come from `OPENAI_API_KEY` and `OPENAI_BASE_URL`.
 
 ## Serving and calling running peers
 

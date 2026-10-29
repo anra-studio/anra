@@ -225,7 +225,7 @@ func initializeApplication(sc *godog.ScenarioContext, cli *cliScenario) {
 
 func (a *applicationScenario) start() error {
 	a.env = make(map[string]*string)
-	for key, value := range map[string]string{"DEEPSEEK_API_KEY": "e2e-model-key", "DEEPSEEK_API_BASE": a.cli.s.modelServer.URL} {
+	for key, value := range map[string]string{"OPENAI_API_KEY": "e2e-model-key", "OPENAI_BASE_URL": a.cli.s.modelServer.URL} {
 		if old, ok := os.LookupEnv(key); ok {
 			a.env[key] = &old
 		} else {

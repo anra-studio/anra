@@ -1,6 +1,6 @@
 # Anra agent team
 
-Anra composes agents on tape-go, pinned to `v0.2.0-anra.2`. Each member owns an identity, role instructions,
+Anra composes agents on tape-go, pinned to `v0.2.0-anra.3`. Each member owns an identity, role instructions,
 an ADK runtime, built-in tools, and a Tape. Members communicate through A2A and can borrow
 another member's Tape view when authorized.
 

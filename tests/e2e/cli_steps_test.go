@@ -138,7 +138,7 @@ func (c *cliScenario) dataDir() string { return filepath.Join(c.s.root, "cli") }
 func cliEnv() []string {
 	var env []string
 	for _, value := range os.Environ() {
-		if !strings.HasPrefix(value, "DEEPSEEK_API_") && !strings.HasPrefix(value, "ANRA_") {
+		if !strings.HasPrefix(value, "OPENAI_") && !strings.HasPrefix(value, "ANRA_") {
 			env = append(env, value)
 		}
 	}
@@ -146,7 +146,7 @@ func cliEnv() []string {
 }
 
 func (c *cliScenario) environment() []string {
-	env := append(cliEnv(), "DEEPSEEK_API_KEY=e2e-model-key", "DEEPSEEK_API_BASE="+c.s.modelServer.URL)
+	env := append(cliEnv(), "OPENAI_API_KEY=e2e-model-key", "OPENAI_BASE_URL="+c.s.modelServer.URL)
 	for key, value := range c.env {
 		env = append(env, key+"="+value)
 	}
@@ -286,7 +286,7 @@ func (c *cliScenario) invalid(problem string) error {
 		if c.env == nil {
 			c.env = make(map[string]string)
 		}
-		c.env["DEEPSEEK_API_KEY"] = ""
+		c.env["OPENAI_API_KEY"] = ""
 		args = append(args, "hello")
 	case "removed send":
 		args = []string{"send", "--agent", "alice", "--config", c.ensureConfig(), "hello"}
