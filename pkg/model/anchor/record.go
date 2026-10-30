@@ -44,7 +44,10 @@ var recordValidator = func() *validator.Validate {
 	// byte limit, so preserve that wire-format constraint explicitly.
 	if err := v.RegisterValidation("maxbytes", func(fl validator.FieldLevel) bool {
 		limit, err := strconv.Atoi(fl.Param())
-		return err == nil && len(fl.Field().String()) <= limit
+		if err != nil {
+			return false
+		}
+		return len(fl.Field().String()) <= limit
 	}); err != nil {
 		panic(err)
 	}
@@ -66,7 +69,10 @@ func decodeRecord(e te.EntryLike, raw []byte) (*Record, error) {
 	}
 	if r.Type == TurnClosed {
 		start, err := te.ParseSeq(r.StartSeq)
-		if err != nil || start.IsZero() || start.Cmp(e.GetID()) >= 0 {
+		if err != nil {
+			return nil, errors.New("anchor: invalid turn reference")
+		}
+		if start.IsZero() || start.Cmp(e.GetID()) >= 0 {
 			return nil, errors.New("anchor: invalid turn reference")
 		}
 		if r.Outcome == "completed" && start.Next().Cmp(e.GetID()) >= 0 {
