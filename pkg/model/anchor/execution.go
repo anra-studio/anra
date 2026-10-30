@@ -8,9 +8,10 @@ import (
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
+// Schema identifies native execution records in the custom anchor envelope.
 const Schema = "anra.dev/anchor/v1"
 
-// Record is a native v1 execution record. Other schemas own their own payloads.
+// Record describes tape initialization or an execution turn transition.
 type Record struct {
 	Schema     string       `json:"schema"`
 	Type       string       `json:"type"`
@@ -22,8 +23,8 @@ type Record struct {
 	Outcome    string       `json:"outcome,omitempty"`
 }
 
-// decodeV1 owns the field and reference invariants of native execution records.
-func decodeV1(e te.EntryLike, raw []byte) (*Record, error) {
+// decodeExecutionRecord validates the fields and references of an execution transition.
+func decodeExecutionRecord(e te.EntryLike, raw []byte) (*Record, error) {
 	var r Record
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return nil, err
