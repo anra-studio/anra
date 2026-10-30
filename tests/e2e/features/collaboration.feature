@@ -158,6 +158,8 @@ Feature: Anchor-backed nonblocking peer collaboration
       | invalid v1 start             |
       | invalid v1 source            |
       | invalid v1 outcome           |
+      | forbidden v1 field           |
+      | oversized multibyte identity |
       | oversized identity           |
       | malformed integration record |
       | malformed record             |

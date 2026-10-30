@@ -16,7 +16,6 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/cucumber/godog"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
@@ -25,6 +24,7 @@ import (
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/registry"
+	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -451,7 +451,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^startup rejects a tape containing (unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|oversized identity|malformed integration record|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
+	sc.Step(`^startup rejects a tape containing (unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|forbidden v1 field|oversized multibyte identity|oversized identity|malformed integration record|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
 		n := c.nodes["alice"]
 		if n.registration != nil {
 			n.registration.Close()
@@ -471,6 +471,10 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"tape.initialized"}`}
 		case "invalid v1 outcome":
 			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.closed","turnId":"one","startSeq":"1","outcome":"unknown"}`}
+		case "forbidden v1 field":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old","outcome":"failed"}`}
+		case "oversized multibyte identity":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("界", 86) + `"}`}
 		case "oversized identity":
 			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("x", 257) + `"}`}
 		case "malformed integration record":

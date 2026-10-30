@@ -37,7 +37,7 @@ func Decode(e te.EntryLike) (*Record, error) {
 	// belong to the v1 execution state machine, even if they reuse its types.
 	switch tag.Schema {
 	case Schema:
-		return decodeExecutionRecord(e, raw)
+		return decodeRecord(e, raw)
 	default:
 		return nil, nil
 	}
