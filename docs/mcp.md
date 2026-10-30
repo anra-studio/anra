@@ -1,0 +1,153 @@
+# Read-only handoff context over MCP
+
+`pkg/mcp` implements the [Anra MCP design](https://github.com/anra-studio/anra/blob/d7b0a38d0e9d7afd29a763e71679814c6e2b76c8/docs/designs/anra-mcp-spec.md)
+tracked by [Issue #13](https://github.com/anra-studio/anra/issues/13). The design
+currently lives on the documentation branch. This implementation is based on
+`main` and does not change the Peer or CLI endpoints.
+
+The service uses the [official Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk)
+for protocol negotiation, JSON-RPC, and stateless Streamable HTTP with JSON
+responses. Mount `Service.Handler()` at the embedding runtime's `/mcp` endpoint.
+Every HTTP request, including discovery, requires `Authorization: Bearer …`.
+Remote deployments terminate TLS; the SDK's origin and DNS rebinding protection
+remain enabled. MCP session identifiers, role names, and claimed external session
+IDs never establish identity.
+
+## Local controller lifecycle
+
+One service owns one source's private state database and borrows the initialized
+Anra Tape. Its configured Source must match the persisted `tape.initialized`
+record. The controller owns the HTTP listener and the Tape; stop HTTP requests
+before closing the service, and drain the agent before closing its Tape.
+
+The following APIs are local Go methods, never MCP tools:
+
+1. `SaveRole(ctx, RoleDefinition)` publishes the complete reproducible definition
+   as a JSON object under `(id, version)`. Include everything needed to rebuild
+   that revision, without live aliases or credentials. Saving identical contents
+   is idempotent; overwriting a revision fails.
+2. `CommitHandoff(ctx, Handoff)` validates the `anra.dev/anchor/intr/v1`
+   `integration.handoff` record and its explicit protobuf TapeView. All sequences
+   in `[seqS, seqE)`, and the excluded `snapshotHead == seqE` boundary, must
+   already exist on disk. It appends the handoff anchor, then persists SHA-256
+   seals of the anchor, Role revision, and raw window with projection version
+   `anra.context.v1` before returning the anchor sequence.
+3. `Authorize(ctx, Grant)` requires an exact match of Role ID, handoff sequence,
+   target RoleBinding, source, snapshot head, and scope. Permissions are an
+   explicit subset of `read_role` and `read_context_window`, with a required
+   future expiration. It returns a cryptographically random credential once;
+   only its SHA-256 digest is stored.
+4. `Revoke(ctx, credential)` durably and idempotently ends access. Each HTTP
+   request reloads its grant and checks expiry and revocation.
+
+For example, after creating an agent and selecting an explicit persisted view:
+
+```go
+service, err := mcp.NewService(mcp.Config{
+    Source: a.Source(), Owner: "vesta", Tape: a.Tape(),
+    StatePath: "/private/runtime/vesta-mcp.db",
+})
+// Handle err; close service after the HTTP server has stopped.
+
+revision := mcp.RoleRef{ID: "vesta", Version: "role-revision-42"}
+err = service.SaveRole(ctx, mcp.RoleDefinition{
+    RoleRef: revision,
+    Definition: json.RawMessage(`{"instructions":"Help maintain Anra"}`),
+})
+// Handle err before committing the handoff.
+
+anchorSeq, err := service.CommitHandoff(ctx, mcp.Handoff{
+    Schema: mcp.HandoffSchema, Type: "integration.handoff", Role: revision,
+    Target: mcp.Target{Name: "lody", BindingID: "vesta-lody"},
+    Task: "Implement the requested feature", Context: mcp.WindowRef{View: fixedView},
+    Origin: &mcp.Origin{Name: "raft", SessionID: "origin-session"},
+})
+// Handle err before issuing credentials or dispatching external work.
+
+credential, err := service.Authorize(ctx, mcp.Grant{
+    RoleID: "vesta", BindingID: "vesta-lody", AnchorSeq: anchorSeq,
+    Window: mcp.WindowRef{View: fixedView},
+    Permissions: []string{mcp.ReadRole, mcp.ReadContextWindow},
+    ExpiresAt: time.Now().Add(time.Hour),
+})
+// Handle err. Deliver credential through secure runtime configuration only.
+mux.Handle("/mcp", service.Handler())
+```
+
+Definition publication, sealed handoff commit, grant issuance, and secure
+credential delivery must all succeed before dispatch claims context is
+available. Launching sessions, resolving application bindings, OAuth issuance,
+and injecting credentials into Lody or other applications remain integration
+responsibilities. This service does not assume those capabilities exist.
+Never put credentials in prompts, Tape entries, artifacts, or logs.
+
+An explicitly selected persisted prefix can be sealed during an active turn.
+Reads never acquire reasoning Admission or select the current Tape head. Later
+model output and background observations cannot expand the window. Missing or
+changed records fail reconstruction. A crash between the Tape append and seal
+transaction leaves an inaccessible orphan; it does not authorize dispatch or an
+implicit retry. The caller must reconcile that failure before dispatching.
+Revisions, seals, grants, and revocations survive restarts in the state database,
+which is created with mode `0600`.
+
+## Tool contract
+
+Both tools accept exactly `{"anchorSeq":"21"}`. Sequences are positive canonical
+decimal strings of arbitrary precision. Unknown arguments, including role,
+session, and scope overrides, fail validation. Results contain identical JSON
+in MCP `structuredContent` and the text `content` item.
+
+`read_role` returns the sealed revision, never the current configuration:
+
+```json
+{"id":"vesta","version":"role-revision-42","definition":{"instructions":"Help maintain Anra"}}
+```
+
+`read_context_window` returns the original `view`, projected `entries`, and
+`isComplete: true`. Entries contain `seq`, `kind`, `timestamp`, and either
+`content` or `boundary`. Plain text content is a JSON string; supported ADK
+content is a JSON object retaining structured function calls and responses.
+
+Native boundaries retain schema, transition type, turn ID, start sequence, and
+outcome. Integration boundaries retain explicit origin application, binding,
+session, and event references. Storage owners, execution epochs, state deltas,
+arbitrary extensions, delegated task prompts, and private thoughts are excluded.
+
+The initial projection supports plain user/assistant text, supported ADK content,
+native v1 boundaries, and integration v1 boundaries. Unknown kinds/schemas,
+legacy runner codecs, malformed events, or unsupported visible parts (including
+images and executable code) fail explicitly. Function results must match an
+earlier call by ID and name, or an unambiguous name when IDs are absent. Calls
+cannot cross boundaries or remain unresolved. No partial dependency chain is
+returned. Thought-only windows yield `entries: []` and `isComplete: true`, distinct
+from nonexistent handoffs or missing ranges.
+
+`MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and counts
+both structured and text tool-result representations. Requests are capped at
+16 KiB. Reconstruction also caps raw input at 16 times the configured result
+limit and 10,000 records, including the boundary. Limits fail atomically, with
+no truncation. Responses enforce `Cache-Control: no-store`.
+
+## Errors
+
+Authenticated tool failures set `isError: true` and carry
+`{"error":{"code":"…","message":"…"}}` in both result forms. Messages are
+static and never include private references, paths, credentials, or storage
+diagnostics.
+
+| Code | Meaning |
+| --- | --- |
+| `permission_denied` | Wrong anchor/binding/Role/scope, missing tool permission, or missing/expired/revoked credential |
+| `invalid_reference` | Malformed arguments, missing/non-handoff/unsealed anchor, or missing Role revision |
+| `failed_precondition` | Changed sealed data, missing window entries, unsupported/incomplete projection, or exceeded limits |
+| `unavailable` | Transient storage/service failure |
+
+Authentication failures return HTTP 401 with the generic `permission_denied`
+envelope and a Bearer challenge. Storage failures during authentication return
+HTTP 503 with `unavailable`. Cross-anchor requests are denied before resolving
+the target, so nonexistent and private targets remain indistinguishable.
+MCP protocol errors, such as unknown methods or tools, use standard SDK JSON-RPC
+errors.
+
+The executable acceptance contract is [mcp.feature](../tests/e2e/features/mcp.feature).
+Run `mise run e2e` during development and `mise run test` for all repository checks.
