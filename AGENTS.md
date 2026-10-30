@@ -15,6 +15,14 @@
   where they fit, and introduce new ones only when they clarify actual behavior
   or responsibilities. Avoid speculative frameworks and unrelated refactoring.
 
+# Validation policy
+
+- Validate non-Protobuf structures with `go-playground/validator/v10`, declaring
+  field constraints in validation tags.
+- Validate Protobuf messages and fields with Protovalidate, declaring constraints
+  in the `.proto` schema. Reuse these rules instead of duplicating them in
+  handwritten field checks.
+
 # Repository testing policy
 
 - The committed acceptance contract is the executable BDD E2E suite under

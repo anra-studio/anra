@@ -11,21 +11,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const Schema = "anra.dev/anchor/v1"
 const Kind te.EntryKind = "anchor:custom"
 
-type Record struct {
-	Schema     string       `json:"schema"`
-	Type       string       `json:"type"`
-	Source     *pb.Source   `json:"source,omitempty"`
-	TurnID     string       `json:"turnId,omitempty"`
-	OwnerEpoch string       `json:"ownerEpoch,omitempty"`
-	BaseView   *pb.TapeView `json:"baseView,omitempty"`
-	StartSeq   string       `json:"startSeq,omitempty"`
-	Outcome    string       `json:"outcome,omitempty"`
-}
-
-// Decode ignores other custom anchors but fails closed for recognized schemas.
+// Decode returns only native v1 execution records. Valid custom anchors owned
+// by other schemas are ignored. Malformed Anra records and invalid v1 records
+// fail closed. Add schema-specific decoders at the dispatch boundary as needed.
 func Decode(e te.EntryLike) (*Record, error) {
 	if e.GetKind() != Kind {
 		return nil, nil
@@ -43,45 +33,14 @@ func Decode(e te.EntryLike) (*Record, error) {
 	if !strings.HasPrefix(tag.Schema, "anra.dev/anchor/") {
 		return nil, nil
 	}
-	if tag.Schema != Schema {
-		return nil, errors.New("anchor: unsupported schema")
-	}
-	var r Record
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return nil, err
-	}
-	if len(r.TurnID) > 256 || len(r.OwnerEpoch) > 256 {
-		return nil, errors.New("anchor: oversized identity")
-	}
-	switch r.Type {
-	case "tape.initialized":
-		if r.Source.GetAgentId() == "" || r.Source.GetTapeId() == "" || r.TurnID != "" || r.BaseView != nil || r.StartSeq != "" || r.Outcome != "" || r.OwnerEpoch != "" {
-			return nil, errors.New("anchor: invalid source")
-		}
-	case "turn.started":
-		if r.TurnID == "" || r.OwnerEpoch == "" || r.StartSeq != "" || r.Source != nil || r.Outcome != "" {
-			return nil, errors.New("anchor: invalid start")
-		}
-	case "turn.closed":
-		if r.Source != nil || r.BaseView != nil {
-			return nil, errors.New("anchor: invalid record fields")
-		}
-		start, err := te.ParseSeq(r.StartSeq)
-		if err != nil || start.IsZero() || start.Cmp(e.GetID()) >= 0 || r.TurnID == "" {
-			return nil, errors.New("anchor: invalid turn reference")
-		}
-		switch r.Outcome {
-		case "completed", "failed", "cancelled", "abandoned":
-		default:
-			return nil, errors.New("anchor: invalid outcome")
-		}
-		if r.Outcome == "completed" && start.Next().Cmp(e.GetID()) >= 0 {
-			return nil, errors.New("anchor: empty completed context")
-		}
+	// Dispatch by exact schema. Other versions and integration records do not
+	// belong to the v1 execution state machine, even if they reuse its types.
+	switch tag.Schema {
+	case Schema:
+		return decodeRecord(e, raw)
 	default:
-		return nil, errors.New("anchor: unknown record type")
+		return nil, nil
 	}
-	return &r, nil
 }
 
 func CloneRef(r *pb.TapeView) *pb.TapeView {

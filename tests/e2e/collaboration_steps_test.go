@@ -16,7 +16,6 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/cucumber/godog"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
@@ -25,6 +24,7 @@ import (
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/registry"
+	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -121,6 +121,23 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		return ctx, err
 	})
 	sc.Step(`^a collaboration agent$`, c.setup)
+	sc.Step(`^Alice's tape contains a custom anchor with schema "([^"]+)"$`, func(schema string) error {
+		// Deliberately reuse a native type with fields that are invalid in v1:
+		// the schema, rather than the type or field names, owns interpretation.
+		payload, err := json.Marshal(map[string]any{"schema": schema, "type": "turn.started", "turnId": 42, "source": "integration-owned"})
+		if err != nil {
+			return err
+		}
+		_, err = c.nodes["alice"].tape.Store(owner.WithOwnerId(s.ctx, "alice"), entry.NewAnchor(entry.Seq{}, "alice", entry.AnchorKindCustom, payload))
+		return err
+	})
+	sc.Step(`^Alice can continue reasoning after schema dispatch recovery$`, func() error {
+		result, err := c.send("bob", "alice", "after recovery")
+		if err != nil || result.Status != cp.Status_STATUS_COMPLETED || result.Answer != "answer: after recovery" {
+			return fmt.Errorf("reasoning after recovery: %+v: %v", result, err)
+		}
+		return nil
+	})
 	sc.Step(`^Bob borrows Alice's completed tool conversation as a TapeView while she thinks$`, c.toolWindow)
 	sc.Step(`^generated collaboration metadata roundtrips through A2A$`, c.protobufRoundtrip)
 	sc.Step(`^collaboration rejects request metadata with (.+) before reasoning$`, c.rejectRequestMetadata)
@@ -405,7 +422,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		if err != nil {
 			return err
 		}
-		if last == nil || last.Type != "turn.closed" || last.Outcome != "cancelled" {
+		if last == nil || last.Type != anchor.TurnClosed || last.Outcome != "cancelled" {
 			return fmt.Errorf("shutdown left an open turn: %+v", last)
 		}
 		return n.tape.Close()
@@ -434,7 +451,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^startup rejects a tape containing (unsupported schema|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
+	sc.Step(`^startup rejects a tape containing (numeric v1 type|empty v1 type|unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|forbidden v1 field|oversized multibyte identity|oversized identity|malformed integration record|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
 		n := c.nodes["alice"]
 		if n.registration != nil {
 			n.registration.Close()
@@ -446,8 +463,26 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		n.service = nil
 		payloads := []string{}
 		switch problem {
-		case "unsupported schema":
-			payloads = []string{`{"schema":"anra.dev/anchor/v2","type":"turn.started"}`}
+		case "numeric v1 type":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":1}`}
+		case "empty v1 type":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":""}`}
+		case "unknown v1 type":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"integration.created"}`}
+		case "invalid v1 start":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started"}`}
+		case "invalid v1 source":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"tape.initialized"}`}
+		case "invalid v1 outcome":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.closed","turnId":"one","startSeq":"1","outcome":"unknown"}`}
+		case "forbidden v1 field":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old","outcome":"failed"}`}
+		case "oversized multibyte identity":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("界", 86) + `"}`}
+		case "oversized identity":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("x", 257) + `"}`}
+		case "malformed integration record":
+			payloads = []string{`{"schema":"anra.dev/anchor/intr/v1","type":`}
 		case "malformed record":
 			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":`}
 		case "overlapping starts":
@@ -752,7 +787,7 @@ func (c *collaborationScenario) cancelAndContinue() error {
 		if err != nil {
 			return err
 		}
-		if r != nil && r.Type == "turn.closed" {
+		if r != nil && r.Type == anchor.TurnClosed {
 			if r.Outcome == "cancelled" {
 				cancelled++
 			}

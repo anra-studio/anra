@@ -10,12 +10,12 @@ import (
 	"strings"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/cucumber/godog"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
@@ -161,10 +161,10 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 				return err
 			}
 			if r != nil {
-				if r.Type == "tape.initialized" && !proto.Equal(r.Source, ref.Source) {
+				if r.Type == anchor.TapeInitialized && !proto.Equal(r.Source, ref.Source) {
 					return errors.New("source changed on recovery")
 				}
-				if r.Type == "turn.closed" && r.Outcome == "abandoned" {
+				if r.Type == anchor.TurnClosed && r.Outcome == "abandoned" {
 					abandoned++
 				}
 			}

@@ -60,6 +60,8 @@ func (s *eventStorage) Range(ctx context.Context, r view.EntryRange, opts ...sto
 			if err != nil {
 				return view.EntryView{}, err
 			}
+			// Only native execution records are control metadata here.
+			// Other schemas keep their storage representation.
 			if record != nil {
 				continue
 			}
