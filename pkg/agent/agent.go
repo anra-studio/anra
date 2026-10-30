@@ -29,8 +29,8 @@ func New(principal string, tape *bbolt.Bbolt, opts ...Option) (*Anra, error) {
 		principal: principal,
 		tape:      tape,
 		runtime: runtimeConfig{
-			maxTurns: defaultMaxTurns,
-			timeout:  2 * time.Minute,
+			maxModelTurns: defaultMaxModelTurns,
+			timeout:       2 * time.Minute,
 		},
 	}
 	for _, opt := range opts {

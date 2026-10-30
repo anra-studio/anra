@@ -154,7 +154,7 @@ a local pairing of generated response metadata with text extracted from A2A
 parts. The CLI and model tools render readable lowercase status labels.
 `no_new_context` remains a local tool outcome derived from the Delegator's BUSY
 memory, not a protobuf status or wire outcome. `Begin` starts fresh memory for
-each invocation; outgoing siblings share that invocation's progress without
+each turn; outgoing siblings share that turn's progress without
 sharing a mutable path. A successful read of a newer lender-selected snapshot
 clears suppression through `Borrowed`.
 Deadline expiry and cancellation are ordinary context errors. The transport's

@@ -203,4 +203,59 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		c.execute(append(args, "--config", c.configPath(), "hello")...)
 		return nil
 	})
+	sc.Step(`^agent "([^"]*)" has one completed turn enclosing its model and tool steps$`, func(id string) error {
+		tape, err := bbolt.NewBboltStorage("default", filepath.Join(c.dataDir(), id+".db"))
+		if err != nil {
+			return err
+		}
+		defer tape.Close()
+		ctx := owner.WithOwnerId(c.s.ctx, id)
+		if err := tape.Init(ctx); err != nil {
+			return err
+		}
+		state, err := tape.Get(ctx)
+		if err != nil {
+			return err
+		}
+		values, err := tape.Range(ctx, view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: state.Scope.SeqE.Next()})
+		if err != nil {
+			return err
+		}
+		if _, err := inspectLifecycle(values.Raw); err != nil {
+			return err
+		}
+		var turnID, startSeq string
+		starts, closes, modelSteps := 0, 0, 0
+		for _, raw := range values.Raw {
+			if !raw.GetKind().IsAnchor() {
+				if raw.GetKind() == entry.EntryToolCall || raw.GetKind() == entry.EntryAssistant {
+					modelSteps++
+				}
+				continue
+			}
+			// Inspect persisted JSON independently of the production anchor decoder.
+			var record map[string]any
+			if err := json.Unmarshal([]byte(raw.GetSummary()), &record); err != nil {
+				return err
+			}
+			switch record["type"] {
+			case "turn.started":
+				turnID, _ = record["turnId"].(string)
+				if turnID == "" {
+					return fmt.Errorf("turn start lacks turnId: %v", record)
+				}
+				startSeq = raw.GetID().String()
+				starts++
+			case "turn.closed":
+				if record["turnId"] != turnID || record["startSeq"] != startSeq || record["outcome"] != "completed" {
+					return fmt.Errorf("turn close does not match completed turn: %v", record)
+				}
+				closes++
+			}
+		}
+		if starts != 1 || closes != 1 || modelSteps < 2 {
+			return fmt.Errorf("expected one Agent Turn with multiple model steps: starts=%d closes=%d modelSteps=%d", starts, closes, modelSteps)
+		}
+		return nil
+	})
 }

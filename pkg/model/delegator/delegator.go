@@ -1,4 +1,4 @@
-// Package delegator owns an invocation's collaboration path and progress.
+// Package delegator owns a turn's collaboration path and progress.
 // Protobuf defines the wire data; this model controls its runtime transitions.
 package delegator
 
@@ -17,14 +17,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const maxInvocationTime = 2 * time.Minute
+const maxTurnTime = 2 * time.Minute
 
 var ErrNoNewContext = errors.New("delegator: no new context from busy peer")
 
 type contextKey struct{}
 
-// Delegator owns an immutable path and the invocation's shared BUSY memory.
-// Next forks the path for one outgoing edge; Begin creates fresh invocation state.
+// Delegator owns an immutable path and the turn's shared BUSY memory.
+// Next forks the path for one outgoing edge; Begin creates fresh turn state.
 type Delegator struct {
 	metadata *cp.DelegationMetadata
 	busy     *busyPeers
@@ -47,7 +47,7 @@ func Accept(ctx context.Context, metadata *cp.DelegationMetadata) (context.Conte
 	return context.WithValue(ctx, contextKey{}, d), nil
 }
 
-// Begin caps the deadline and starts fresh BUSY memory for a local invocation.
+// Begin caps the deadline and starts fresh BUSY memory for a local turn.
 // An inherited root, path, and context references survive this transition.
 func Begin(ctx context.Context) (context.Context, context.CancelFunc) {
 	metadata := FromContext(ctx).Metadata()
@@ -60,8 +60,8 @@ func Begin(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithDeadline(ctx, deadline)
 }
 
-// FromContext returns the current invocation's model, or a new root when the
-// caller is outside an agent invocation (for example, a CLI request).
+// FromContext returns the current turn's model, or a new root when the
+// caller is outside an agent turn (for example, a CLI request).
 func FromContext(ctx context.Context) *Delegator {
 	if d, ok := ctx.Value(contextKey{}).(*Delegator); ok {
 		return d
@@ -74,7 +74,7 @@ func newDelegator(metadata *cp.DelegationMetadata) *Delegator {
 }
 
 func boundedDeadline(ctx context.Context) time.Time {
-	deadline := time.Now().Add(maxInvocationTime)
+	deadline := time.Now().Add(maxTurnTime)
 	if local, ok := ctx.Deadline(); ok && local.Before(deadline) {
 		deadline = local
 	}
@@ -121,7 +121,7 @@ func (d *Delegator) Next(ctx context.Context, self, peer string, refs []*pb.Tape
 }
 
 // Observe records a validated peer outcome. A BUSY view is copied so
-// later changes to transport results cannot change invocation-local memory.
+// later changes to transport results cannot change turn-local memory.
 func (d *Delegator) Observe(peer string, response *cp.ResponseMetadata) {
 	if response.GetStatus() != cp.Status_STATUS_BUSY {
 		return

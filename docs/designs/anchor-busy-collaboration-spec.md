@@ -11,9 +11,9 @@ Read the [implementation guide](anchor-busy-implementation-guide.md) with this s
 
 ## 1. Decision and scope
 
-An agent owns one append-only tape and admits one reasoning invocation at a time.
+An agent owns one append-only tape and admits one reasoning turn at a time.
 It records admission and termination as custom anchors on that tape. Another
-reasoning request receives a structured BUSY response while an invocation is
+reasoning request receives a structured BUSY response while a turn is
 active. The response can identify published context that the caller may request
 through the permissioned TapeView service without entering the busy runtime.
 
@@ -56,8 +56,8 @@ A2A Go SDK `v2.5.0`. Check these APIs again if dependencies change.
 A2A endpoint, whose executor calls that recipient's `Run`.
 
 A deadlock follows when Alice waits for Bob and Bob calls Alice. Alice's second
-invocation waits for her first invocation's mutex. The local model-turn limit
-cannot help while a tool call is blocked. Separate top-level invocations on
+turn waits for her first turn's mutex. The local model-turn limit
+cannot help while a tool call is blocked. Separate top-level turns on
 Alice and Bob can cause the same problem, without a cycle in either individual
 request's ancestry.
 
@@ -77,8 +77,9 @@ arbitrary intervals containing the proposed control anchors.
 | --- | --- |
 | Source | Stable external `{agentId, tapeId}` identity for one tape incarnation. A registry lease or process restart does not change it. |
 | Entry reference | Source plus a canonical decimal tape sequence. In the current storage API `GetID()` is the sequence; there is no separate anchor counter. |
-| Invocation | One admitted execution of the existing ADK model/tool loop, identified by a UUID. It is not an A2A task. |
-| Owner epoch | A fresh UUID for the process that currently owns the open tape. Used to distinguish recovery from a live invocation. |
+| Agent Turn | One admitted execution of the existing ADK model/tool loop, identified by a UUID. It is not an A2A task. |
+| Model Turn | One model interaction within an Agent Turn. The model-turn limit bounds these interactions within that Agent Turn. |
+| Owner epoch | A fresh UUID for the process that currently owns the open tape. Used to distinguish recovery from a live turn. |
 | Publication | An immutable, explicitly shareable projection attached to a custom anchor. It contains completed findings and their source coverage. |
 | BUSY | New reasoning was not admitted. It is not a successful answer and does not enqueue the request. |
 
@@ -87,8 +88,8 @@ arbitrary intervals containing the proposed control anchors.
 
 Normative invariants:
 
-1. At most one invocation is active for an agent's tape/session.
-2. An invocation must have a committed start anchor before its first user entry
+1. At most one turn is active for an agent's tape/session.
+2. A turn must have a committed start anchor before its first user entry
    or model call. A rejected request appends neither a start anchor nor a user
    entry to that conversation.
 3. A terminal anchor references exactly one start anchor. Terminal records are
@@ -122,7 +123,7 @@ canonical arbitrary-precision decimal strings. Never narrow them to `uint64`.
 For a new tape that has no stable source identity, an initialization record may
 use the same schema with `type: "tape.initialized"` and a required `source` object.
 It is created once under exclusive ownership, is not exportable, and does not
-start an invocation. A later owner reuses it. Conflicting identities fail startup;
+start a turn. A later owner reuses it. Conflicting identities fail startup;
 an existing source bound to a grant journal must be reconciled, not replaced.
 
 ### 4.2 Start anchor: the busy interval begins
@@ -130,8 +131,8 @@ an existing source bound to a grant journal must be reconciled, not replaced.
 ```json
 {
   "schema": "anra.dev/anchor/v1",
-  "type": "invocation.started",
-  "invocationId": "invocation-uuid",
+  "type": "turn.started",
+  "turnId": "turn-uuid",
   "ownerEpoch": "process-uuid",
   "basePublication": {
     "source": {"agentId": "alice", "tapeId": "tape-uuid"},
@@ -140,7 +141,7 @@ an existing source bound to a grant journal must be reconciled, not replaced.
 }
 ```
 
-`invocationId` and `ownerEpoch` are required. `basePublication` is optional and
+`turnId` and `ownerEpoch` are required. `basePublication` is optional and
 references the latest committed publication when admission occurs. The start
 anchor's own sequence, for example `E18`, identifies the busy interval.
 
@@ -148,13 +149,13 @@ Caller identity, a request correlation ID, and the effective deadline may be
 recorded as bounded local diagnostic fields. They are not exported by default.
 An A2A `contextId` or `taskId` must never select the local tape owner.
 
-### 4.3 Publication during an invocation
+### 4.3 Publication during a turn
 
 ```json
 {
   "schema": "anra.dev/anchor/v1",
   "type": "context.published",
-  "invocationId": "invocation-uuid",
+  "turnId": "turn-uuid",
   "startSeq": "18",
   "publication": {
     "summary": "Completed, shareable findings relevant to the storage question.",
@@ -186,8 +187,8 @@ before that failure. Failure does not retroactively publish the remaining tail.
 ```json
 {
   "schema": "anra.dev/anchor/v1",
-  "type": "invocation.closed",
-  "invocationId": "invocation-uuid",
+  "type": "turn.closed",
+  "turnId": "turn-uuid",
   "startSeq": "18",
   "outcome": "completed",
   "publication": {
@@ -201,7 +202,7 @@ before that failure. Failure does not retroactively publish the remaining tail.
 Allowed outcomes: `completed`, `failed`, `cancelled`, and `abandoned`.
 `publication` is optional and allowed only for a successfully completed run.
 A successful terminal anchor may also be its final publication, so closing the
-invocation and publishing its final findings require one atomic append rather
+turn and publishing its final findings require one atomic append rather
 than two appends with a crash window between them. Eligible final answers publish
 by default within the export size limits. No bootstrap sharing option is needed;
 trusted-peer identity and requester-bound TapeView grants govern borrowing the
@@ -216,7 +217,7 @@ must first reconcile committed records before attempting another close.
 
 ```text
 E17  anchor:custom  committed publication
-E18  anchor:custom  invocation.started X, basePublication=E17
+E18  anchor:custom  turn.started X, basePublication=E17
 E19  user          incoming question
 E20  assistant     peer tool call
 E21  tool_result   peer response
@@ -224,7 +225,7 @@ E22  anchor:custom context.published, completed findings through E21
 E23  assistant     further tool call
 E24  tool_result   further tool response
 E25  assistant     final answer
-E26  anchor:custom invocation.closed X, outcome=completed, final publication
+E26  anchor:custom turn.closed X, outcome=completed, final publication
 ```
 
 During X, the active interval is E18 and the latest publication advances from
@@ -257,10 +258,10 @@ start reasoning must use the same control object.
 A short control mutex serializes: inspect cached/replayed state, append a start
 anchor, update the projection, and return admission. Release it before entering
 ADK, running a model, calling a tool, or contacting a peer. Keep the active
-invocation in the projection while the invocation runs.
+turn in the projection while the turn runs.
 
-If an invocation is active, return BUSY using a committed state snapshot. Do
-not wait behind that invocation. A short local storage commit can delay a
+If a turn is active, return BUSY using a committed state snapshot. Do
+not wait behind that turn. A short local storage commit can delay a
 control operation; this is not a hard real-time guarantee. Busy handling must
 not depend on the duration of a model call, peer call, or grant-policy inference.
 
@@ -281,7 +282,7 @@ unavailable and require reconciliation before admitting more work. Do not
 release the agent into an apparently idle state with an unresolved durable start.
 
 Never wait for a peer while holding either the control mutex or a write
-transaction. The live invocation may wait on a bounded tool call; incoming
+transaction. The live turn may wait on a bounded tool call; incoming
 reasoning requests remain able to observe BUSY.
 
 ### 5.3 Borrowing does not acquire admission
@@ -302,7 +303,7 @@ borrowing path.
 ## 6. Projection, failures, and restart
 
 Replay recognized Anra custom anchors in sequence order into a projection of:
-source identity, active invocation/start, terminal outcomes, committed
+source identity, active turn/start, terminal outcomes, committed
 publications, and their coverage. The source of truth is the tape; the projection
 is replaceable memory. Unrelated tape-go/custom anchors are left alone.
 
@@ -323,15 +324,15 @@ At startup, before accepting HTTP traffic or registering the card:
 6. Expose borrowing and reasoning endpoints, then register the Agent Card.
 
 Unfinished records remain on tape. They are not replayed as an automatically
-resumed invocation and are not exported by default. Exclude the ADK event
-intervals of failed/cancelled/abandoned invocations from subsequent model input,
+resumed turn and are not exported by default. Exclude the ADK event
+intervals of failed/cancelled/abandoned turns from subsequent model input,
 including their state deltas and unmatched function calls. Rebuild any hydrated
 TapeAdapter/session state after abort; filtering only the next prompt is not
 enough if partial state was already cached.
 
-Explicit publications inside such an invocation remain available as published
+Explicit publications inside such a turn remain available as published
 findings. They need not make the abandoned raw event interval part of the next
-local conversation. Completed invocations retain their normal conversation
+local conversation. Completed turns retain their normal conversation
 history. This projection rule must be tested against ADK's tool-call/result
 pairing requirements.
 
@@ -357,7 +358,7 @@ Introduce a deterministic publication exporter. It whitelists the recognized
 publication schema and returns only the public summary and provenance coverage.
 It preserves the anchor entry's actual sequence, kind, and timestamp, as required
 by `Service.entries`. It must not return the raw anchor JSON, owner epoch,
-invocation internals, or arbitrary extensions. Busy/start anchors and terminal
+turn internals, or arbitrary extensions. Busy/start anchors and terminal
 anchors without a publication are not exportable by this exporter.
 
 Declare a versioned payload media type, proposed as
@@ -453,11 +454,11 @@ Request metadata is the ProtoJSON representation of generated
 }
 ```
 
-The application starts a root invocation with a deadline capped by its local
+The application starts a root turn with a deadline capped by its local
 command/runtime limit and an empty ancestry list. Before a peer edge, append the
 current agent; do not deduplicate an actual repeated visit. There is no hop
 counter or ancestry-length limit. Validate the encoded metadata size, and keep
-the existing per-invocation model-turn limit. A peer cannot extend the receiver's
+the existing per-turn model-turn limit. A peer cannot extend the receiver's
 local deadline.
 
 A deadline must be propagated explicitly and capped locally: a Go context's
@@ -529,10 +530,10 @@ as a structured result so its caller can continue reasoning.
 
 ## 9. Caller behavior and bounded progress
 
-`pkg/model/delegator.Delegator` owns the invocation's root, deadline,
+`pkg/model/delegator.Delegator` owns the turn's root, deadline,
 ancestry, context hints, and BUSY progress. The A2A layer transports generated
 metadata; callers do not maintain a second copy of the delegation state.
-`Accept` owns validated inbound metadata. `Begin` starts fresh invocation-local
+`Accept` owns validated inbound metadata. `Begin` starts fresh turn-local
 progress and caps the inherited deadline. `Next` forks a path for one edge,
 preserving sibling paths. `Observe` records BUSY outcomes and `Borrowed`
 records progress only after a grant is successfully read. Transport-facing
@@ -556,12 +557,12 @@ published findings without asking Alice to reason again. A reference must still
 lead to a borrow request to the original lender under Bob's own identity; the
 lender selects the context to grant. No transitive permission is implied.
 
-In one local invocation, remember every `(peer, publication reference)` that
+In one local turn, remember every `(peer, publication reference)` that
 returned BUSY. A repeated reasoning call to that peer without evidence of a
 newer eligible publication returns `no_new_context` locally and does not make
 another network call. Treat a busy result without a hint as its own unchanged
 state. A changed message alone does not prove new peer progress. A later root
-invocation may try again normally. Do not automatically poll while waiting.
+turn may try again normally. Do not automatically poll while waiting.
 
 The model may request context from that lender, consult a different peer,
 continue locally, or report a limitation. Borrowing an unchanged publication does
@@ -597,7 +598,7 @@ peer token, or a second handwritten model/tool loop.
 
 | Condition | Required outcome |
 | --- | --- |
-| Another invocation is active | Immediate BUSY snapshot; no new model call, user entry, or queued task. |
+| Another turn is active | Immediate BUSY snapshot; no new model call, user entry, or queued task. |
 | No publication is eligible | BUSY without a context hint; borrowing denies without leaking the live tail. |
 | Start append fails | No model call; reconcile storage ambiguity and fail closed. |
 | Model/tool failure or cancellation | Append a nonpublishing terminal record under bounded cleanup; propagate the failure. |
@@ -606,8 +607,8 @@ peer token, or a second handwritten model/tool loop.
 | Crash after terminal commit, before response delivery | Tape is completed; caller may be uncertain. Do not promise exactly-once retries. |
 | Publication append fails | No publication reference is exposed; earlier publications remain valid. |
 | Unsupported/corrupt control schema | Fail serving/recovery explicitly; do not infer idle or reset the tape. |
-| Repeated BUSY at unchanged publication | Local `no_new_context`, with no repeated peer invocation. |
-| Deadline expired or invocation cancelled | Stop the edge without entering the peer; return the context error. |
+| Repeated BUSY at unchanged publication | Local `no_new_context`, with no repeated peer turn. |
+| Deadline expired or turn cancelled | Stop the edge without entering the peer; return the context error. |
 | Borrower differs from grant owner | Deny Get/Read/Release using existing grant rules. |
 
 ## 12. Acceptance contract
@@ -619,7 +620,7 @@ Use fixture barriers to control races; do not make correctness depend on sleeps.
 1. Two simultaneous callers of an idle agent yield exactly one admitted start;
    the other observes BUSY. Count model calls and inspect the source tape.
 2. Alice waits for Bob; Bob calls Alice; Bob receives BUSY and both original
-   invocations can finish. Alice does not start a second model loop.
+   turns can finish. Alice does not start a second model loop.
 3. Alice and Bob start independent roots and consult each other; both terminate
    within the test deadline without waiting behind another reasoning gate.
 4. Bob borrows Alice's published anchor while Alice's model is held at a fixture
@@ -635,7 +636,7 @@ Use fixture barriers to control races; do not make correctness depend on sleeps.
 9. Unknown source, malformed references, and incompatible bounds fail validation;
    an identical Borrow retry is stable and a changed reference conflicts.
 10. A repeated reasoning call to an unchanged busy peer makes only one remote
-    invocation attempt in that caller turn. Context borrowing is separately
+    turn attempt in that caller turn. Context borrowing is separately
     recorded and does not cause an automatic retry.
 11. Cancellation appends a close even though the request context is cancelled;
     the next request can run. A failed close fences admission instead.

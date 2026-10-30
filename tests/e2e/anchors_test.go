@@ -22,15 +22,15 @@ func inspectLifecycle(entries []entry.EntryLike) ([]entry.EntryLike, error) {
 			switch r.Type {
 			case "tape.initialized":
 				initialized++
-			case "invocation.started":
+			case "turn.started":
 				if active != nil {
 					return nil, fmt.Errorf("overlapping starts at %s", e.GetID())
 				}
 				active = r
 				startSeq = e.GetID().String()
 				starts++
-			case "invocation.closed":
-				if active == nil || active.InvocationID != r.InvocationID || r.StartSeq != startSeq {
+			case "turn.closed":
+				if active == nil || active.TurnID != r.TurnID || r.StartSeq != startSeq {
 					return nil, fmt.Errorf("unmatched close at %s", e.GetID())
 				}
 				active = nil
@@ -39,7 +39,7 @@ func inspectLifecycle(entries []entry.EntryLike) ([]entry.EntryLike, error) {
 			continue
 		}
 		if active == nil {
-			return nil, fmt.Errorf("entry %s outside invocation", e.GetID())
+			return nil, fmt.Errorf("entry %s outside turn", e.GetID())
 		}
 		switch e.GetKind() {
 		case entry.EntryUser, entry.EntryAssistant:

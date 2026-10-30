@@ -1,5 +1,5 @@
 Feature: Anchor-backed nonblocking peer collaboration
-  Reasoning owns one tape invocation at a time. BUSY is an unaccepted request,
+  Reasoning owns one tape turn at a time. BUSY is an unaccepted request,
   while immutable permitted views remain independently borrowable.
 
   Scenario: Collaboration metadata uses generated ProtoJSON over standard A2A
@@ -47,13 +47,13 @@ Feature: Anchor-backed nonblocking peer collaboration
 
   Scenario: Only one simultaneous request enters reasoning
     Given a collaboration agent
-    When simultaneous callers admit exactly one invocation
+    When simultaneous callers admit exactly one turn
 
-  Scenario: A busy agent without completed findings does not accept another invocation
+  Scenario: A busy agent without completed findings does not accept another turn
     Given a collaboration agent
     And Alice is held inside its model call
     When Bob asks the occupied Alice for reasoning
-    Then the response is BUSY without another invocation or model call
+    Then the response is BUSY without another turn or model call
     And BUSY reveals no view or private control fields
     And a guessed reference cannot obtain private or control entries
 
@@ -62,7 +62,7 @@ Feature: Anchor-backed nonblocking peer collaboration
     And Alice has completed a shareable answer
     And Alice is held inside its model call
     When Bob asks the occupied Alice for reasoning
-    Then the response is BUSY without another invocation or model call
+    Then the response is BUSY without another turn or model call
     When Bob borrows the BUSY view while Alice remains occupied
     Then the view grant contains exactly the completed context window
     And another trusted requester gets its own grant but cannot read or release Bob's grant
@@ -100,8 +100,8 @@ Feature: Anchor-backed nonblocking peer collaboration
 
   Scenario: Sibling delegations preserve their root and independent paths
     Given a collaboration agent
-    When Alice consults Bob and Charlie in separate invocations
-    Then sibling calls share their invocation root and keep independent paths
+    When Alice consults Bob and Charlie in separate turns
+    Then sibling calls share their turn root and keep independent paths
 
   Scenario: Delegation can follow a path longer than eight hops
     Given a collaboration agent
@@ -109,7 +109,7 @@ Feature: Anchor-backed nonblocking peer collaboration
 
   Scenario: A changed prompt cannot turn BUSY into polling
     Given a collaboration agent
-    When repeated BUSY delegation is suppressed only within each invocation
+    When repeated BUSY delegation is suppressed only within each turn
 
   Scenario: The lender selects context and only newer borrowed findings permit another reasoning request
     Given a collaboration agent
@@ -119,7 +119,7 @@ Feature: Anchor-backed nonblocking peer collaboration
 
   Scenario: Cancellation preserves the physical tape and rebuilds valid model history
     Given a collaboration agent
-    When Alice's cancelled invocation closes and its partial history is excluded
+    When Alice's cancelled turn closes and its partial history is excluded
 
   Scenario: An expired deadline stops reasoning before model or peer calls
     Given a collaboration agent
@@ -130,7 +130,7 @@ Feature: Anchor-backed nonblocking peer collaboration
     And Alice has completed a shareable answer
     Then legacy lenders cannot silently accept view references
 
-  Scenario: Killing a process preserves views and recovers its open invocation
+  Scenario: Killing a process preserves views and recovers its open turn
     Given a running team Peer directory
     And team agents "alice" and "bob" are serving
     And Alice is interrupted while reasoning after a published answer
@@ -142,7 +142,7 @@ Feature: Anchor-backed nonblocking peer collaboration
     And I restart team agent "alice"
     Then the recovered agent keeps its source, view, grant, and physical history
     When I stop the team agents
-    Then exactly one abandoned close excludes the unfinished invocation
+    Then exactly one abandoned close excludes the unfinished turn
 
   Scenario: Terminal storage failure cannot reopen reasoning
     Given a collaboration agent

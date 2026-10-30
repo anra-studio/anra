@@ -97,7 +97,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 		if err = tape.Init(ctx); err != nil {
 			return err
 		}
-		event := session.NewEvent("interrupted-invocation")
+		event := session.NewEvent("interrupted-turn")
 		event.Author = "anra"
 		event.Content = &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "interrupted-call", Name: "send_peer_message", Args: map[string]any{"peer": "bob", "message": "unfinished"}}}}}
 		event.Actions.StateDelta = map[string]any{"interrupted_state": "must not replay"}
@@ -133,7 +133,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 		}
 		return nil
 	})
-	sc.Step(`^exactly one abandoned close excludes the unfinished invocation$`, func() error {
+	sc.Step(`^exactly one abandoned close excludes the unfinished turn$`, func() error {
 		tape, err := bbolt.NewBboltStorage("default", filepath.Join(c.dataDir(), "alice.db"))
 		if err != nil {
 			return err
@@ -164,7 +164,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 				if r.Type == "tape.initialized" && !proto.Equal(r.Source, ref.Source) {
 					return errors.New("source changed on recovery")
 				}
-				if r.Type == "invocation.closed" && r.Outcome == "abandoned" {
+				if r.Type == "turn.closed" && r.Outcome == "abandoned" {
 					abandoned++
 				}
 			}
@@ -197,13 +197,14 @@ type stateCheckingModel struct{}
 func (stateCheckingModel) Name() string { return "state-check" }
 func (stateCheckingModel) GenerateContent(ctx context.Context, r *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		invocation, ok := ctx.(adkagent.InvocationContext)
+		// InvocationContext is the ADK SDK's interface for the running Agent Turn.
+		turn, ok := ctx.(adkagent.InvocationContext)
 		if !ok {
-			yield(nil, errors.New("model fixture cannot inspect invocation state"))
+			yield(nil, errors.New("model fixture cannot inspect turn state"))
 			return
 		}
-		if value, err := invocation.Session().State().Get("interrupted_state"); err == nil || value != nil {
-			yield(nil, errors.New("aborted state delta reached next invocation"))
+		if value, err := turn.Session().State().Get("interrupted_state"); err == nil || value != nil {
+			yield(nil, errors.New("aborted state delta reached next turn"))
 			return
 		}
 		for _, content := range r.Contents {

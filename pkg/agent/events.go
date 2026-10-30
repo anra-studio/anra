@@ -17,6 +17,7 @@ import (
 
 // eventStorage preserves the tape's tool entry kinds and projects the former
 // Anra message payload into ADK events on read. Existing tapes remain append-only.
+// Control anchors and aborted Agent Turn intervals are excluded from model history.
 type eventStorage struct {
 	storage.TapeStorage
 	aborted []view.EntryRange
