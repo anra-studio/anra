@@ -6,7 +6,7 @@ another member's Tape view when authorized.
 
 ## Member runtime
 
-`agent.New(principal, storage, options...)` configures a member. Storage must
+`agent.New(role, storage, options...)` configures a member. Storage must
 be an initialized tape-go `*bbolt.Bbolt`. The constructor accepts that concrete
 type directly. The caller owns initialization and closure.
 `Run(ctx, input)` delegates the model/tool loop to tape-go's `agent.NewRuntime`

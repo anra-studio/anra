@@ -95,7 +95,7 @@ TapeA2ARecord
 
 Native objects are encoded with the official A2A Go SDK's JSON rules. The searchable ID copies
 must match the native payload; a mismatch is rejected before append. The owner
-or authenticated principal is not accepted from this envelope. It is derived
+or authenticated role is not accepted from this envelope. It is derived
 from the server call context and enforced through Tape's owner isolation.
 
 `recordId` exists because A2A status and artifact update events do not have an
@@ -210,8 +210,8 @@ Feature: persist A2A tasks on Tape
     Then exactly one competing update succeeds and the retry has no second effect
 
   Scenario: tenant isolation is preserved
-    Given two authenticated principals use the same task id
-    Then neither principal can Get or List the other principal's task
+    Given two authenticated roles use the same task id
+    Then neither role can Get or List the other role's task
 
   Scenario: standard A2A client sees the same result over JSON-RPC
     Given parent and child agents use independent Tapes

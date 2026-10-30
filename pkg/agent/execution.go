@@ -49,7 +49,7 @@ type execution struct {
 }
 
 func (a *Anra) tapeContext(ctx context.Context) context.Context {
-	return owner.WithOwnerId(ctx, a.principal)
+	return owner.WithOwnerId(ctx, a.role)
 }
 func (a *Anra) Source() *pb.Source {
 	a.mu.Lock()
@@ -100,7 +100,7 @@ func (a *Anra) apply(raw te.EntryLike) error {
 	x := &a.execution
 	switch r.Type {
 	case anchor.TapeInitialized:
-		if x.source != nil || x.active != nil || r.Source.AgentId != a.principal {
+		if x.source != nil || x.active != nil || r.Source.AgentId != a.role {
 			return errors.New("agent: conflicting source identity")
 		}
 		x.source = proto.Clone(r.Source).(*pb.Source)
@@ -115,7 +115,7 @@ func (a *Anra) apply(raw te.EntryLike) error {
 			return errors.New("agent: unmatched turn record")
 		}
 		if r.Outcome == "completed" {
-			window := tv.TapeView{SessionID: x.sessionID, Owner: a.principal, Scope: tv.EntryRange{SeqS: x.active.start.Next(), SeqE: raw.GetID()}}
+			window := tv.TapeView{SessionID: x.sessionID, Owner: a.role, Scope: tv.EntryRange{SeqS: x.active.start.Next(), SeqE: raw.GetID()}}
 			x.views[raw.GetID().String()] = window
 			x.latest = a.viewRef(window)
 		} else {
@@ -131,7 +131,7 @@ func (a *Anra) appendAnchor(ctx context.Context, r anchor.Record) error {
 	if err != nil {
 		return err
 	}
-	stored, err := a.tape.Store(a.tapeContext(ctx), te.NewAnchor(te.Seq{}, a.principal, te.AnchorKindCustom, data))
+	stored, err := a.tape.Store(a.tapeContext(ctx), te.NewAnchor(te.Seq{}, a.role, te.AnchorKindCustom, data))
 	if err != nil {
 		a.execution.fenced = true
 		return fmt.Errorf("%w: append: %w", ErrFenced, err)
@@ -163,7 +163,7 @@ func (a *Anra) recoverExecution() error {
 		}
 	}
 	if a.execution.source == nil {
-		if err := a.appendAnchor(ctx, anchor.Record{Type: anchor.TapeInitialized, Source: &pb.Source{AgentId: a.principal, TapeId: uuid.New().String()}}); err != nil {
+		if err := a.appendAnchor(ctx, anchor.Record{Type: anchor.TapeInitialized, Source: &pb.Source{AgentId: a.role, TapeId: uuid.New().String()}}); err != nil {
 			return err
 		}
 	}

@@ -24,3 +24,8 @@ Feature: An agent keeps its conversation on its own tape
       | user      | my question  |
       | assistant | my answer    |
       | user      | my follow-up |
+
+  Scenario: Reject an empty runtime role
+    Given an agent with its own tape
+    When I create an agent with an empty role
+    Then agent creation fails with "agent: empty role"
