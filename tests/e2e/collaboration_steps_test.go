@@ -121,6 +121,23 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		return ctx, err
 	})
 	sc.Step(`^a collaboration agent$`, c.setup)
+	sc.Step(`^Alice's tape contains a custom anchor with schema "([^"]+)"$`, func(schema string) error {
+		// Deliberately reuse a native type with fields that are invalid in v1:
+		// the schema, rather than the type or field names, owns interpretation.
+		payload, err := json.Marshal(map[string]any{"schema": schema, "type": "turn.started", "turnId": 42, "source": "integration-owned"})
+		if err != nil {
+			return err
+		}
+		_, err = c.nodes["alice"].tape.Store(owner.WithOwnerId(s.ctx, "alice"), entry.NewAnchor(entry.Seq{}, "alice", entry.AnchorKindCustom, payload))
+		return err
+	})
+	sc.Step(`^Alice can continue reasoning after schema dispatch recovery$`, func() error {
+		result, err := c.send("bob", "alice", "after recovery")
+		if err != nil || result.Status != cp.Status_STATUS_COMPLETED || result.Answer != "answer: after recovery" {
+			return fmt.Errorf("reasoning after recovery: %+v: %v", result, err)
+		}
+		return nil
+	})
 	sc.Step(`^Bob borrows Alice's completed tool conversation as a TapeView while she thinks$`, c.toolWindow)
 	sc.Step(`^generated collaboration metadata roundtrips through A2A$`, c.protobufRoundtrip)
 	sc.Step(`^collaboration rejects request metadata with (.+) before reasoning$`, c.rejectRequestMetadata)
@@ -434,7 +451,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^startup rejects a tape containing (unsupported schema|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
+	sc.Step(`^startup rejects a tape containing (unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|oversized identity|malformed integration record|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
 		n := c.nodes["alice"]
 		if n.registration != nil {
 			n.registration.Close()
@@ -446,8 +463,18 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		n.service = nil
 		payloads := []string{}
 		switch problem {
-		case "unsupported schema":
-			payloads = []string{`{"schema":"anra.dev/anchor/v2","type":"turn.started"}`}
+		case "unknown v1 type":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"integration.created"}`}
+		case "invalid v1 start":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started"}`}
+		case "invalid v1 source":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"tape.initialized"}`}
+		case "invalid v1 outcome":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.closed","turnId":"one","startSeq":"1","outcome":"unknown"}`}
+		case "oversized identity":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("x", 257) + `"}`}
+		case "malformed integration record":
+			payloads = []string{`{"schema":"anra.dev/anchor/intr/v1","type":`}
 		case "malformed record":
 			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":`}
 		case "overlapping starts":

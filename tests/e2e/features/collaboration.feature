@@ -153,12 +153,36 @@ Feature: Anchor-backed nonblocking peer collaboration
     Then startup rejects a tape containing <problem>
 
     Examples:
-      | problem            |
-      | unsupported schema |
-      | malformed record   |
-      | overlapping starts |
-      | unmatched close    |
-      | conflicting source |
+      | problem                      |
+      | unknown v1 type              |
+      | invalid v1 start             |
+      | invalid v1 source            |
+      | invalid v1 outcome           |
+      | oversized identity           |
+      | malformed integration record |
+      | malformed record             |
+      | overlapping starts           |
+      | unmatched close              |
+      | conflicting source           |
+
+  Scenario Outline: Other anchor schemas coexist with native execution history
+    Given a collaboration agent
+    And Alice's tape contains a custom anchor with schema "<schema>"
+    And Alice has completed a shareable answer
+    And Alice is held inside its model call
+    When Bob asks the occupied Alice for reasoning
+    And Bob borrows the BUSY view while Alice remains occupied
+    And Alice finishes and commits a newer context window
+    And Alice restarts with the same source and the grant remains readable
+    Then the view grant contains exactly the completed context window
+    And Alice can continue reasoning after schema dispatch recovery
+
+    Examples:
+      | schema                      |
+      | anra.dev/anchor/intr/v1      |
+      | anra.dev/anchor/handoff/v1   |
+      | anra.dev/anchor/v2           |
+      | example.org/anchor/v1        |
 
   Scenario: Generic A2A callers get clear BUSY text without private hints
     Given a collaboration agent

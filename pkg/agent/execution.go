@@ -94,6 +94,7 @@ func (a *Anra) apply(raw te.EntryLike) error {
 		return err
 	}
 	if r == nil {
+		// Other schemas do not drive the native execution state machine.
 		return nil
 	}
 	x := &a.execution
