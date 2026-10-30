@@ -99,18 +99,18 @@ func (a *Anra) apply(raw te.EntryLike) error {
 	}
 	x := &a.execution
 	switch r.Type {
-	case "tape.initialized":
+	case anchor.TapeInitialized:
 		if x.source != nil || x.active != nil || r.Source.AgentId != a.principal {
 			return errors.New("agent: conflicting source identity")
 		}
 		x.source = proto.Clone(r.Source).(*pb.Source)
-	case "turn.started":
+	case anchor.TurnStarted:
 		if x.source == nil || x.active != nil || x.seen[r.TurnID] || !proto.Equal(r.BaseView, x.latest) {
 			return errors.New("agent: inconsistent turn start")
 		}
 		x.seen[r.TurnID] = true
 		x.active = &activeTurn{id: r.TurnID, epoch: r.OwnerEpoch, start: raw.GetID()}
-	case "turn.closed":
+	case anchor.TurnClosed:
 		if x.active == nil || x.active.id != r.TurnID || x.active.start.String() != r.StartSeq {
 			return errors.New("agent: unmatched turn record")
 		}
@@ -163,12 +163,12 @@ func (a *Anra) recoverExecution() error {
 		}
 	}
 	if a.execution.source == nil {
-		if err := a.appendAnchor(ctx, anchor.Record{Type: "tape.initialized", Source: &pb.Source{AgentId: a.principal, TapeId: uuid.New().String()}}); err != nil {
+		if err := a.appendAnchor(ctx, anchor.Record{Type: anchor.TapeInitialized, Source: &pb.Source{AgentId: a.principal, TapeId: uuid.New().String()}}); err != nil {
 			return err
 		}
 	}
 	if active := a.execution.active; active != nil {
-		if err := a.appendAnchor(ctx, anchor.Record{Type: "turn.closed", TurnID: active.id, StartSeq: active.start.String(), OwnerEpoch: a.execution.epoch, Outcome: "abandoned"}); err != nil {
+		if err := a.appendAnchor(ctx, anchor.Record{Type: anchor.TurnClosed, TurnID: active.id, StartSeq: active.start.String(), OwnerEpoch: a.execution.epoch, Outcome: "abandoned"}); err != nil {
 			return err
 		}
 	}
@@ -194,7 +194,7 @@ func (a *Anra) admit(ctx context.Context, cancel context.CancelFunc) (chan struc
 		}
 		return nil, &BusyError{view: ref}
 	}
-	if err := a.appendAnchor(ctx, anchor.Record{Type: "turn.started", TurnID: uuid.New().String(), OwnerEpoch: a.execution.epoch, BaseView: anchor.CloneRef(a.execution.latest)}); err != nil {
+	if err := a.appendAnchor(ctx, anchor.Record{Type: anchor.TurnStarted, TurnID: uuid.New().String(), OwnerEpoch: a.execution.epoch, BaseView: anchor.CloneRef(a.execution.latest)}); err != nil {
 		return nil, err
 	}
 	a.execution.cancel = cancel
@@ -211,7 +211,7 @@ func (a *Anra) finish(runErr error) error {
 	if active == nil || a.execution.fenced {
 		return ErrFenced
 	}
-	r := anchor.Record{Type: "turn.closed", TurnID: active.id, StartSeq: active.start.String(), Outcome: "completed"}
+	r := anchor.Record{Type: anchor.TurnClosed, TurnID: active.id, StartSeq: active.start.String(), Outcome: "completed"}
 	if runErr != nil {
 		r.Outcome = "failed"
 		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {

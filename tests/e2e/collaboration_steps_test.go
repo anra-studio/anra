@@ -422,7 +422,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		if err != nil {
 			return err
 		}
-		if last == nil || last.Type != "turn.closed" || last.Outcome != "cancelled" {
+		if last == nil || last.Type != anchor.TurnClosed || last.Outcome != "cancelled" {
 			return fmt.Errorf("shutdown left an open turn: %+v", last)
 		}
 		return n.tape.Close()
@@ -451,7 +451,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^startup rejects a tape containing (unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|forbidden v1 field|oversized multibyte identity|oversized identity|malformed integration record|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
+	sc.Step(`^startup rejects a tape containing (numeric v1 type|empty v1 type|unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|forbidden v1 field|oversized multibyte identity|oversized identity|malformed integration record|malformed record|overlapping starts|unmatched close|conflicting source)$`, func(problem string) error {
 		n := c.nodes["alice"]
 		if n.registration != nil {
 			n.registration.Close()
@@ -463,6 +463,10 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		n.service = nil
 		payloads := []string{}
 		switch problem {
+		case "numeric v1 type":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":1}`}
+		case "empty v1 type":
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":""}`}
 		case "unknown v1 type":
 			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"integration.created"}`}
 		case "invalid v1 start":
@@ -783,7 +787,7 @@ func (c *collaborationScenario) cancelAndContinue() error {
 		if err != nil {
 			return err
 		}
-		if r != nil && r.Type == "turn.closed" {
+		if r != nil && r.Type == anchor.TurnClosed {
 			if r.Outcome == "cancelled" {
 				cancelled++
 			}

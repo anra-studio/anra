@@ -16,10 +16,20 @@ import (
 // Schema identifies native execution records in the custom anchor envelope.
 const Schema = "anra.dev/anchor/v1"
 
+// Type identifies the native execution transition represented by a record.
+// Its string values are part of the persisted anchor format.
+type Type string
+
+const (
+	TapeInitialized Type = "tape.initialized"
+	TurnStarted     Type = "turn.started"
+	TurnClosed      Type = "turn.closed"
+)
+
 // Record describes tape initialization or an execution turn transition.
 type Record struct {
 	Schema     string       `json:"schema" validate:"eq=anra.dev/anchor/v1"`
-	Type       string       `json:"type" validate:"oneof=tape.initialized turn.started turn.closed"`
+	Type       Type         `json:"type" validate:"oneof=tape.initialized turn.started turn.closed"`
 	Source     *pb.Source   `json:"source,omitempty" validate:"required_if=Type tape.initialized,excluded_unless=Type tape.initialized,omitempty,structonly"`
 	TurnID     string       `json:"turnId,omitempty" validate:"required_unless=Type tape.initialized,excluded_if=Type tape.initialized,maxbytes=256"`
 	OwnerEpoch string       `json:"ownerEpoch,omitempty" validate:"required_if=Type turn.started,excluded_if=Type tape.initialized,maxbytes=256"`
@@ -54,7 +64,7 @@ func decodeRecord(e te.EntryLike, raw []byte) (*Record, error) {
 			return nil, fmt.Errorf("anchor: %w", err)
 		}
 	}
-	if r.Type == "turn.closed" {
+	if r.Type == TurnClosed {
 		start, err := te.ParseSeq(r.StartSeq)
 		if err != nil || start.IsZero() || start.Cmp(e.GetID()) >= 0 {
 			return nil, errors.New("anchor: invalid turn reference")

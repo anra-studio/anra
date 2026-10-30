@@ -20,16 +20,16 @@ func inspectLifecycle(entries []entry.EntryLike) ([]entry.EntryLike, error) {
 		}
 		if r != nil {
 			switch r.Type {
-			case "tape.initialized":
+			case anchor.TapeInitialized:
 				initialized++
-			case "turn.started":
+			case anchor.TurnStarted:
 				if active != nil {
 					return nil, fmt.Errorf("overlapping starts at %s", e.GetID())
 				}
 				active = r
 				startSeq = e.GetID().String()
 				starts++
-			case "turn.closed":
+			case anchor.TurnClosed:
 				if active == nil || active.TurnID != r.TurnID || r.StartSeq != startSeq {
 					return nil, fmt.Errorf("unmatched close at %s", e.GetID())
 				}

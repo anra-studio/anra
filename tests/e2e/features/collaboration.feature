@@ -154,6 +154,8 @@ Feature: Anchor-backed nonblocking peer collaboration
 
     Examples:
       | problem                      |
+      | numeric v1 type              |
+      | empty v1 type                |
       | unknown v1 type              |
       | invalid v1 start             |
       | invalid v1 source            |
