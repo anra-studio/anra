@@ -22,12 +22,12 @@ import (
 	"google.golang.org/genai"
 )
 
-const defaultMaxTurns = 32
+const defaultMaxModelTurns = 32
 const appName = "anra"
 
 var (
-	ErrRuntimeNotConfigured = errors.New("agent: runtime is not configured")
-	ErrRuntimeTurnLimit     = errors.New("agent: runtime turn limit reached")
+	ErrRuntimeNotConfigured  = errors.New("agent: runtime is not configured")
+	ErrRuntimeModelTurnLimit = errors.New("agent: runtime model turn limit reached")
 )
 
 type runtimeConfig struct {
@@ -36,7 +36,7 @@ type runtimeConfig struct {
 	registry          *discovery.Client
 	peerHTTP          *http.Client
 	borrowClient      *a2a.Client
-	maxTurns          int
+	maxModelTurns     int
 	timeout           time.Duration
 	adapter           *tapeagent.TapeAdapter
 	runner            *adkrunner.Runner
@@ -59,17 +59,18 @@ func WithSystemInstruction(value string) Option {
 	return func(a *Anra) error { a.runtime.systemInstruction = value; return nil }
 }
 
-func WithMaxTurns(limit int) Option {
+// WithMaxModelTurns bounds model interactions within one Agent Turn.
+func WithMaxModelTurns(limit int) Option {
 	return func(a *Anra) error {
 		if limit <= 0 {
-			return errors.New("agent: max turns must be positive")
+			return errors.New("agent: max model turns must be positive")
 		}
-		a.runtime.maxTurns = limit
+		a.runtime.maxModelTurns = limit
 		return nil
 	}
 }
 
-// WithTimeout caps each invocation, including its peer calls. Cleanup uses a
+// WithTimeout caps each Agent Turn, including its peer calls. Cleanup uses a
 // separate bounded context so cancellation cannot strand an open start.
 func WithTimeout(limit time.Duration) Option {
 	return func(a *Anra) error {
@@ -81,7 +82,7 @@ func WithTimeout(limit time.Duration) Option {
 	}
 }
 
-type turnCountKey struct{}
+type modelTurnCountKey struct{}
 
 func (a *Anra) initialize() error {
 	ctx := owner.WithOwnerId(context.Background(), a.principal)
@@ -111,12 +112,12 @@ func (a *Anra) initialize() error {
 		Tools:               tools,
 		BeforeModelCallbacks: []llmagent.BeforeModelCallback{
 			func(ctx adkagent.CallbackContext, _ *model.LLMRequest) (*model.LLMResponse, error) {
-				count, ok := ctx.Value(turnCountKey{}).(*int)
+				count, ok := ctx.Value(modelTurnCountKey{}).(*int)
 				if !ok {
-					return nil, errors.New("agent: missing invocation turn counter")
+					return nil, errors.New("agent: missing model turn counter")
 				}
-				if *count >= a.runtime.maxTurns {
-					return nil, ErrRuntimeTurnLimit
+				if *count >= a.runtime.maxModelTurns {
+					return nil, ErrRuntimeModelTurnLimit
 				}
 				(*count)++
 				return nil, nil
@@ -133,7 +134,8 @@ func (a *Anra) initialize() error {
 	return err
 }
 
-// Run delegates the model/tool loop and event persistence to ADK and tape-go.
+// Run admits one Agent Turn and delegates the model/tool loop and event
+// persistence to ADK and tape-go.
 func (a *Anra) Run(ctx context.Context, input string) (answer string, runErr error) {
 	if a.runtime.llm == nil {
 		return "", ErrRuntimeNotConfigured
@@ -157,7 +159,7 @@ func (a *Anra) Run(ctx context.Context, input string) (answer string, runErr err
 		}
 	}()
 	count := 0
-	ctx = context.WithValue(ctx, turnCountKey{}, &count)
+	ctx = context.WithValue(ctx, modelTurnCountKey{}, &count)
 
 	for event, err := range a.runtime.runner.Run(ctx, a.principal, a.runtime.sessionID, genai.NewContentFromText(input, genai.RoleUser), adkagent.RunConfig{}) {
 		if err != nil {

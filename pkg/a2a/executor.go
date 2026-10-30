@@ -21,7 +21,7 @@ type Runtime interface {
 }
 
 // BusyError is the error a Runtime returns when it declines a request because
-// it is already reasoning. The executor reports it as a BUSY outcome rather
+// another Agent Turn is active. The executor reports it as a BUSY outcome rather
 // than a failure. BusyView is the latest committed TapeView the caller
 // may ask to borrow, or nil.
 type BusyError interface {

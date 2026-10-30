@@ -55,9 +55,11 @@ token is required. Requests carry the caller's agent identity; team members are
 trusted not to impersonate one another. TapeView borrowing still enforces grants,
 selected ranges, expiry, and release for each caller.
 
-Each tape admits one reasoning invocation at a time. A second request receives
+An Agent Turn is one complete reasoning cycle, including its model interactions
+and tool calls. A Model Turn is one model interaction within that cycle.
+Each tape admits one Agent Turn at a time. A second request receives
 BUSY immediately. A peer can borrow a lender-selected TapeView of a completed
-invocation while its owner keeps thinking, then continue its own model loop.
+turn while its owner keeps thinking, then continue its own model loop.
 Execution anchors use `anra.dev/anchor/v1`; interrupted work is closed as
 abandoned at restart. See the [collaboration specification](docs/designs/anchor-tape-view-collaboration-spec.md).
 

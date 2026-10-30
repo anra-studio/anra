@@ -171,7 +171,7 @@ specific question with `send_peer_message`, and combine the result into her
 answer. Both servers need model credentials; the `ask` process does not.
 The forwarding-only `send` command, `--to`, and `/anra/send` route are removed.
 
-A tape admits one reasoning invocation at a time. `ask` reports `busy: request
+A tape admits one reasoning turn at a time. `ask` reports `busy: request
 was not accepted` if the selected server is occupied. A peer's messaging tool
 receives structured `completed` or `busy` results, so its
 model can continue. Repeated reasoning against unchanged BUSY context returns
@@ -181,7 +181,7 @@ counter, queue, or automatic retry.
 
 The built-in `borrow_peer_context` tool discovers a named peer's TapeView
 endpoint and sends `peer`, `requestId`, `purpose`, and `query`. The lender selects
-a TapeView of its latest completed invocation, including while busy. The model
+a TapeView of its latest completed turn, including while busy. The model
 does not choose a snapshot. Grants pin its source, exact scope, and closing anchor.
 Incoming TapeViews are exposed by `discover_peers` as ungranted hints; the lender
 owns selection. Borrowing records the grant and returned provenance as a tool
@@ -218,9 +218,9 @@ Bob run concurrently because their files are separate. The `timeout` setting
 bounds `run`, `ask`, and server reasoning requests, with an additional two-minute runtime ceiling. Shutdown cancels active reasoning
 and waits for terminal cleanup before closing the tape.
 
-The tape stores a stable source identity and invocation start/close anchors using
+The tape stores a stable source identity and turn start/close anchors using
 `anra.dev/anchor/v1`. A successful answer is acknowledged only after its close
-commits. On restart, an open invocation receives one abandoned close; its
+commits. On restart, an open turn receives one abandoned close; its
 unfinished ADK events and state deltas stay on disk but are excluded from the
 next model context. An uncertain storage append fences new reasoning.
 

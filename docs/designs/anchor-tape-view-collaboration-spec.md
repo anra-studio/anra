@@ -11,31 +11,31 @@ windows use tape-go's `view.TapeView`. The generated wire `TapeView` carries a
 source identity, a committed snapshot head, and a half-open scope. It describes
 context; it carries no grant ID or permission.
 
-The default selection is the latest successfully completed invocation. If its
+The default selection is the latest successfully completed turn. If its
 start anchor is S and its successful close anchor is C:
 
 - The native window scope and granted range are `[S+1,C)`.
 - `snapshotHead` is C, the durable commit boundary.
 - The range contains the user/model/tool exchange, excluding both control anchors.
 - Earlier completed windows remain resolvable by their exact descriptor.
-- A failed, cancelled, or abandoned invocation does not replace this selection.
+- A failed, cancelled, or abandoned turn does not replace this selection.
 
 For example, a run with start 18, user 19, tool call 20, tool result 21, assistant
 22, and successful close 23 yields scope `[19,23)` at snapshot 23. Appending a
 new start and more entries cannot change that window.
 
-This is the latest invocation's context, not the whole accumulated tape. The
+This is the latest turn's context, not the whole accumulated tape. The
 lender controls eligibility. No borrower-provided range, purpose, query, or
 reference can expand a completed window into unfinished work.
 
 ## Execution and recovery
 
-`anra.dev/anchor/v1` defines `tape.initialized`, `invocation.started`, and
-`invocation.closed`. The start records its invocation identity, owner epoch, and
+`anra.dev/anchor/v1` defines `tape.initialized`, `turn.started`, and
+`turn.closed`. The start records its turn identity, owner epoch, and
 optional `baseView`. The close records the matching start and its outcome.
 There is no `context.published` record and no answer embedded in the close.
 
-Only one reasoning invocation enters a tape at a time. Its start must commit
+Only one reasoning turn enters a tape at a time. Its start must commit
 before the model runs; its close must commit before the answer is acknowledged.
 An append with an uncertain outcome fences further execution. Shutdown drains
 active reasoning before closing storage.
@@ -92,7 +92,7 @@ model content is encoded as
 `application/vnd.anra.context-entry+json;version=1`. Plain text entries retain
 the existing text exporter representation.
 
-ADK event IDs, authors, invocation metadata, state deltas, arbitrary custom
+ADK event IDs, authors, execution metadata, state deltas, arbitrary custom
 extensions, thought parts, and execution anchors are not exported. Tool calls
 and results are data in the borrower's tool response; borrowing never executes
 them. Completed prompts and tool arguments/results are part of the context the
@@ -115,10 +115,10 @@ model. The caller can borrow completed context and continue its own reasoning
 while the lender remains occupied.
 
 `Delegator` retains roots, deadlines, and immutable sibling paths. Its
-invocation-local BUSY memory prevents repeated reasoning calls to an unchanged
+turn-local BUSY memory prevents repeated reasoning calls to an unchanged
 peer. Reading the same or an older view keeps suppression. A newer committed
 snapshot, or a different source incarnation, permits one further attempt. A new
-invocation starts fresh BUSY memory. Deadlines and local model-turn limits still
+turn starts fresh BUSY memory. Deadlines and local model-turn limits still
 bound execution; there is no hop budget or async task scheduler.
 
 The built-in `borrow_peer_context` tool accepts only `peer`, `requestId`,
@@ -131,7 +131,7 @@ are visible through discovery and borrowed under the recipient's own identity.
 - `pkg/agent/execution.go`: native TapeView index, admission, close, and recovery.
 - `pkg/a2a/view.go`: exact snapshot selection, capability declaration, and content export.
 - `pkg/a2a/service.go` and `pkg/model/journal`: grants and their durable lifecycle.
-- `pkg/model/delegator`: per-invocation path and BUSY progress.
+- `pkg/model/delegator`: per-turn path and BUSY progress.
 - `pkg/agent/tools/{peer,borrow}.go`: ADK tool definitions using discovery,
   Delegator transitions, and shared A2A messaging/borrowing clients.
 - Generated tape/collaboration protobufs: snapshot descriptors and metadata validation.

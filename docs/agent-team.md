@@ -14,7 +14,7 @@ and ADK runner. `agent.WithLLM` supplies the provider model, implementing ADK's
 `model.LLM`; provider selection and agent execution are separate concerns.
 Tape-go's `TapeAdapter` implements ADK's session and memory services and context
 window callback. User messages, model responses, tool calls, and tool results
-are persisted as ADK events and reconstructed on later invocations.
+are persisted as ADK events and reconstructed on later turns.
 
 Tools are registered internally. The runtime includes tape-go's native Bash
 tool and Anra's peer discovery/messaging tools. `WithRegistry` supplies their

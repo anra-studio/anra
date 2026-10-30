@@ -98,6 +98,7 @@ func NewPeerTools(directory *discovery.Client, h *http.Client, self string) (map
 		if args.Peer == self || strings.TrimSpace(args.Message) == "" {
 			return sendResult{}, errors.New("a different peer and a non-empty message are required")
 		}
+		// The current Agent Turn owns the path and shared BUSY progress.
 		d := delegator.FromContext(ctx)
 		refs := make([]*pb.TapeView, len(args.Context))
 		for i, ref := range args.Context {

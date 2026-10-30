@@ -33,13 +33,14 @@ Feature: ADK runs each agent with its configured model and built-in tools
       | user      | hello from alice      |
       | assistant | bob: hello from alice |
 
-  Scenario: An agent can use tape-go's native Bash tool through ADK
+  Scenario: One Agent Turn encloses the model and Bash tool cycle through ADK
     Given the environment attempts to select an injected tool
     When I run the local CLI agent with its built-in Bash tool
     Then the CLI answer is "anra-bash-test"
     And agent "alice" has persisted these ADK tool calls and results
       | tool |
       | bash |
+    And agent "alice" has one completed turn enclosing its model and tool steps
 
   Scenario Outline: Production configuration separates providers from test fixtures
     When I run the CLI with unsupported ADK configuration "<problem>"

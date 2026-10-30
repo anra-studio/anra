@@ -17,7 +17,7 @@ one in the registry. See the [registry contract](registry.md).
 | --- | --- | --- |
 | Peer identity, address, and skills | Peer model | Translate `Peer` into an Agent Card with `a2a.Card` |
 | Registration, discovery, and presence | Registry and discovery packages | Consume resolved Peer metadata to construct protocol clients |
-| Reasoning and invocation admission | Agent runtime | Translate A2A messages into runtime calls and results into responses |
+| Reasoning and turn admission | Agent runtime | Translate A2A messages into runtime calls and results into responses |
 | Delegation and collaboration progress | Delegator model | Encode and decode model-owned metadata in A2A extensions |
 | Context selection, windows, and grants | Anra context-sharing logic | Expose borrowing operations through the TapeView extension |
 
@@ -335,7 +335,7 @@ Client validation boundaries and the simplification experiments are recorded in
 `urn:anra:a2a:collaboration:v1` in message extensions and metadata.
 `MessageClient.Send` returns `CollaborationResult`; callers must inspect `Status`
 before using `Answer`. Its embedded generated `ResponseMetadata` uses the enums
-in `gen/anra/a2a/collaboration/v1`; `STATUS_BUSY` means no reasoning invocation
+in `gen/anra/a2a/collaboration/v1`; `STATUS_BUSY` means no reasoning turn
 was admitted. Generic
 A2A clients receive clear unaccepted text and no view hint.
 
@@ -344,7 +344,7 @@ Delegation and response metadata are defined in
 under the extension URI. Protovalidate enforces the metadata structure and
 status/detail combinations. Answer text stays in standard A2A parts.
 The `pkg/model/delegator` model owns root creation, deadline caps, ancestry, and
-BUSY progress. `Begin` creates an invocation,
+BUSY progress. `Begin` creates a turn,
 `Next` prepares a peer edge, `Observe` records the peer outcome, and `Borrowed`
 records progress after the grant is read. A2A adapters encode/decode owned
 metadata snapshots; peer tools do not mutate the protobuf fields or BUSY maps.
@@ -367,10 +367,10 @@ it is not required when `Views` is configured. The CLI mounts messaging and
 borrowing with `NewPeerHandler`.
 
 The model-facing borrow tool accepts a peer, request ID, purpose, and query.
-The lender selects its latest completed invocation's TapeView without entering
+The lender selects its latest completed turn's TapeView without entering
 reasoning. BUSY responses and incoming delegation context carry ungranted
 `TapeView` hints. Each recipient obtains its own requester-bound grant. Reading
-an unchanged snapshot does not enable another reasoning request in that invocation.
+an unchanged snapshot does not enable another reasoning request in that turn.
 
 Protocol clients can pin `BorrowRequest.view`, a generated `TapeView` containing
 `source`, `snapshotHead`, and `scope`. Cards advertise `viewBorrowVersion: 1`.
@@ -382,7 +382,7 @@ The window contains the completed user/model/tool conversation. Its exporter
 returns structured content as `application/vnd.anra.context-entry+json;version=1`,
 excluding thought parts, execution anchors, event metadata, arbitrary extensions,
 and state deltas. Tool content is borrowed context and never executed by reading.
-Closing an invocation does not copy its answer into a separate publication.
+Closing a turn does not copy its answer into a separate publication.
 Failure, cancellation, and abandonment preserve the preceding successful window.
 Grant expiry, release, revocation, idempotence, and recovery remain enforced by
 the TapeView service and journal. The lifecycle and implementation guide are in

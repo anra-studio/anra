@@ -142,7 +142,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^Alice is held inside its model call$`, c.hold)
 	sc.Step(`^Bob asks the occupied Alice for reasoning$`, func() error { var err error; c.busy, err = c.send("bob", "alice", "callback"); return err })
-	sc.Step(`^the response is BUSY without another invocation or model call$`, func() error {
+	sc.Step(`^the response is BUSY without another turn or model call$`, func() error {
 		n := c.nodes["alice"]
 		before, err := c.readEntries(n)
 		if err != nil {
@@ -182,7 +182,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 			return errors.New("view hint disclosed before any answer completed")
 		}
 		raw, _ := json.Marshal(c.busy)
-		if strings.Contains(string(raw), "epoch") || strings.Contains(string(raw), "invocationId") {
+		if strings.Contains(string(raw), "epoch") || strings.Contains(string(raw), "turnId") {
 			return errors.New("private control data disclosed")
 		}
 		return nil
@@ -372,11 +372,11 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^Alice's cancelled invocation closes and its partial history is excluded$`, c.cancelAndContinue)
-	sc.Step(`^simultaneous callers admit exactly one invocation$`, c.raceAdmission)
+	sc.Step(`^Alice's cancelled turn closes and its partial history is excluded$`, c.cancelAndContinue)
+	sc.Step(`^simultaneous callers admit exactly one turn$`, c.raceAdmission)
 	sc.Step(`^cyclic peer reasoning completes using BUSY and borrowed findings$`, c.cycle)
 	sc.Step(`^independent roots consult one another without blocking$`, c.independentRoots)
-	sc.Step(`^repeated BUSY delegation is suppressed only within each invocation$`, c.suppression)
+	sc.Step(`^repeated BUSY delegation is suppressed only within each turn$`, c.suppression)
 	sc.Step(`^Bob resumes reasoning only after borrowing newer lender-selected findings$`, c.lenderSelection)
 	sc.Step(`^an expired delegation deadline rejects reasoning before model or peer calls$`, c.expiredDeadline)
 	sc.Step(`^Bob borrows supplied context without reentering Alice$`, c.suppliedContext)
@@ -405,8 +405,8 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		if err != nil {
 			return err
 		}
-		if last == nil || last.Type != "invocation.closed" || last.Outcome != "cancelled" {
-			return fmt.Errorf("shutdown left an open invocation: %+v", last)
+		if last == nil || last.Type != "turn.closed" || last.Outcome != "cancelled" {
+			return fmt.Errorf("shutdown left an open turn: %+v", last)
 		}
 		return n.tape.Close()
 	})
@@ -447,13 +447,13 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		payloads := []string{}
 		switch problem {
 		case "unsupported schema":
-			payloads = []string{`{"schema":"anra.dev/anchor/v2","type":"invocation.started"}`}
+			payloads = []string{`{"schema":"anra.dev/anchor/v2","type":"turn.started"}`}
 		case "malformed record":
 			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":`}
 		case "overlapping starts":
-			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"invocation.started","invocationId":"one","ownerEpoch":"old"}`, `{"schema":"anra.dev/anchor/v1","type":"invocation.started","invocationId":"two","ownerEpoch":"old"}`}
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old"}`, `{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"two","ownerEpoch":"old"}`}
 		case "unmatched close":
-			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"invocation.closed","invocationId":"unknown","startSeq":"1","outcome":"completed"}`}
+			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.closed","turnId":"unknown","startSeq":"1","outcome":"completed"}`}
 		case "conflicting source":
 			payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"tape.initialized","source":{"agentId":"alice","tapeId":"replacement"}}`}
 		}
@@ -658,7 +658,7 @@ func (c *collaborationScenario) checkView(client *a2a.Client, v *pb.View) error 
 		}
 	}
 	raw, _ := json.Marshal(pages[0])
-	if strings.Contains(string(raw), "ownerEpoch") || strings.Contains(string(raw), "invocationId") || strings.Contains(string(raw), "adk:event") {
+	if strings.Contains(string(raw), "ownerEpoch") || strings.Contains(string(raw), "turnId") || strings.Contains(string(raw), "adk:event") {
 		return errors.New("private execution metadata leaked")
 	}
 	if c.originalBytes == nil {
@@ -740,7 +740,7 @@ func (c *collaborationScenario) cancelAndContinue() error {
 	}
 	result, err := c.send("alice", "bob", "next")
 	if err != nil || result.Answer != "clean next answer" {
-		return fmt.Errorf("next invocation: %+v %v", result, err)
+		return fmt.Errorf("next turn: %+v %v", result, err)
 	}
 	entries, err := c.readEntries(c.nodes["bob"])
 	if err != nil {
@@ -752,7 +752,7 @@ func (c *collaborationScenario) cancelAndContinue() error {
 		if err != nil {
 			return err
 		}
-		if r != nil && r.Type == "invocation.closed" {
+		if r != nil && r.Type == "turn.closed" {
 			if r.Outcome == "cancelled" {
 				cancelled++
 			}
@@ -958,10 +958,10 @@ func (c *collaborationScenario) suppression() error {
 	for i := int32(1); i <= 2; i++ {
 		result, err := c.send("root", "bob", "consult alice twice")
 		if err != nil || result.Answer != "continued without polling" {
-			return fmt.Errorf("suppression in invocation %d: %+v %v", i, result, err)
+			return fmt.Errorf("suppression in turn %d: %+v %v", i, result, err)
 		}
 		if c.nodes["alice"].requests.Load() != before+i {
-			return errors.New("BUSY suppression leaked between invocations or permitted polling")
+			return errors.New("BUSY suppression leaked between turns or permitted polling")
 		}
 	}
 	return c.finishHold()
@@ -1193,7 +1193,7 @@ func (c *collaborationScenario) toolWindow() error {
 	}
 	result, err := c.send("bob", "alice", "research with tools")
 	if err != nil || result.Answer != answer {
-		return fmt.Errorf("tool invocation failed: %v %v", result, err)
+		return fmt.Errorf("tool call failed: %v %v", result, err)
 	}
 	n := c.nodes["alice"]
 	ref, err := n.a.View(c.s.ctx, "bob", nil)

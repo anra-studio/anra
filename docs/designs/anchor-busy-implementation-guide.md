@@ -26,7 +26,7 @@ and waits for its terminal cleanup without holding the admission lock.
 Read:
 
 - `AGENTS.md`: committed tests are executable BDD E2Es only.
-- `pkg/agent/runtime.go`: the full-run mutex and ADK invocation loop.
+- `pkg/agent/runtime.go`: the full-run mutex and ADK turn loop.
 - `pkg/agent/events.go`: the adapter seam for legacy and ADK tape entries.
 - `pkg/a2a/executor.go`, `messaging.go`, and `peer_tools.go`: text-only peer calls.
 - `pkg/a2a/service.go`, `selection.go`, and `connect.go`: grants, export, and RPCs.
@@ -53,12 +53,12 @@ Verify the pinned dependency APIs. In the inspected tape-go version:
 | `pkg/agent/execution.go` | Decode/replay control anchors, manage admission, persist start/close, recover orphans. |
 | `pkg/agent/publication.go` | Validate and append publications; expose immutable projection snapshots. |
 | `pkg/agent/runtime.go` | Wrap ADK runs with admission/termination; retain the native ADK loop. |
-| `pkg/agent/events.go` | Exclude control anchors and aborted invocation intervals from ADK history/state projection. |
+| `pkg/agent/events.go` | Exclude control anchors and aborted turn intervals from ADK history/state projection. |
 | `pkg/agent/tools.go` | Register the fixed publication tool when intermediate publication is enabled. |
 | `pkg/a2a/executor.go` | Convert typed busy errors into negotiated collaboration results. |
 | `pkg/a2a/messaging.go` | Exchange and validate typed results and bounded delegation metadata. |
 | `pkg/a2a/peer_tools.go` | Discover peers, call Delegator transitions, and return structured tool outcomes. |
-| `pkg/model/delegator/delegator.go` | Own root/path/deadline transitions and invocation-local BUSY progress; expose metadata snapshots to adapters. |
+| `pkg/model/delegator/delegator.go` | Own root/path/deadline transitions and turn-local BUSY progress; expose metadata snapshots to adapters. |
 | `pkg/a2a/service.go` / `selection.go` | Select publications, pin grants to their entry snapshots, retain old grant reads. |
 | `pkg/a2a/publication.go` | Whitelisted public projection/export of publication anchors. |
 | `proto/.../tape.proto` | Add `AnchorRef` and optional `BorrowRequest.publication = 5`. |
@@ -81,13 +81,13 @@ The projection needs only:
 // Sketch: concrete fields must use tape-go sequence types.
 type executionProjection struct {
     source       SourceIdentity
-    active       *invocationRecord
+    active       *turnRecord
     publications []publicationRecord
     outcomes     map[string]terminalRecord
 }
 ```
 
-An active record contains the invocation UUID, owner epoch, persisted start
+An active record contains the turn UUID, owner epoch, persisted start
 sequence, and base publication reference. Do not duplicate a durable scheduler
 state in another database. A map/index is a replayable optimization.
 
@@ -97,7 +97,7 @@ Replay rules:
 2. Validate the anchor schema (`anra.dev/anchor/v1`) before applying a recognized record.
 3. A start must not overlap another unclosed start.
 4. A publication must refer to an existing start and valid earlier coverage.
-5. A close must match its start and invocation. At most one authoritative close
+5. A close must match its start and turn. At most one authoritative close
    exists for a start; contradictory duplicates are corruption.
 6. Apply the optional terminal publication in the same replay step as closing.
 7. Keep aborted intervals for the ADK projection filter.
@@ -126,19 +126,19 @@ admit(ctx):
     if projection.active exists:
         copy immutable busy snapshot
         unlock; return typed BUSY(snapshot)
-    create invocation UUID and epoch-bound start payload
+    create turn UUID and epoch-bound start payload
     append start with ID zero; obtain persisted start reference
     if append outcome cannot be established:
         fence; unlock; return storage error
     install active record in projection
     unlock
-    return admitted invocation
+    return admitted turn
 
 run(ctx, input):
     validate input/runtime configuration
-    invocation = admit(ctx)
+    turn = admit(ctx)
     if not admitted: return its result
-    run the existing ADK iterator with invocation context
+    run the existing ADK iterator with turn context
     capture answer or model/tool/cancellation failure
     derive an optional bounded final-answer publication on success
     close under a fresh bounded cleanup context
@@ -154,10 +154,10 @@ success when the cleanup discovers a close failure.
 `BusyError` is an application outcome, not a transport outage. It should expose
 an immutable details snapshot through a narrow interface that `pkg/a2a` can
 inspect without importing `pkg/agent`. Avoid creating an import cycle or a
-scheduler package. Do not put sensitive invocation data in `Error()` text.
+scheduler package. Do not put sensitive turn data in `Error()` text.
 
 There may be a brief delay for a local anchor transaction. There must be no
-wait on another invocation's completion channel, model call, or network request.
+wait on another turn's completion channel, model call, or network request.
 The admission gate must be shared by all reasoning entry points. Retire or guard
 any alternative entry point capable of appending user/model entries around it.
 
@@ -175,7 +175,7 @@ a built-in tool, not a configurable injected capability. The tool must:
 - Validate the requested summary and bounded source coverage.
 - Check that coverage exists, belongs to this source, precedes the new anchor,
   and contains completed facts eligible for publication.
-- Reject permission expansion and references to another invocation's private
+- Reject permission expansion and references to another turn's private
   work merely because the model supplied a sequence number.
 - Append a publication anchor and return its actual persisted reference.
 - Return failure without a reference when append fails.
@@ -239,7 +239,7 @@ older lender that could ignore the additive field. Do not change stored decision
 Borrowing, reading, and release remain independent of the execution gate. Copy
 publication state under a short lock and release it before grant-journal work.
 A publication is immutable, so a copied reference remains valid after the owner
-publishes something newer. If the owner closes an invocation concurrently, a
+publishes something newer. If the owner closes a turn concurrently, a
 request may use its captured older publication; it must not silently switch
 snapshots halfway through approval.
 
@@ -277,15 +277,15 @@ Remove the handwritten delegation DTO, status constants, JSON codecs, and
 structural validation branches. Change all callers to generated types directly.
 Wire enums use their canonical ProtoJSON names; there is no lowercase wire
 compatibility layer. The CLI and tools render readable labels. Keep deadline
-capping, ancestry, and invocation-local BUSY state in the Delegator
+capping, ancestry, and turn-local BUSY state in the Delegator
 model. Keep identity in the transport adapter. Tools call model transitions
 rather than changing protobuf fields, context keys, or BUSY maps themselves.
 
 The model API has these boundaries:
 
-- `Accept` validates and owns inbound metadata; `Begin` creates fresh invocation
+- `Accept` validates and owns inbound metadata; `Begin` creates fresh turn
   progress state and caps its inherited deadline.
-- `FromContext` resolves the invocation model, creating a root for external
+- `FromContext` resolves the turn model, creating a root for external
   clients such as the CLI. `Metadata` returns an owned transport snapshot.
 - `Next` checks suppression and deadlines, then forks one path and appends the
   sender. Sibling calls retain the same root and independent paths.
@@ -302,10 +302,10 @@ peer tools, and tests must not continue assuming every response is answer text.
 Have `send_peer_message` return BUSY as a structured tool result so ADK stores it
 and continues the caller's model loop.
 
-Add invocation-local attempted-peer state keyed by `(peer, publication)` for
+Add turn-local attempted-peer state keyed by `(peer, publication)` for
 BUSY outcomes. A second reasoning attempt at the unchanged state returns local
 `no_new_context` without HTTP. It does not become successful merely because the
-new prompt differs. A new root invocation can try again. Do not invent an
+new prompt differs. A new root turn can try again. Do not invent an
 unbounded backoff loop, polling goroutine, or queue.
 
 Propagate a root correlation ID, capped deadline, and ancestry on each edge.
@@ -330,13 +330,13 @@ previous epoch; do not mutate/delete the orphan start or the intervening entries
 If recovery cannot commit, do not publish a healthy server.
 
 Construct the TapeAdapter only after recovering the projection. For each failed,
-cancelled, or abandoned invocation, exclude its raw ADK event interval from new
+cancelled, or abandoned turn, exclude its raw ADK event interval from new
 model/session state. Preserve the physical entries for diagnostics and provenance.
 Preserve explicitly committed publication anchors for borrowing. Keep completed
-invocation history in order.
+turn history in order.
 
 Filter both ordinary event content and session state deltas. An existing hydrated
-adapter may already hold partial state; rebuild it after a failed invocation
+adapter may already hold partial state; rebuild it after a failed turn
 before starting another one. Test unmatched function calls explicitly: preserving
 bad tool-call history can make the next provider request invalid even if the
 admission gate has been reopened correctly.
@@ -350,9 +350,9 @@ Fault points to investigate locally:
 
 | Failure point | Expected durable outcome |
 | --- | --- |
-| Before start append | No admitted invocation and no model call. |
+| Before start append | No admitted turn and no model call. |
 | After start commit, before first model call | Recoverable open start; later abandoned close. |
-| During peer call | BUSY remains readable; deadline/cancellation can end the active invocation. |
+| During peer call | BUSY remains readable; deadline/cancellation can end the active turn. |
 | After intermediate publication | That publication survives even if later work aborts. |
 | After final answer entry, before close | No successful acknowledgement; recovery does not publish the unfinished tail. |
 | After close commit, before HTTP response | Completed tape; caller delivery is uncertain, with no exactly-once guarantee. |
@@ -393,12 +393,12 @@ Scenario: A busy agent lends published context without another reasoning run
   Given Alice has published permitted findings at an anchor
   And Alice is reasoning and waiting for Bob
   When Bob requests additional reasoning from Alice
-  Then Alice returns BUSY without accepting another invocation
+  Then Alice returns BUSY without accepting another turn
   When Bob borrows the indicated publication
   Then the granted view contains only those published findings
   And borrowing finishes while Alice's reasoning remains occupied
   When Bob answers using the available context
-  Then Alice can finish her original invocation
+  Then Alice can finish her original turn
 ```
 
 Additional scenarios must cover every item in spec section 12, especially:
@@ -412,7 +412,7 @@ Additional scenarios must cover every item in spec section 12, especially:
 - Abandoned-start recovery, unchanged source identity, and a valid next model call.
 - Removal of plain forwarding and preservation of source-agent reasoning.
 
-Measure prompt completion/no-second-invocation using fixture observations and
+Measure prompt completion/no-second-turn using fixture observations and
 model-call counts; do not depend on model text claiming it behaved correctly.
 Inspect persisted anchors through public storage reads after stopping the owner
 process. Keep sequence arithmetic on the canonical tape type.
@@ -460,7 +460,7 @@ Review in this order:
 
 - [x] Anchors use ordinary entry sequences; references include a stable source.
 - [x] No control lock or write transaction spans model/peer work.
-- [x] Busy arrivals append no new user invocation and start no model call.
+- [x] Busy arrivals append no new user turn and start no model call.
 - [x] Close failures fence the runtime; old starts cannot cause permanent BUSY.
 - [x] Publications are immutable, bounded, exportable, and borrowed through requester-bound grants.
 - [x] Publication grants are exactly one anchor entry, with the matching snapshot.

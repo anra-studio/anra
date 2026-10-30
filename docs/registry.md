@@ -142,7 +142,7 @@ return runtime ownership credentials.
 `PRESENCE_STATE_UNKNOWN` is also the default enum value; the generated enum
 constants have the `PRESENCE_STATE_` prefix. A fresh heartbeat observes contact
 with the registry; it does not guarantee reachability from every caller or prove
-that reasoning will succeed. BUSY remains an invocation outcome. It leaves
+that reasoning will succeed. BUSY remains a turn outcome. It leaves
 presence online while the runtime continues heartbeating.
 
 ### Ownership invariants

@@ -20,7 +20,7 @@ func initializeDelegator(sc *godog.ScenarioContext, c *collaborationScenario) {
 	var roots []*cp.DelegationMetadata
 	var visits []delegationVisit
 	sc.Step(`^Alice completes a ten-hop delegation and retains its full ancestry$`, c.longDelegation)
-	sc.Step(`^Alice consults Bob and Charlie in separate invocations$`, func() error {
+	sc.Step(`^Alice consults Bob and Charlie in separate turns$`, func() error {
 		rootCalls := make(chan *cp.DelegationMetadata, 2)
 		peerCalls := make(chan delegationVisit, 4)
 		for _, name := range []string{"bob", "charlie"} {
@@ -54,7 +54,7 @@ func initializeDelegator(sc *godog.ScenarioContext, c *collaborationScenario) {
 		for i := 0; i < 2; i++ {
 			result, err := c.send("root", "alice", "consult both peers")
 			if err != nil || result.Answer != "combined siblings" {
-				return fmt.Errorf("sibling invocation %d failed: %+v %v", i, result, err)
+				return fmt.Errorf("sibling turn %d failed: %+v %v", i, result, err)
 			}
 		}
 		roots, visits = nil, nil
@@ -63,7 +63,7 @@ func initializeDelegator(sc *godog.ScenarioContext, c *collaborationScenario) {
 			case path := <-rootCalls:
 				roots = append(roots, path)
 			default:
-				return fmt.Errorf("missing root invocation %d", i)
+				return fmt.Errorf("missing root turn %d", i)
 			}
 		}
 		for i := 0; i < 4; i++ {
@@ -76,9 +76,9 @@ func initializeDelegator(sc *godog.ScenarioContext, c *collaborationScenario) {
 		}
 		return nil
 	})
-	sc.Step(`^sibling calls share their invocation root and keep independent paths$`, func() error {
+	sc.Step(`^sibling calls share their turn root and keep independent paths$`, func() error {
 		if len(roots) != 2 || roots[0].RootRequestId == roots[1].RootRequestId {
-			return fmt.Errorf("independent invocations shared a root: %v", roots)
+			return fmt.Errorf("independent turns shared a root: %v", roots)
 		}
 		for i, visit := range visits {
 			root := roots[i/2]
