@@ -17,10 +17,10 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/cucumber/godog"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	a2a "github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
+	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
 	entry "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -94,6 +94,20 @@ func initializeScenario(sc *godog.ScenarioContext) {
 		return ctx, errors.Join(err, os.RemoveAll(s.root))
 	})
 	sc.Step(`^an agent with its own tape$`, s.openLocalTape)
+	sc.Step(`^I create an agent with an empty role$`, func() error {
+		a, err := agent.New("", s.localTape)
+		s.lastError = err
+		if a != nil {
+			return errors.Join(errors.New("empty role created an agent"), a.Shutdown(s.ctx))
+		}
+		return nil
+	})
+	sc.Step(`^agent creation fails with "([^"]*)"$`, func(want string) error {
+		if s.lastError == nil || s.lastError.Error() != want {
+			return fmt.Errorf("agent creation error = %v, want %q", s.lastError, want)
+		}
+		return nil
+	})
 	sc.Step(`^I ask "([^"]*)" and the model answers "([^"]*)"$`, s.ask)
 	sc.Step(`^I close and reopen the agent's storage$`, s.reopenLocalTape)
 	sc.Step(`^another member uses the same database for a private conversation$`, s.otherMember)
@@ -163,12 +177,12 @@ func (s *scenario) saveFailure(name string, failure error) error {
 
 type modelFunc func(context.Context, runner.Request) (runner.Response, error)
 
-func (s *scenario) openTape(name, principal string) (*bbolt.Bbolt, error) {
+func (s *scenario) openTape(name, role string) (*bbolt.Bbolt, error) {
 	tape, err := bbolt.NewBboltStorage("session", filepath.Join(s.root, name+".db"))
 	if err != nil {
 		return nil, err
 	}
-	if err := tape.Init(owner.WithOwnerId(s.ctx, principal)); err != nil {
+	if err := tape.Init(owner.WithOwnerId(s.ctx, role)); err != nil {
 		return nil, errors.Join(err, tape.Close())
 	}
 	return tape, nil

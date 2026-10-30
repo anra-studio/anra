@@ -85,14 +85,14 @@ func WithTimeout(limit time.Duration) Option {
 type modelTurnCountKey struct{}
 
 func (a *Anra) initialize() error {
-	ctx := owner.WithOwnerId(context.Background(), a.principal)
+	ctx := owner.WithOwnerId(context.Background(), a.role)
 	state, err := a.tape.Get(ctx)
 	if err != nil {
 		return err
 	}
 	a.runtime.sessionID = state.SessionID
 	wrapped := &eventStorage{TapeStorage: a.tape, aborted: append([]view.EntryRange(nil), a.execution.aborted...)}
-	adapter, err := tapeagent.NewTapeAdapter(&tape.Tape{TapeStorage: wrapped, OwnerID: a.principal}, appName)
+	adapter, err := tapeagent.NewTapeAdapter(&tape.Tape{TapeStorage: wrapped, OwnerID: a.role}, appName)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (a *Anra) Run(ctx context.Context, input string) (answer string, runErr err
 	count := 0
 	ctx = context.WithValue(ctx, modelTurnCountKey{}, &count)
 
-	for event, err := range a.runtime.runner.Run(ctx, a.principal, a.runtime.sessionID, genai.NewContentFromText(input, genai.RoleUser), adkagent.RunConfig{}) {
+	for event, err := range a.runtime.runner.Run(ctx, a.role, a.runtime.sessionID, genai.NewContentFromText(input, genai.RoleUser), adkagent.RunConfig{}) {
 		if err != nil {
 			return "", fmt.Errorf("agent: ADK run: %w", err)
 		}

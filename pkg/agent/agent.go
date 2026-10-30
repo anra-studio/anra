@@ -10,7 +10,7 @@ import (
 
 type Anra struct {
 	mu        sync.Mutex
-	principal string
+	role      string
 	execution execution
 	tape      *bbolt.Bbolt
 	runtime   runtimeConfig
@@ -18,16 +18,16 @@ type Anra struct {
 
 // New requires an initialized bbolt tape and exclusive runtime ownership of its
 // owner/session. The caller drains Shutdown before closing the tape.
-func New(principal string, tape *bbolt.Bbolt, opts ...Option) (*Anra, error) {
-	if principal == "" {
-		return nil, errors.New("agent: empty principal")
+func New(role string, tape *bbolt.Bbolt, opts ...Option) (*Anra, error) {
+	if role == "" {
+		return nil, errors.New("agent: empty role")
 	}
 	if tape == nil {
 		return nil, errors.New("agent: nil tape")
 	}
 	anra := &Anra{
-		principal: principal,
-		tape:      tape,
+		role: role,
+		tape: tape,
 		runtime: runtimeConfig{
 			maxModelTurns: defaultMaxModelTurns,
 			timeout:       2 * time.Minute,

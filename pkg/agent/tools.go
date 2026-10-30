@@ -39,13 +39,13 @@ func (a *Anra) builtinTools() ([]tool.Tool, error) {
 	if err != nil {
 		return nil, err
 	}
-	peers, err := agenttools.NewPeerTools(a.runtime.registry, a.runtime.peerHTTP, a.principal)
+	peers, err := agenttools.NewPeerTools(a.runtime.registry, a.runtime.peerHTTP, a.role)
 	if err != nil {
 		return nil, err
 	}
 	tools := []tool.Tool{bash, peers["discover_peers"], peers["send_peer_message"]}
 	if a.runtime.borrowClient == nil {
-		borrow, err := agenttools.NewPeerBorrowTool(a.runtime.registry, a.runtime.peerHTTP, a.principal)
+		borrow, err := agenttools.NewPeerBorrowTool(a.runtime.registry, a.runtime.peerHTTP, a.role)
 		if err != nil {
 			return nil, err
 		}
