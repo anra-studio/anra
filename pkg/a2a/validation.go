@@ -4,16 +4,13 @@ import (
 	"buf.build/go/protovalidate"
 	"encoding/json"
 	"fmt"
-	"github.com/go-playground/validator/v10"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/go-playground/validator/v10"
 	"google.golang.org/protobuf/proto"
 )
 
-var structValidator = newStructValidator()
+var structValidator = validator.New(validator.WithRequiredStructEnabled())
 
-func newStructValidator() *validator.Validate {
-	return validator.New(validator.WithRequiredStructEnabled())
-}
 func validateStruct(value any) error {
 	if err := structValidator.Struct(value); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidParams, err)
