@@ -27,8 +27,9 @@ type Config struct {
 	Tape      *bbolt.Bbolt `validate:"required,structonly"`
 	StatePath string       `validate:"required"`
 	// TrustedOrigins is an exact allowlist of browser origins (scheme + host,
-	// optional port). Empty rejects every request carrying Origin. Native
-	// clients without Origin remain subject to ordinary Bearer authentication.
+	// optional port). Empty disables Origin restrictions. When configured,
+	// Origin must be a single valid allowlisted value if present. All clients,
+	// including native clients without Origin, require Bearer authentication.
 	TrustedOrigins []string `validate:"dive,trusted_origin"`
 	// Zero uses 1 MiB. Limits apply to the entire MCP tool result, including its
 	// structured and text representations. Oversized results fail atomically.

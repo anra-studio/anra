@@ -18,6 +18,9 @@ func validOrigin(value string) bool {
 }
 
 func (s *Service) allowsOrigin(r *http.Request) bool {
+	if len(s.config.TrustedOrigins) == 0 {
+		return true
+	}
 	values := r.Header.Values("Origin")
 	if len(values) == 0 {
 		return true

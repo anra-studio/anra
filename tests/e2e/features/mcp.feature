@@ -194,14 +194,32 @@ Feature: Read-only MCP handoff context
       | http://trusted.example      | POST   |
       | https://trusted.example:444 | POST   |
 
-  Scenario Outline: Origin trust is never inferred from the request or proxy headers
+  Scenario Outline: An unconfigured Origin allowlist permits authenticated requests
     Given a "normal" MCP handoff
+    And the embedding runtime leaves trusted Origins "<configuration>"
+    When an authenticated MCP caller sends Origin "<origin>" using "POST"
+    Then the MCP response contains the complete committed window
+    Examples:
+      | configuration | origin                  |
+      | unset         | endpoint                |
+      | unset         | https://trusted.example |
+      | unset         | null                    |
+      | empty         | https://evil.example    |
+
+  Scenario: An unconfigured Origin allowlist still requires a Bearer credential
+    Given a "normal" MCP handoff
+    When an MCP caller sends Origin "https://trusted.example" without a credential
+    Then MCP returns HTTP 401 without context or private metadata
+
+  Scenario Outline: Configured Origin trust is never inferred from request or proxy headers
+    Given a "normal" MCP handoff
+    And the embedding runtime trusts Origin "https://trusted.example"
     When an authenticated MCP caller sends Origin "<origin>" using "POST"
     Then MCP returns HTTP 403 without context or private metadata
     Examples:
       | origin                  |
       | endpoint                |
-      | https://trusted.example |
+      | https://evil.example    |
 
   Scenario Outline: Origin headers must contain exactly one nonempty serialized origin
     Given a "normal" MCP handoff

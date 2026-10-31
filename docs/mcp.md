@@ -9,21 +9,24 @@ The service uses the [official Go MCP SDK](https://github.com/modelcontextprotoc
 for protocol negotiation, JSON-RPC, and stateless Streamable HTTP with JSON
 responses. Mount `Service.Handler()` at the embedding runtime's `/mcp` endpoint.
 Every HTTP request, including discovery, requires `Authorization: Bearer …`.
-Remote deployments terminate TLS. The handler checks Origin explicitly on every
-method; the SDK's localhost Host/DNS rebinding check also remains enabled.
+Remote deployments terminate TLS. When configured, the handler enforces the
+Origin allowlist on every method; the SDK's localhost Host/DNS rebinding check
+also remains enabled.
 MCP session identifiers, role names, and claimed external session
 IDs never establish identity.
 
 `Config.TrustedOrigins` is an exact allowlist of serialized HTTP(S) origins,
-for example `[]string{"https://console.example"}`. By default, all requests
-carrying Origin are rejected with HTTP 403, including same-host requests and
-`Origin: null`. Requests without Origin remain usable by native clients and
-still require valid Bearer credentials. Entries include scheme, host and any
+for example `[]string{"https://console.example"}`. When unset or empty
+(`len(TrustedOrigins) == 0`), the service does not restrict Origin; requests
+carrying Origin are allowed with valid Bearer credentials. A nonempty allowlist
+enables strict validation: requests carrying Origin must contain exactly one
+valid serialized origin matching an entry. Untrusted, malformed, empty or
+repeated Origin headers then fail with HTTP 403, the static `permission_denied`
+envelope and `Cache-Control: no-store`. Entries include scheme, host and any
 explicit port; paths, credentials, queries, fragments and wildcards are invalid
-configuration. Untrusted, malformed, empty or repeated Origin headers fail with
-the static `permission_denied` envelope and `Cache-Control: no-store`. This
-addresses cross-origin access with valid credentials; it is independent of
-Bearer authentication.
+configuration. Requests without Origin remain usable by native clients in both
+modes. Every request still requires valid Bearer credentials; Origin validation
+is independent of Bearer authentication.
 
 The embedding runtime owns the listener, TLS, and browser trust configuration.
 Local deployments should bind loopback. Configure browser origins explicitly

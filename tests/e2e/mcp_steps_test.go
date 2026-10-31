@@ -120,8 +120,27 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^A2A exports the same public entry content and identity$`, m.checkA2AProjection)
 	sc.Step(`^both MCP result representations preserve empty business JSON objects$`, func() error { return m.checkBusinessJSON(`{}`) })
 	sc.Step(`^the embedding runtime trusts Origin "([^"]+)"$`, m.trustOrigin)
+	sc.Step(`^the embedding runtime leaves trusted Origins "([^"]+)"$`, func(configuration string) error {
+		switch configuration {
+		case "unset":
+			return m.configureTrustedOrigins(nil)
+		case "empty":
+			return m.configureTrustedOrigins([]string{})
+		default:
+			return fmt.Errorf("unknown trusted Origins configuration %q", configuration)
+		}
+	})
 	sc.Step(`^an authenticated MCP caller sends Origin "([^"]+)" using "([^"]+)"$`, m.originRequest)
+	sc.Step(`^an MCP caller sends Origin "([^"]+)" without a credential$`, func(origin string) error {
+		return m.call(anramcp.ReadContextWindow, "", m.grant.AnchorSeq, map[string]string{"Origin": origin})
+	})
 	sc.Step(`^an authenticated MCP caller sends "([^"]+)" Origin headers$`, m.originHeaders)
+	sc.Step(`^MCP returns HTTP 401 without context or private metadata$`, func() error {
+		if m.lastStatus != http.StatusUnauthorized {
+			return fmt.Errorf("want HTTP 401, got %d: %s", m.lastStatus, m.lastBody)
+		}
+		return m.rejected("permission_denied")
+	})
 	sc.Step(`^MCP returns HTTP 403 without context or private metadata$`, func() error {
 		if m.lastStatus != http.StatusForbidden {
 			return fmt.Errorf("want HTTP 403, got %d: %s", m.lastStatus, m.lastBody)
@@ -1071,6 +1090,10 @@ func (m *mcpScenario) checkBusinessJSON(expectedJSON string) error {
 }
 
 func (m *mcpScenario) trustOrigin(origin string) error {
+	return m.configureTrustedOrigins([]string{origin})
+}
+
+func (m *mcpScenario) configureTrustedOrigins(origins []string) error {
 	m.server.Close()
 	if err := m.service.Close(); err != nil {
 		return err
@@ -1078,7 +1101,7 @@ func (m *mcpScenario) trustOrigin(origin string) error {
 	var err error
 	m.service, err = anramcp.NewService(anramcp.Config{
 		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, StatePath: m.statePath(),
-		TrustedOrigins: []string{origin}, Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+		TrustedOrigins: origins, Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
 	})
 	if err != nil {
 		return err
