@@ -247,12 +247,23 @@ Feature: Read-only MCP handoff context
       | https://user@trusted.example    |
       | https://*.example               |
       | https://trusted.example?query=1 |
+      | ftp://trusted.example           |
+      | https://:443                    |
+      | https://trusted.example#part    |
+      | https://trusted.example?        |
+      | https://trusted.example#        |
 
-  Scenario: Explicitly trusted browser Origins can read the committed window
+  Scenario Outline: Explicitly trusted browser Origins can read the committed window
     Given a "normal" MCP handoff
-    And the embedding runtime trusts Origin "https://trusted.example"
-    When an authenticated MCP caller sends Origin "https://trusted.example" using "POST"
+    And the embedding runtime trusts Origin "<origin>"
+    When an authenticated MCP caller sends Origin "<origin>" using "POST"
     Then the MCP response contains the complete committed window
+    Examples:
+      | origin                          |
+      | https://trusted.example         |
+      | https://trusted.example:8443    |
+      | http://localhost:8080           |
+      | http://[::1]:8080               |
 
   Scenario: Native MCP clients work without Origin after trust is configured
     Given a "normal" MCP handoff

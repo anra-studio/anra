@@ -5,12 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type grantContextKey struct{}
+
+func (s *Service) allowsOrigin(r *http.Request) bool {
+	if len(s.config.TrustedOrigins) == 0 {
+		return true
+	}
+	origins := r.Header.Values("Origin")
+	return len(origins) == 0 || (len(origins) == 1 && slices.Contains(s.config.TrustedOrigins, origins[0]))
+}
 
 // The SDK sets its transport caching headers during response delivery. Enforce
 // no-store at that boundary so authenticated context is never cached.

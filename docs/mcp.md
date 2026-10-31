@@ -19,8 +19,8 @@ IDs never establish identity.
 for example `[]string{"https://console.example"}`. When unset or empty
 (`len(TrustedOrigins) == 0`), the service does not restrict Origin; requests
 carrying Origin are allowed with valid Bearer credentials. A nonempty allowlist
-enables strict validation: requests carrying Origin must contain exactly one
-valid serialized origin matching an entry. Untrusted, malformed, empty or
+requires requests carrying Origin to contain exactly one value matching an
+entry. Configuration is validated once at startup. Untrusted, malformed, empty or
 repeated Origin headers then fail with HTTP 403, the static `permission_denied`
 envelope and `Cache-Control: no-store`. Entries include scheme, host and any
 explicit port; paths, credentials, queries, fragments and wildcards are invalid

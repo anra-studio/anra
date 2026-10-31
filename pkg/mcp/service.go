@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"time"
 
@@ -28,9 +29,9 @@ type Config struct {
 	StatePath string       `validate:"required"`
 	// TrustedOrigins is an exact allowlist of browser origins (scheme + host,
 	// optional port). Empty disables Origin restrictions. When configured,
-	// Origin must be a single valid allowlisted value if present. All clients,
+	// Origin must be a single allowlisted value if present. All clients,
 	// including native clients without Origin, require Bearer authentication.
-	TrustedOrigins []string `validate:"dive,trusted_origin"`
+	TrustedOrigins []string `validate:"dive,http_url,excludes=*"`
 	// Zero uses 1 MiB. Limits apply to the entire MCP tool result, including its
 	// structured and text representations. Oversized results fail atomically.
 	MaxResponseBytes int              `validate:"omitempty,min=1024,max=16777216"`
@@ -47,6 +48,13 @@ type Service struct {
 func NewService(c Config) (*Service, error) {
 	if err := validate.Struct(c); err != nil {
 		return nil, fmt.Errorf("mcp config: %w", err)
+	}
+	// Validate the serialized origin form once, before serving requests.
+	for _, origin := range c.TrustedOrigins {
+		u, err := url.Parse(origin)
+		if err != nil || u.Hostname() == "" || origin != u.Scheme+"://"+u.Host {
+			return nil, fmt.Errorf("mcp config: trusted origin %q must contain only scheme and host", origin)
+		}
 	}
 	if err := protovalidate.Validate(c.Source); err != nil {
 		return nil, fmt.Errorf("mcp source: %w", err)
