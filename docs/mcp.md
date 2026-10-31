@@ -9,9 +9,30 @@ The service uses the [official Go MCP SDK](https://github.com/modelcontextprotoc
 for protocol negotiation, JSON-RPC, and stateless Streamable HTTP with JSON
 responses. Mount `Service.Handler()` at the embedding runtime's `/mcp` endpoint.
 Every HTTP request, including discovery, requires `Authorization: Bearer …`.
-Remote deployments terminate TLS; the SDK's origin and DNS rebinding protection
-remain enabled. MCP session identifiers, role names, and claimed external session
+Remote deployments terminate TLS. The handler checks Origin explicitly on every
+method; the SDK's localhost Host/DNS rebinding check also remains enabled.
+MCP session identifiers, role names, and claimed external session
 IDs never establish identity.
+
+`Config.TrustedOrigins` is an exact allowlist of serialized HTTP(S) origins,
+for example `[]string{"https://console.example"}`. By default, all requests
+carrying Origin are rejected with HTTP 403, including same-host requests and
+`Origin: null`. Requests without Origin remain usable by native clients and
+still require valid Bearer credentials. Entries include scheme, host and any
+explicit port; paths, credentials, queries, fragments and wildcards are invalid
+configuration. Untrusted, malformed, empty or repeated Origin headers fail with
+the static `permission_denied` envelope and `Cache-Control: no-store`. This
+addresses cross-origin access with valid credentials; it is independent of
+Bearer authentication.
+
+The embedding runtime owns the listener, TLS, and browser trust configuration.
+Local deployments should bind loopback. Configure browser origins explicitly
+from trusted deployment settings. The handler never derives trust from Host,
+Forwarded or X-Forwarded-* headers. Reverse proxies must preserve Origin and
+Authorization, reject untrusted hostnames, prevent direct access to the backend,
+and terminate TLS securely. Do not strip Origin to bypass this check. Origin
+trust does not grant CORS access or replace connection authentication. See the
+[MCP transport security requirements](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning).
 
 ## Local controller lifecycle
 
@@ -107,6 +128,12 @@ in MCP `structuredContent` and the text `content` item.
 `isComplete: true`. Entries contain `seq`, `kind`, `timestamp`, and either
 `content` or `boundary`. Plain text content is a JSON string; supported ADK
 content is a JSON object retaining structured function calls and responses.
+The shared A2A/MCP `anra.context.v1` projection uses explicit protocol structures
+and recursively rejects unknown visible fields, including nested function
+response parts and media fields. Tool `args` and `response` objects are opaque
+JSON: unknown business keys, empty objects, large integers, decimal precision,
+and exponent notation are retained without a float64 conversion. Execution
+metadata outside `content` and private thought parts remain excluded.
 
 Native boundaries retain schema, transition type, turn ID, start sequence, and
 outcome. Integration boundaries retain explicit origin application, binding,
@@ -116,9 +143,15 @@ arbitrary extensions, delegated task prompts, and private thoughts are excluded.
 The initial projection supports plain user/assistant text, supported ADK content,
 native v1 boundaries, and integration v1 boundaries. Unknown kinds/schemas,
 legacy runner codecs, malformed events, or unsupported visible parts (including
-images and executable code) fail explicitly. Function results must match an
+top-level images and executable code) fail explicitly. Known inline/file media
+inside function responses are preserved; unknown protocol structures fail.
+Incremental function-call arguments (`partialArgs`/`willContinue` on a call)
+are outside v1 and fail explicitly. Function results must match an
 earlier call by ID and name, or an unambiguous name when IDs are absent. Calls
-cannot cross boundaries or remain unresolved. No partial dependency chain is
+cannot cross boundaries or remain unresolved. Responses with `willContinue: true`
+retain the open call; only a response with false or absent `willContinue`
+closes it. Every chunk is preserved in order, and an unfinished stream fails
+atomically with `failed_precondition`. No partial dependency chain is
 returned. Thought-only windows yield `entries: []` and `isComplete: true`, distinct
 from nonexistent handoffs or missing ranges.
 

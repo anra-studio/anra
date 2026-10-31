@@ -4,15 +4,22 @@ import (
 	"buf.build/go/protovalidate"
 	"encoding/json"
 	"fmt"
-	"github.com/go-playground/validator/v10"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/go-playground/validator/v10"
 	"google.golang.org/protobuf/proto"
 )
 
 var structValidator = newStructValidator()
 
 func newStructValidator() *validator.Validate {
-	return validator.New(validator.WithRequiredStructEnabled())
+	v := validator.New(validator.WithRequiredStructEnabled())
+	if err := v.RegisterValidation("jsonobject", func(f validator.FieldLevel) bool {
+		var object map[string]json.RawMessage
+		return json.Unmarshal(f.Field().Bytes(), &object) == nil && object != nil
+	}); err != nil {
+		panic(err)
+	}
+	return v
 }
 func validateStruct(value any) error {
 	if err := structValidator.Struct(value); err != nil {

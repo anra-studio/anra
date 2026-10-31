@@ -26,6 +26,10 @@ type Config struct {
 	Owner     string       `validate:"required"`
 	Tape      *bbolt.Bbolt `validate:"required,structonly"`
 	StatePath string       `validate:"required"`
+	// TrustedOrigins is an exact allowlist of browser origins (scheme + host,
+	// optional port). Empty rejects every request carrying Origin. Native
+	// clients without Origin remain subject to ordinary Bearer authentication.
+	TrustedOrigins []string `validate:"dive,trusted_origin"`
 	// Zero uses 1 MiB. Limits apply to the entire MCP tool result, including its
 	// structured and text representations. Oversized results fail atomically.
 	MaxResponseBytes int              `validate:"omitempty,min=1024,max=16777216"`
@@ -47,6 +51,7 @@ func NewService(c Config) (*Service, error) {
 		return nil, fmt.Errorf("mcp source: %w", err)
 	}
 	c.Source = proto.Clone(c.Source).(*pb.Source)
+	c.TrustedOrigins = slices.Clone(c.TrustedOrigins)
 	// A source is the persisted Tape incarnation, not a caller-selected label.
 	first, err := c.Tape.Range(owner.WithOwnerId(context.Background(), c.Owner), tv.EntryRange{SeqS: te.SeqFromUint64(1), SeqE: te.SeqFromUint64(2)})
 	if err != nil {

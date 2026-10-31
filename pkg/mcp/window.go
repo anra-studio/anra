@@ -12,7 +12,6 @@ import (
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	"google.golang.org/genai"
 )
 
 var errUnsupportedEntry = &Error{"failed_precondition", "committed window contains an unsupported entry type or projection"}
@@ -104,7 +103,7 @@ func (s *Service) window(ctx context.Context, h *Handoff, committed *seal) (*Win
 	result := &WindowResult{View: anchor.ProtoJSON(h.Context.View), Entries: []ProjectedEntry{}, IsComplete: true}
 	hash := sha256.New()
 	enc := json.NewEncoder(hash)
-	calls := make(map[string]string)
+	calls := make(toolDependencies)
 	projectedBytes := 0
 	err := s.walkWindow(ctx, h.Context.View, func(raw te.EntryLike, boundary bool) error {
 		if err := enc.Encode(raw); err != nil {
@@ -139,7 +138,7 @@ func (s *Service) window(ctx context.Context, h *Handoff, committed *seal) (*Win
 	return result, nil
 }
 
-func project(raw te.EntryLike, calls map[string]string) (*ProjectedEntry, error) {
+func project(raw te.EntryLike, calls toolDependencies) (*ProjectedEntry, error) {
 	e := &ProjectedEntry{Seq: raw.GetID().String(), Kind: string(raw.GetKind()), Timestamp: raw.GetTimestamp()}
 	if raw.GetKind() == anchor.Kind {
 		if len(calls) != 0 {
@@ -160,9 +159,6 @@ func project(raw te.EntryLike, calls map[string]string) (*ProjectedEntry, error)
 		e.Boundary = &Boundary{Schema: h.Schema, Type: h.Type, Origin: h.Origin}
 		return e, nil
 	}
-	if err := checkModelProjection(raw); err != nil {
-		return nil, err
-	}
 	exported, err := (a2a.ContextExporter{}).Export(raw)
 	if err != nil {
 		return nil, errUnsupportedEntry
@@ -172,7 +168,7 @@ func project(raw te.EntryLike, calls map[string]string) (*ProjectedEntry, error)
 	}
 	e.Content = exported.Payload.JsonData
 	if exported.Payload.MediaType == a2a.ContextMediaType {
-		var content genai.Content
+		var content a2a.ContextContent
 		if json.Unmarshal(e.Content, &content) != nil {
 			return nil, errUnsupportedEntry
 		}
@@ -180,86 +176,10 @@ func project(raw te.EntryLike, calls map[string]string) (*ProjectedEntry, error)
 			return nil, nil
 		} // thought-only input has no public model content
 		for _, part := range content.Parts {
-			if part.FunctionCall != nil {
-				c := part.FunctionCall
-				ref := toolReference{c.ID, c.Name}
-				key := ref.key()
-				if validate.Struct(ref) != nil || calls[key] != "" {
-					return nil, ErrFailedPrecondition
-				}
-				calls[key] = c.Name
-			}
-			if part.FunctionResponse != nil {
-				r := part.FunctionResponse
-				ref := toolReference{r.ID, r.Name}
-				key := ref.key()
-				if validate.Struct(ref) != nil || calls[key] != r.Name {
-					return nil, ErrFailedPrecondition
-				}
-				delete(calls, key)
+			if err := calls.observe(part); err != nil {
+				return nil, err
 			}
 		}
 	}
 	return e, nil
-}
-
-// ContextExporter deliberately omits non-model metadata. MCP additionally
-// rejects unsupported visible content, so omission cannot claim completeness
-// for images, executable code, unknown future parts, or an unrecognized codec.
-func checkModelProjection(raw te.EntryLike) error {
-	var extensions map[string]any
-	switch e := raw.(type) {
-	case te.CustomEntry:
-		extensions = e.Extensions
-	case *te.CustomEntry:
-		extensions = e.Extensions
-	}
-	if _, legacy := extensions["anra:runner-message/v1"]; legacy {
-		return errUnsupportedEntry
-	}
-	value, exists := extensions["adk:event"]
-	if !exists {
-		return nil
-	}
-	payload, ok := value.(string)
-	if !ok {
-		return errUnsupportedEntry
-	}
-	var event struct {
-		Content *struct {
-			Parts []json.RawMessage `json:"parts"`
-		} `json:"content"`
-	}
-	if json.Unmarshal([]byte(payload), &event) != nil || event.Content == nil {
-		return errUnsupportedEntry
-	}
-	for _, data := range event.Content.Parts {
-		var part map[string]json.RawMessage
-		if json.Unmarshal(data, &part) != nil || part == nil {
-			return errUnsupportedEntry
-		}
-		if string(part["thought"]) == "true" {
-			continue
-		}
-		for name := range part {
-			switch name {
-			case "text", "functionCall", "functionResponse", "thought", "thoughtSignature":
-			default:
-				return errUnsupportedEntry
-			}
-		}
-	}
-	return nil
-}
-
-type toolReference struct {
-	ID   string
-	Name string `validate:"required"`
-}
-
-func (r toolReference) key() string {
-	if r.ID != "" {
-		return "id:" + r.ID
-	}
-	return "name:" + r.Name
 }

@@ -106,6 +106,91 @@ Feature: Read-only MCP handoff context
     Given a "tools" MCP handoff
     Then the MCP window preserves tool identities and omits private event metadata
 
+  Scenario: A continuing tool response does not close the dependency
+    Given an "unfinished stream" MCP handoff
+    When I read the MCP context window
+    Then MCP rejects access with "failed_precondition" and no private metadata
+
+  Scenario: A tool stream closes only after its terminal chunk
+    Given a "complete stream" MCP handoff
+    When I read the MCP context window
+    Then the MCP window contains every ordered chunk and is complete
+
+  Scenario: Business JSON numbers and unknown keys survive projection exactly
+    Given a "precise tool JSON" MCP handoff
+    When I read the MCP context window
+    Then both MCP result representations preserve the raw business JSON
+
+  Scenario: Empty tool argument and response objects are preserved
+    Given an "empty tool JSON" MCP handoff
+    When I read the MCP context window
+    Then both MCP result representations preserve empty business JSON objects
+
+  Scenario Outline: Unknown nested protocol fields fail atomically
+    Given a "<kind>" MCP handoff
+    When I read the MCP context window
+    Then MCP rejects access with "failed_precondition" and no private metadata
+    Examples:
+      | kind                    |
+      | unknown content field   |
+      | unknown call field      |
+      | unknown response field  |
+      | unknown response part   |
+      | unknown response media  |
+      | streamed call arguments |
+      | call continuation       |
+
+  Scenario Outline: Invalid Origins are rejected even with a valid credential
+    Given a "normal" MCP handoff
+    And the embedding runtime trusts Origin "https://trusted.example"
+    When an authenticated MCP caller sends Origin "<origin>" using "<method>"
+    Then MCP returns HTTP 403 without context or private metadata
+    Examples:
+      | origin                     | method |
+      | https://evil.example        | POST   |
+      | https://evil.example        | GET    |
+      | https://evil.example        | DELETE |
+      | null                        | POST   |
+      | https://trusted.example.evil | POST |
+      | https://trusted.example/    | POST   |
+      | http://trusted.example      | POST   |
+      | https://trusted.example:444 | POST   |
+
+  Scenario Outline: Origin trust is never inferred from the request or proxy headers
+    Given a "normal" MCP handoff
+    When an authenticated MCP caller sends Origin "<origin>" using "POST"
+    Then MCP returns HTTP 403 without context or private metadata
+    Examples:
+      | origin                  |
+      | endpoint                |
+      | https://trusted.example |
+
+  Scenario Outline: Invalid Origin configuration is rejected at startup
+    Given a "normal" MCP handoff
+    When the embedding runtime configures invalid trusted Origin "<origin>"
+    Then the MCP Origin configuration is rejected
+    Examples:
+      | origin                          |
+      | *                               |
+      | null                            |
+      | https://trusted.example/        |
+      | https://trusted.example/path    |
+      | https://user@trusted.example    |
+      | https://*.example               |
+      | https://trusted.example?query=1 |
+
+  Scenario: Explicitly trusted browser Origins can read the committed window
+    Given a "normal" MCP handoff
+    And the embedding runtime trusts Origin "https://trusted.example"
+    When an authenticated MCP caller sends Origin "https://trusted.example" using "POST"
+    Then the MCP response contains the complete committed window
+
+  Scenario: Native MCP clients work without Origin after trust is configured
+    Given a "normal" MCP handoff
+    And the embedding runtime trusts Origin "https://trusted.example"
+    When an official MCP client connects with the handoff credential
+    Then both MCP tools return the committed role and context
+
   Scenario: Native turn and integration origin boundaries are projected safely
     Given a "boundaries" MCP handoff
     Then the MCP window preserves turn and integration session boundaries

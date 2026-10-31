@@ -115,6 +115,11 @@ type toolInput struct {
 
 var validate = func() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
+	if err := v.RegisterValidation("trusted_origin", func(f validator.FieldLevel) bool {
+		return validOrigin(f.Field().String())
+	}); err != nil {
+		panic(err)
+	}
 	if err := v.RegisterValidation("seq", func(f validator.FieldLevel) bool {
 		s, err := te.ParseSeq(f.Field().String())
 		return err == nil && !s.IsZero()

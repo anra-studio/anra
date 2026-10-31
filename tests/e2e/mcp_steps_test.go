@@ -100,6 +100,35 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^I read the MCP context window$`, func() error { return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil) })
 	sc.Step(`^reusing the role version with different contents fails$`, m.immutableRole)
 	sc.Step(`^repeated MCP reads leave tape and authorization storage unchanged$`, m.readOnly)
+	sc.Step(`^the MCP window contains every ordered chunk and is complete$`, m.checkStream)
+	sc.Step(`^both MCP result representations preserve the raw business JSON$`, m.checkPreciseJSON)
+	sc.Step(`^both MCP result representations preserve empty business JSON objects$`, func() error { return m.checkBusinessJSON(`{}`) })
+	sc.Step(`^the embedding runtime trusts Origin "([^"]+)"$`, m.trustOrigin)
+	sc.Step(`^an authenticated MCP caller sends Origin "([^"]+)" using "([^"]+)"$`, m.originRequest)
+	sc.Step(`^MCP returns HTTP 403 without context or private metadata$`, func() error {
+		if m.lastStatus != http.StatusForbidden {
+			return fmt.Errorf("want HTTP 403, got %d: %s", m.lastStatus, m.lastBody)
+		}
+		return m.rejected("permission_denied")
+	})
+	sc.Step(`^the MCP response contains the complete committed window$`, m.checkWindowResponse)
+	sc.Step(`^the embedding runtime configures invalid trusted Origin "([^"]+)"$`, func(origin string) error {
+		service, err := anramcp.NewService(anramcp.Config{
+			Source: m.agent.Source(), Owner: "vesta", Tape: m.tape,
+			StatePath: filepath.Join(m.s.root, "invalid-origin.db"), TrustedOrigins: []string{origin},
+		})
+		m.controlErr = err
+		if service != nil {
+			return service.Close()
+		}
+		return nil
+	})
+	sc.Step(`^the MCP Origin configuration is rejected$`, func() error {
+		if m.controlErr == nil {
+			return errors.New("invalid trusted Origin was accepted")
+		}
+		return nil
+	})
 }
 
 func (m *mcpScenario) statePath() string            { return filepath.Join(m.s.root, "mcp-state.db") }
@@ -217,6 +246,59 @@ func (m *mcpScenario) event(kind te.EntryKind, content *genai.Content) (te.Entry
 	return m.tape.Store(m.tapeContext(), te.CustomEntry{Entry: te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-SUMMARY")), Extensions: map[string]any{"adk:event": string(data), "secret": "PRIVATE-EXTENSION"}})
 }
 
+// Raw fixture JSON starts on disk, without a float64 round trip in the test.
+const preciseBusinessJSON = `{"id":9007199254740993,"fraction":0.12345678901234567890123456789,"tiny":1e-1000,"futureVisiblePart":{"text":"business data","id":9007199254740993}}`
+
+func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
+	_, err := m.tape.Store(m.tapeContext(), te.CustomEntry{
+		Entry:      te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-SUMMARY")),
+		Extensions: map[string]any{"adk:event": `{"content":` + content + `,"stateDelta":{"private":"PRIVATE-STATE"}}`},
+	})
+	return err
+}
+
+func (m *mcpScenario) protocolWindow(kind string) error {
+	call := `{"id":"tool-42","name":"lookup","args":{}}`
+	response := `{"id":"tool-42","name":"lookup","response":{}}`
+	switch kind {
+	case "precise tool JSON":
+		call = `{"id":"tool-42","name":"lookup","args":` + preciseBusinessJSON + `}`
+		response = `{"id":"tool-42","name":"lookup","response":` + preciseBusinessJSON + `}`
+	case "unknown content field":
+		return m.rawEvent(te.EntryAssistant, `{"role":"model","parts":[{"text":"visible"}],"futureContent":"must retain or reject"}`)
+	case "unknown call field":
+		call = `{"id":"tool-42","name":"lookup","args":{},"futureCall":"must retain or reject"}`
+	case "streamed call arguments":
+		call = `{"id":"tool-42","name":"lookup","partialArgs":[{"jsonPath":"$.query","stringValue":"partial"}]}`
+	case "call continuation":
+		call = `{"id":"tool-42","name":"lookup","args":{},"willContinue":true}`
+	case "unknown response field":
+		response = `{"id":"tool-42","name":"lookup","response":{},"futureResponse":"must retain or reject"}`
+	case "unknown response part":
+		response = `{"id":"tool-42","name":"lookup","response":{},"parts":[{"futureVisiblePart":{"text":"must retain or reject"}}]}`
+	case "unknown response media":
+		response = `{"id":"tool-42","name":"lookup","response":{},"parts":[{"inlineData":{"mimeType":"image/png","data":"aW1hZ2U=","futureMedia":"must retain or reject"}}]}`
+	}
+	if err := m.rawEvent(te.EntryToolCall, `{"role":"model","parts":[{"functionCall":`+call+`}]}`); err != nil {
+		return err
+	}
+	if kind == "unfinished stream" || kind == "complete stream" {
+		chunks := []string{`{"chunk":"first"}`, `{"chunk":"middle"}`, `{"chunk":"last"}`}
+		if kind == "unfinished stream" {
+			chunks = chunks[:1]
+		}
+		for i, chunk := range chunks {
+			continuing := kind == "unfinished stream" || i < len(chunks)-1
+			content := fmt.Sprintf(`{"role":"user","parts":[{"functionResponse":{"id":"tool-42","name":"lookup","willContinue":%t,"response":%s}}]}`, continuing, chunk)
+			if err := m.rawEvent(te.EntryToolResult, content); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return m.rawEvent(te.EntryToolResult, `{"role":"user","parts":[{"functionResponse":`+response+`}]}`)
+}
+
 func (m *mcpScenario) specialWindow(kind string) (*pb.TapeView, error) {
 	state, err := m.tape.Get(m.tapeContext())
 	if err != nil {
@@ -224,6 +306,8 @@ func (m *mcpScenario) specialWindow(kind string) (*pb.TapeView, error) {
 	}
 	start := state.Scope.SeqE.Next()
 	switch kind {
+	case "unfinished stream", "complete stream", "precise tool JSON", "empty tool JSON", "unknown content field", "unknown call field", "unknown response field", "unknown response part", "unknown response media", "streamed call arguments", "call continuation":
+		err = m.protocolWindow(kind)
 	case "large sequences":
 		start = te.MustParseSeq("18446744073709551616000000000000000001")
 		_, err = m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(start), te.WithEntryKind(te.EntryUser), te.WithEntryContent("large sequence request"), te.WithEntryOwner("vesta")))
@@ -781,6 +865,141 @@ func (m *mcpScenario) checkTools() error {
 		return fmt.Errorf("private metadata exported: %s", data)
 	}
 	return nil
+}
+
+func (m *mcpScenario) checkWindowResponse() error {
+	var window anramcp.WindowResult
+	if m.lastStatus != http.StatusOK || json.Unmarshal(m.lastResult, &window) != nil || !window.IsComplete || len(window.Entries) == 0 || !jsonEqual(window.View, anchor.ProtoJSON(m.handoff.Context.View)) {
+		return fmt.Errorf("wrong window response: HTTP %d %s", m.lastStatus, m.lastBody)
+	}
+	return nil
+}
+
+func (m *mcpScenario) checkStream() error {
+	if err := m.checkWindowResponse(); err != nil {
+		return err
+	}
+	var window anramcp.WindowResult
+	if err := json.Unmarshal(m.lastResult, &window); err != nil {
+		return err
+	}
+	if len(window.Entries) != 4 {
+		return fmt.Errorf("want call plus three chunks: %s", m.lastResult)
+	}
+	for i, want := range []string{"first", "middle", "last"} {
+		var content struct {
+			Parts []struct {
+				Response struct {
+					ID           string `json:"id"`
+					Name         string `json:"name"`
+					WillContinue *bool  `json:"willContinue"`
+					Response     struct {
+						Chunk string `json:"chunk"`
+					} `json:"response"`
+				} `json:"functionResponse"`
+			} `json:"parts"`
+		}
+		if err := json.Unmarshal(window.Entries[i+1].Content, &content); err != nil || len(content.Parts) != 1 {
+			return fmt.Errorf("invalid chunk: %s", window.Entries[i+1].Content)
+		}
+		r := content.Parts[0].Response
+		if r.ID != "tool-42" || r.Name != "lookup" || r.Response.Chunk != want || r.WillContinue == nil || *r.WillContinue != (i < 2) {
+			return fmt.Errorf("lost stream identity, order or termination: %s", window.Entries[i+1].Content)
+		}
+	}
+	return nil
+}
+
+func (m *mcpScenario) checkPreciseJSON() error {
+	return m.checkBusinessJSON(preciseBusinessJSON)
+}
+
+func (m *mcpScenario) checkBusinessJSON(expectedJSON string) error {
+	if err := m.checkWindowResponse(); err != nil {
+		return err
+	}
+	var rpc struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(m.lastBody, &rpc); err != nil || len(rpc.Result.Content) != 1 {
+		return fmt.Errorf("missing text representation: %s", m.lastBody)
+	}
+	for _, data := range [][]byte{m.lastResult, []byte(rpc.Result.Content[0].Text)} {
+		var window anramcp.WindowResult
+		if err := json.Unmarshal(data, &window); err != nil || len(window.Entries) != 2 {
+			return fmt.Errorf("missing tool entries: %s", data)
+		}
+		for i, field := range []string{"args", "response"} {
+			var content struct {
+				Parts []map[string]map[string]json.RawMessage `json:"parts"`
+			}
+			if err := json.Unmarshal(window.Entries[i].Content, &content); err != nil || len(content.Parts) != 1 {
+				return fmt.Errorf("invalid tool content: %s", window.Entries[i].Content)
+			}
+			name := []string{"functionCall", "functionResponse"}[i]
+			var got, want map[string]json.RawMessage
+			if json.Unmarshal(content.Parts[0][name][field], &got) != nil || got == nil || json.Unmarshal([]byte(expectedJSON), &want) != nil || len(got) != len(want) {
+				return fmt.Errorf("invalid raw %s: %s", field, window.Entries[i].Content)
+			}
+			for key, expected := range want {
+				var actual bytes.Buffer
+				if json.Compact(&actual, got[key]) != nil || actual.String() != string(expected) {
+					return fmt.Errorf("raw %s.%s changed: %s", field, key, window.Entries[i].Content)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (m *mcpScenario) trustOrigin(origin string) error {
+	m.server.Close()
+	if err := m.service.Close(); err != nil {
+		return err
+	}
+	var err error
+	m.service, err = anramcp.NewService(anramcp.Config{
+		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, StatePath: m.statePath(),
+		TrustedOrigins: []string{origin}, Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+	})
+	if err != nil {
+		return err
+	}
+	m.serve()
+	return nil
+}
+
+func (m *mcpScenario) originRequest(origin, method string) error {
+	if origin == "endpoint" {
+		origin = m.server.URL
+	}
+	if method == http.MethodPost {
+		return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, map[string]string{
+			"Origin": origin, "X-Forwarded-Host": "trusted.example", "X-Forwarded-Proto": "https", "Forwarded": "host=trusted.example;proto=https",
+		})
+	}
+	req, err := http.NewRequestWithContext(m.s.ctx, method, m.server.URL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.token)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Accept", "text/event-stream")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.Header.Get("Cache-Control") != "no-store" {
+		return errors.New("Origin rejection is cacheable")
+	}
+	m.lastStatus = res.StatusCode
+	m.lastBody, err = io.ReadAll(res.Body)
+	return err
 }
 
 func (m *mcpScenario) checkBoundaries() error {

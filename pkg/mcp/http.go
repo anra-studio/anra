@@ -67,6 +67,14 @@ func (s *Service) Handler() http.Handler {
 	transport := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		// Apply to every method before transport dispatch or authentication.
+		// SDK v1.8.0 does not enable Origin checking by default.
+		if !s.allowsOrigin(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(errorEnvelope(ErrPermissionDenied))
+			return
+		}
 		fields := strings.Fields(r.Header.Get("Authorization"))
 		var token string
 		if len(r.Header.Values("Authorization")) == 1 && len(fields) == 2 && strings.EqualFold(fields[0], "Bearer") {
