@@ -107,7 +107,7 @@ Reads never acquire reasoning Admission or select the current Tape head. Later
 model output and background observations cannot expand the window. Tape's
 append-only contract owns immutability; the service does not maintain duplicate
 handoff records or hash anchors, windows, or Role definitions. Missing records,
-unsupported entries, and incomplete dependencies fail reconstruction.
+unsupported entries, and incomplete tool calls fail reconstruction.
 
 On every read the service validates the grant and tool permission, loads the
 handoff anchor from Tape by `AnchorSeq`, and verifies its Role, binding and exact
@@ -142,8 +142,8 @@ configuration:
 content is a JSON object retaining structured function calls and responses.
 The shared domain package `pkg/model/projection` projects Tape entries directly
 into public model events, independently of A2A and MCP. A2A serializes those
-events into its existing `ExportedEntry` payload; MCP inspects the typed parts
-for window dependencies before serializing its response, without a payload
+events into its existing `ExportedEntry` payload; MCP checks tool call completion
+in the typed parts before serializing its response, without a payload
 decode round trip or a dependency on `pkg/a2a`. The `anra.context.v1` projection
 uses explicit protocol structures and recursively rejects unknown visible
 fields, including nested function response parts and media fields. Tool `args`
@@ -168,8 +168,8 @@ earlier call by ID and name, or an unambiguous name when IDs are absent. Calls
 cannot cross boundaries or remain unresolved. Responses with `willContinue: true`
 retain the open call; only a response with false or absent `willContinue`
 closes it. Every chunk is preserved in order, and an unfinished stream fails
-atomically with `failed_precondition`. No partial dependency chain is
-returned. Thought-only windows yield `entries: []` and `isComplete: true`, distinct
+atomically with `failed_precondition`. No partial window is returned.
+Thought-only windows yield `entries: []` and `isComplete: true`, distinct
 from nonexistent handoffs or missing ranges.
 
 `MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and counts

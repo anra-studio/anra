@@ -131,7 +131,7 @@ Feature: Read-only MCP handoff context
     Given a "tools" MCP handoff
     Then the MCP window preserves tool identities and omits private event metadata
 
-  Scenario: A continuing tool response does not close the dependency
+  Scenario: A continuing tool response keeps its tool call open
     Given an "unfinished stream" MCP handoff
     When I read the MCP context window
     Then MCP rejects access with "failed_precondition" and no private metadata

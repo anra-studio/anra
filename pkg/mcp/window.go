@@ -91,7 +91,7 @@ func (s *Service) walkWindow(ctx context.Context, ref *pb.TapeView, visit func(t
 
 func (s *Service) window(ctx context.Context, h *Handoff) (*WindowResult, error) {
 	result := &WindowResult{View: anchor.ProtoJSON(h.Context.View), Entries: []ProjectedEntry{}, IsComplete: true}
-	calls := make(toolDependencies)
+	calls := make(openToolCalls)
 	projectedBytes := 0
 	err := s.walkWindow(ctx, h.Context.View, func(raw te.EntryLike, boundary bool) error {
 		if boundary {
@@ -123,7 +123,7 @@ func (s *Service) window(ctx context.Context, h *Handoff) (*WindowResult, error)
 	return result, nil
 }
 
-func project(raw te.EntryLike, calls toolDependencies) (*ProjectedEntry, error) {
+func project(raw te.EntryLike, calls openToolCalls) (*ProjectedEntry, error) {
 	e := &ProjectedEntry{Seq: raw.GetID().String(), Kind: string(raw.GetKind()), Timestamp: raw.GetTimestamp()}
 	if raw.GetKind() == anchor.Kind {
 		if len(calls) != 0 {
@@ -165,4 +165,37 @@ func project(raw te.EntryLike, calls toolDependencies) (*ProjectedEntry, error) 
 		return nil, errUnsupportedEntry
 	}
 	return e, nil
+}
+
+// openToolCalls tracks calls awaiting a terminal response in one window.
+// Continuing response chunks keep a call open. Every call must close before
+// an anchor or the window end.
+type openToolCalls map[string]string
+
+func toolCallKey(id, name string) string {
+	if id != "" {
+		return "id:" + id
+	}
+	return "name:" + name
+}
+
+func (calls openToolCalls) observe(part *projection.Part) error {
+	// The shared projection already validates required tool names.
+	if call := part.FunctionCall; call != nil {
+		key := toolCallKey(call.ID, call.Name)
+		if calls[key] != "" {
+			return ErrFailedPrecondition
+		}
+		calls[key] = call.Name
+	}
+	if response := part.FunctionResponse; response != nil {
+		key := toolCallKey(response.ID, response.Name)
+		if calls[key] != response.Name {
+			return ErrFailedPrecondition
+		}
+		if response.WillContinue == nil || !*response.WillContinue {
+			delete(calls, key)
+		}
+	}
+	return nil
 }
