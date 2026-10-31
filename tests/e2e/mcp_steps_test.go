@@ -76,6 +76,20 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^I remember both MCP tool results$`, m.remember)
 	sc.Step(`^the role changes and its tape grows$`, m.grow)
 	sc.Step(`^the MCP storage and server restart$`, m.restart)
+	sc.Step(`^another handoff commits without changing authorization storage$`, m.commitTapeOnly)
+	sc.Step(`^the controller appends the handoff directly to Tape$`, m.appendHandoff)
+	sc.Step(`^the controller authorizes the persisted handoff$`, func() error {
+		var err error
+		m.token, err = m.service.Authorize(m.s.ctx, m.grant)
+		return err
+	})
+	sc.Step(`^the controller commits a window with "([^"]+)"$`, m.commitMissingWindow)
+	sc.Step(`^the handoff commit fails without changing Tape or authorization storage$`, func() error {
+		if !errors.Is(m.controlErr, anramcp.ErrFailedPrecondition) {
+			return fmt.Errorf("missing window commit: %v", m.controlErr)
+		}
+		return nil
+	})
 	sc.Step(`^both MCP tool results are byte-for-byte unchanged$`, m.unchanged)
 	sc.Step(`^the role starts a blocked reasoning turn$`, m.hold)
 	sc.Step(`^the active reasoning turn can finish normally$`, m.finish)
@@ -105,6 +119,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^both MCP result representations preserve empty business JSON objects$`, func() error { return m.checkBusinessJSON(`{}`) })
 	sc.Step(`^the embedding runtime trusts Origin "([^"]+)"$`, m.trustOrigin)
 	sc.Step(`^an authenticated MCP caller sends Origin "([^"]+)" using "([^"]+)"$`, m.originRequest)
+	sc.Step(`^an authenticated MCP caller sends "([^"]+)" Origin headers$`, m.originHeaders)
 	sc.Step(`^MCP returns HTTP 403 without context or private metadata$`, func() error {
 		if m.lastStatus != http.StatusForbidden {
 			return fmt.Errorf("want HTTP 403, got %d: %s", m.lastStatus, m.lastBody)
@@ -390,10 +405,14 @@ func (m *mcpScenario) discover() error {
 
 func (m *mcpScenario) call(tool, token, seq string, headers map[string]string) error {
 	args, _ := json.Marshal(map[string]any{"anchorSeq": seq})
-	return m.rawCall(tool, token, args, headers)
+	h := make(http.Header)
+	for k, v := range headers {
+		h.Set(k, v)
+	}
+	return m.rawCall(tool, token, args, h)
 }
 
-func (m *mcpScenario) rawCall(tool, token string, args json.RawMessage, headers map[string]string) error {
+func (m *mcpScenario) rawCall(tool, token string, args json.RawMessage, headers http.Header) error {
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": tool, "arguments": args}})
 	if err != nil {
 		return err
@@ -408,8 +427,10 @@ func (m *mcpScenario) rawCall(tool, token string, args json.RawMessage, headers 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	for k, values := range headers {
+		for _, v := range values {
+			req.Header.Add(k, v)
+		}
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -585,6 +606,89 @@ func (m *mcpScenario) activePrefix() error {
 	return err
 }
 
+func (m *mcpScenario) commitTapeOnly() error {
+	before, err := os.ReadFile(m.statePath())
+	if err != nil {
+		return err
+	}
+	seq, err := m.service.CommitHandoff(m.s.ctx, m.handoff)
+	if err != nil {
+		return err
+	}
+	after, err := os.ReadFile(m.statePath())
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(before, after) {
+		return errors.New("handoff commit wrote authorization storage")
+	}
+	m.grant.AnchorSeq = seq
+	return nil
+}
+
+func (m *mcpScenario) appendHandoff() error {
+	data, err := json.Marshal(m.handoff)
+	if err != nil {
+		return err
+	}
+	raw, err := m.append(anchor.Kind, string(data))
+	if err != nil {
+		return err
+	}
+	m.grant.AnchorSeq = raw.GetID().String()
+	return nil
+}
+
+func (m *mcpScenario) commitMissingWindow(missing string) error {
+	state, err := m.tape.Get(m.tapeContext())
+	if err != nil {
+		return err
+	}
+	h := m.handoff
+	h.Context.View = proto.Clone(h.Context.View).(*pb.TapeView)
+	head := state.Scope.SeqE.Next()
+	switch missing {
+	case "missing boundary":
+		h.Context.View.SnapshotHead = head.String()
+		h.Context.View.Scope.SeqE = head.String()
+	case "missing entry":
+		start := head
+		head = head.Next()
+		if _, err := m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(head), te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("persisted boundary after gap"), te.WithEntryOwner("vesta"))); err != nil {
+			return err
+		}
+		h.Context.View.SnapshotHead = head.String()
+		h.Context.View.Scope = &pb.EntryRange{SeqS: start.String(), SeqE: head.String()}
+	default:
+		return fmt.Errorf("unknown missing window fixture %q", missing)
+	}
+	tapeBefore, err := os.ReadFile(m.tapePath())
+	if err != nil {
+		return err
+	}
+	stateBefore, err := os.ReadFile(m.statePath())
+	if err != nil {
+		return err
+	}
+	seq, commitErr := m.service.CommitHandoff(m.s.ctx, h)
+	m.controlErr = commitErr
+	if seq != "" {
+		return fmt.Errorf("failed commit returned anchor %s", seq)
+	}
+	tapeAfter, err := os.ReadFile(m.tapePath())
+	if err != nil {
+		return err
+	}
+	stateAfter, err := os.ReadFile(m.statePath())
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(tapeBefore, tapeAfter) || !bytes.Equal(stateBefore, stateAfter) {
+		return errors.New("failed handoff commit changed persistent storage")
+	}
+	return nil
+}
+
 func (m *mcpScenario) attack(attack string) error {
 	token, seq := m.token, m.grant.AnchorSeq
 	headers := map[string]string{}
@@ -742,20 +846,20 @@ func (m *mcpScenario) damage(damage string) error {
 			return err
 		}
 		m.service = nil // The HTTP handler retains the closed store for this fault.
-	case "non-handoff anchor", "changed handoff metadata", "changed snapshot content":
+	case "non-handoff anchor", "changed handoff binding", "unsupported snapshot content":
 		seq := m.grant.AnchorSeq
 		kind := anchor.Kind
 		text := `{"schema":"other.dev/v1","type":"unrelated"}`
-		if damage == "changed handoff metadata" {
+		if damage == "changed handoff binding" {
 			h := m.handoff
-			h.Task = "changed task"
+			h.Target.BindingID = "different-binding"
 			data, _ := json.Marshal(h)
 			text = string(data)
 		}
-		if damage == "changed snapshot content" {
+		if damage == "unsupported snapshot content" {
 			seq = m.grant.Window.View.Scope.SeqS
-			kind = te.EntryUser
-			text = "modified snapshot"
+			kind = "integration:unsupported"
+			text = "PRIVATE-UNSUPPORTED"
 		}
 		_, err := m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(te.MustParseSeq(seq)), te.WithEntryKind(kind), te.WithEntryContent(text), te.WithEntryOwner("vesta")))
 		if err != nil {
@@ -782,7 +886,7 @@ func (m *mcpScenario) damage(damage string) error {
 			return err
 		}
 		m.serve()
-	case "missing anchor", "missing snapshot entry", "corrupt snapshot entry":
+	case "missing anchor", "missing snapshot entry", "missing snapshot boundary", "corrupt snapshot entry":
 		// Stop all users before modifying the physical Tape file offline.
 		if err := m.close(); err != nil {
 			return err
@@ -790,6 +894,9 @@ func (m *mcpScenario) damage(damage string) error {
 		seq := m.grant.AnchorSeq
 		if damage != "missing anchor" {
 			seq = m.grant.Window.View.Scope.SeqS
+		}
+		if damage == "missing snapshot boundary" {
+			seq = m.grant.Window.View.SnapshotHead
 		}
 		if err := damageMCPPhysicalEntry(m.tapePath(), seq, damage == "corrupt snapshot entry"); err != nil {
 			return err
@@ -1000,6 +1107,27 @@ func (m *mcpScenario) originRequest(origin, method string) error {
 	m.lastStatus = res.StatusCode
 	m.lastBody, err = io.ReadAll(res.Body)
 	return err
+}
+
+func (m *mcpScenario) originHeaders(shape string) error {
+	trusted, evil := "https://trusted.example", "https://evil.example"
+	var values []string
+	switch shape {
+	case "empty":
+		values = []string{""}
+	case "repeated trusted":
+		values = []string{trusted, trusted}
+	case "trusted and evil":
+		values = []string{trusted, evil}
+	case "comma separated":
+		values = []string{trusted + ", " + evil}
+	case "space separated":
+		values = []string{trusted + " " + evil}
+	default:
+		return fmt.Errorf("unknown Origin header fixture %q", shape)
+	}
+	args, _ := json.Marshal(map[string]string{"anchorSeq": m.grant.AnchorSeq})
+	return m.rawCall(anramcp.ReadContextWindow, m.token, args, http.Header{"Origin": values})
 }
 
 func (m *mcpScenario) checkBoundaries() error {

@@ -51,15 +51,15 @@ func (s *Service) Handler() http.Handler {
 			if decode(req.Params.Arguments, &input) != nil || validate.Struct(input) != nil {
 				return s.toolResult(nil, ErrInvalidReference), nil
 			}
-			h, committed, err := s.resolve(ctx, g, input, name)
+			h, err := s.resolve(ctx, g, input, name)
 			if err != nil {
 				return s.toolResult(nil, err), nil
 			}
 			var result any
 			if name == ReadRole {
-				result, err = s.sealedRole(ctx, h.Role, committed)
+				result, err = s.role(ctx, h.Role)
 			} else {
-				result, err = s.window(ctx, h, committed)
+				result, err = s.window(ctx, h)
 			}
 			return s.toolResult(result, err), nil
 		})

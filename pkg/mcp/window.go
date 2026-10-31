@@ -2,8 +2,6 @@ package mcp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"time"
 
@@ -77,8 +75,10 @@ func (s *Service) walkWindow(ctx context.Context, ref *pb.TapeView, visit func(t
 			if rawBytes > 16*s.config.MaxResponseBytes || count > 10000 {
 				return ErrFailedPrecondition
 			}
-			if err := visit(raw, expected == head); err != nil {
-				return err
+			if visit != nil {
+				if err := visit(raw, expected == head); err != nil {
+					return err
+				}
 			}
 			expected = expected.Next()
 		}
@@ -89,26 +89,11 @@ func (s *Service) walkWindow(ctx context.Context, ref *pb.TapeView, visit func(t
 	return nil
 }
 
-func (s *Service) windowDigest(ctx context.Context, ref *pb.TapeView) (string, error) {
-	h := sha256.New()
-	enc := json.NewEncoder(h)
-	err := s.walkWindow(ctx, ref, func(raw te.EntryLike, _ bool) error { return enc.Encode(raw) })
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func (s *Service) window(ctx context.Context, h *Handoff, committed *seal) (*WindowResult, error) {
+func (s *Service) window(ctx context.Context, h *Handoff) (*WindowResult, error) {
 	result := &WindowResult{View: anchor.ProtoJSON(h.Context.View), Entries: []ProjectedEntry{}, IsComplete: true}
-	hash := sha256.New()
-	enc := json.NewEncoder(hash)
 	calls := make(toolDependencies)
 	projectedBytes := 0
 	err := s.walkWindow(ctx, h.Context.View, func(raw te.EntryLike, boundary bool) error {
-		if err := enc.Encode(raw); err != nil {
-			return ErrFailedPrecondition
-		}
 		if boundary {
 			return nil
 		}
@@ -132,7 +117,7 @@ func (s *Service) window(ctx context.Context, h *Handoff, committed *seal) (*Win
 	if err != nil {
 		return nil, err
 	}
-	if len(calls) != 0 || hex.EncodeToString(hash.Sum(nil)) != committed.WindowDigest {
+	if len(calls) != 0 {
 		return nil, ErrFailedPrecondition
 	}
 	return result, nil

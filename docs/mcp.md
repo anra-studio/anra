@@ -50,9 +50,9 @@ The following APIs are local Go methods, never MCP tools:
 2. `CommitHandoff(ctx, Handoff)` validates the `anra.dev/anchor/intr/v1`
    `integration.handoff` record and its explicit protobuf TapeView. All sequences
    in `[seqS, seqE)`, and the excluded `snapshotHead == seqE` boundary, must
-   already exist on disk. It appends the handoff anchor, then persists SHA-256
-   seals of the anchor, Role revision, and raw window with projection version
-   `anra.context.v1` before returning the anchor sequence.
+   already exist on disk. It validates the persisted range and appends the
+   handoff anchor to Tape before returning its sequence. This operation does
+   not write the state database; Tape alone owns handoffs and their windows.
 3. `Authorize(ctx, Grant)` requires an exact match of Role ID, handoff sequence,
    target RoleBinding, source, snapshot head, and scope. Permissions are an
    explicit subset of `read_role` and `read_context_window`, with a required
@@ -95,21 +95,32 @@ credential, err := service.Authorize(ctx, mcp.Grant{
 mux.Handle("/mcp", service.Handler())
 ```
 
-Definition publication, sealed handoff commit, grant issuance, and secure
+Definition publication, Tape handoff commit, grant issuance, and secure
 credential delivery must all succeed before dispatch claims context is
 available. Launching sessions, resolving application bindings, OAuth issuance,
 and injecting credentials into Lody or other applications remain integration
 responsibilities. This service does not assume those capabilities exist.
 Never put credentials in prompts, Tape entries, artifacts, or logs.
 
-An explicitly selected persisted prefix can be sealed during an active turn.
+An explicitly selected persisted prefix can be committed during an active turn.
 Reads never acquire reasoning Admission or select the current Tape head. Later
-model output and background observations cannot expand the window. Missing or
-changed records fail reconstruction. A crash between the Tape append and seal
-transaction leaves an inaccessible orphan; it does not authorize dispatch or an
-implicit retry. The caller must reconcile that failure before dispatching.
-Revisions, seals, grants, and revocations survive restarts in the state database,
-which is created with mode `0600`.
+model output and background observations cannot expand the window. Tape's
+append-only contract owns immutability; the service does not maintain duplicate
+handoff records or hash anchors, windows, or Role definitions. Missing records,
+unsupported entries, and incomplete dependencies fail reconstruction.
+
+On every read the service validates the grant and tool permission, loads the
+handoff anchor from Tape by `AnchorSeq`, and verifies its Role, binding and exact
+TapeView against the grant. It then loads that Role revision or projects entries
+directly from the fixed TapeView range. There is no secondary commit record.
+A persisted handoff can be authorized after restart even if credential issuance
+was never completed. The controller must retain the returned anchor reference
+and complete authorization before dispatching.
+
+The state database retains immutable Role definitions and source identity;
+authorization is solely token-hash-to-grant records, including expiration and
+revocation. It is created with mode `0600`. Tape handoffs, Role revisions, grants,
+and revocations survive restarts in their respective stores.
 
 ## Tool contract
 
@@ -118,7 +129,8 @@ decimal strings of arbitrary precision. Unknown arguments, including role,
 session, and scope overrides, fail validation. Results contain identical JSON
 in MCP `structuredContent` and the text `content` item.
 
-`read_role` returns the sealed revision, never the current configuration:
+`read_role` returns the revision referenced by the handoff, never the current
+configuration:
 
 ```json
 {"id":"vesta","version":"role-revision-42","definition":{"instructions":"Help maintain Anra"}}
@@ -171,8 +183,8 @@ diagnostics.
 | Code | Meaning |
 | --- | --- |
 | `permission_denied` | Wrong anchor/binding/Role/scope, missing tool permission, or missing/expired/revoked credential |
-| `invalid_reference` | Malformed arguments, missing/non-handoff/unsealed anchor, or missing Role revision |
-| `failed_precondition` | Changed sealed data, missing window entries, unsupported/incomplete projection, or exceeded limits |
+| `invalid_reference` | Malformed arguments, missing/non-handoff anchor, or missing Role revision |
+| `failed_precondition` | Missing window entries or excluded boundary, unsupported/incomplete projection, or exceeded limits |
 | `unavailable` | Transient storage/service failure |
 
 Authentication failures return HTTP 401 with the generic `permission_denied`
@@ -184,3 +196,4 @@ errors.
 
 The executable acceptance contract is [mcp.feature](../tests/e2e/features/mcp.feature).
 Run `mise run e2e` during development and `mise run test` for all repository checks.
+Both commands run the BDD suite with the race detector enabled.

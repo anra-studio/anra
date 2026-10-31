@@ -107,23 +107,19 @@ func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error
 	return &r, nil
 }
 
-// CommitHandoff commits an integration anchor and a durable snapshot seal before
-// returning its reference to the dispatcher. The explicit view must already be
-// fully persisted, including its excluded boundary. This also permits a safe
-// prefix of an active turn: the prefix is fixed and never follows the live head.
-// A crash between the Tape append and seal transaction leaves an inaccessible
-// orphan; no credentials can be issued for an unsealed anchor.
+// CommitHandoff appends an integration anchor to Tape, the sole source of truth
+// for handoffs and their fixed windows. The explicit view must already be fully
+// persisted, including its excluded boundary. A prefix of an active turn is
+// allowed: the prefix is fixed and never follows the live head. No authorization
+// state is written until the controller separately calls Authorize.
 func (s *Service) CommitHandoff(ctx context.Context, h Handoff) (string, error) {
 	if err := s.validateHandoff(h); err != nil {
 		return "", err
 	}
-	role, err := s.role(ctx, h.Role)
-	if err != nil {
+	if _, err := s.role(ctx, h.Role); err != nil {
 		return "", err
 	}
-	roleData, _ := json.Marshal(role)
-	windowDigest, err := s.windowDigest(ctx, h.Context.View)
-	if err != nil {
+	if err := s.walkWindow(ctx, h.Context.View, nil); err != nil {
 		return "", err
 	}
 	data, err := json.Marshal(h)
@@ -140,11 +136,7 @@ func (s *Service) CommitHandoff(ctx context.Context, h Handoff) (string, error) 
 	if te.MustParseSeq(h.Context.View.SnapshotHead).Cmp(raw.GetID()) >= 0 {
 		return "", ErrFailedPrecondition
 	}
-	seq := raw.GetID().String()
-	if err := s.state.insert(ctx, sealsBucket, seq, seal{AnchorDigest: digest(data), WindowDigest: windowDigest, RoleDigest: digest(roleData), Projection: "anra.context.v1"}); err != nil {
-		return "", ErrUnavailable
-	}
-	return seq, nil
+	return raw.GetID().String(), nil
 }
 
 func (s *Service) validateHandoff(h Handoff) error {
@@ -158,37 +150,27 @@ func (s *Service) tapeContext(ctx context.Context) context.Context {
 	return owner.WithOwnerId(ctx, s.config.Owner)
 }
 
-func (s *Service) handoff(ctx context.Context, seq string) (*Handoff, *seal, error) {
+func (s *Service) handoff(ctx context.Context, seq string) (*Handoff, error) {
 	n, err := te.ParseSeq(seq)
 	if err != nil || n.IsZero() {
-		return nil, nil, ErrInvalidReference
+		return nil, ErrInvalidReference
 	}
 	entries, err := s.config.Tape.Range(s.tapeContext(ctx), tv.EntryRange{SeqS: n, SeqE: n.Next()})
 	if err != nil {
-		return nil, nil, tapeReadError(err, ErrInvalidReference)
+		return nil, tapeReadError(err, ErrInvalidReference)
 	}
 	if len(entries.Raw) != 1 || entries.Raw[0].GetID() != n || entries.Raw[0].GetKind() != anchor.Kind {
-		return nil, nil, ErrInvalidReference
+		return nil, ErrInvalidReference
 	}
 	raw := entries.Raw[0]
 	var h Handoff
 	if raw.GetOwner() != s.config.Owner || decode([]byte(raw.GetSummary()), &h) != nil || s.validateHandoff(h) != nil {
-		return nil, nil, ErrInvalidReference
+		return nil, ErrInvalidReference
 	}
 	if te.MustParseSeq(h.Context.View.SnapshotHead).Cmp(n) >= 0 {
-		return nil, nil, ErrInvalidReference
+		return nil, ErrInvalidReference
 	}
-	var committed seal
-	if err := s.state.load(ctx, sealsBucket, seq, &committed); err != nil {
-		if errors.Is(err, errMissing) {
-			return nil, nil, ErrInvalidReference
-		}
-		return nil, nil, ErrUnavailable
-	}
-	if validate.Struct(committed) != nil || committed.AnchorDigest != digest([]byte(raw.GetSummary())) {
-		return nil, nil, ErrFailedPrecondition
-	}
-	return &h, &committed, nil
+	return &h, nil
 }
 
 func tapeReadError(err error, corrupt *Error) error {
@@ -208,40 +190,21 @@ func (s *Service) Authorize(ctx context.Context, g Grant) (string, error) {
 	if validate.Struct(g) != nil || validateWindow(g.Window) != nil || !g.ExpiresAt.After(s.config.Now()) {
 		return "", ErrPermissionDenied
 	}
-	h, committed, err := s.handoff(ctx, g.AnchorSeq)
+	h, err := s.handoff(ctx, g.AnchorSeq)
 	if err != nil {
 		return "", err
 	}
 	if !matches(g, h) {
 		return "", ErrPermissionDenied
 	}
-	if _, err := s.sealedRole(ctx, h.Role, committed); err != nil {
+	if _, err := s.role(ctx, h.Role); err != nil {
 		return "", err
-	}
-	d, err := s.windowDigest(ctx, h.Context.View)
-	if err != nil {
-		return "", err
-	}
-	if d != committed.WindowDigest {
-		return "", ErrFailedPrecondition
 	}
 	token := rand.Text()
-	if err := s.state.insert(ctx, grantsBucket, digest([]byte(token)), storedGrant{Grant: g}); err != nil {
+	if err := s.state.insert(ctx, grantsBucket, tokenHash(token), storedGrant{Grant: g}); err != nil {
 		return "", ErrUnavailable
 	}
 	return token, nil
-}
-
-func (s *Service) sealedRole(ctx context.Context, ref RoleRef, committed *seal) (*RoleDefinition, error) {
-	r, err := s.role(ctx, ref)
-	if err != nil {
-		return nil, err
-	}
-	data, _ := json.Marshal(r)
-	if digest(data) != committed.RoleDigest {
-		return nil, ErrFailedPrecondition
-	}
-	return r, nil
 }
 
 func matches(g Grant, h *Handoff) bool {
@@ -256,7 +219,7 @@ func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error
 		return nil, ErrPermissionDenied
 	}
 	var stored storedGrant
-	if err := s.state.load(ctx, grantsBucket, digest([]byte(token)), &stored); err != nil {
+	if err := s.state.load(ctx, grantsBucket, tokenHash(token), &stored); err != nil {
 		if errors.Is(err, errMissing) {
 			return nil, ErrPermissionDenied
 		}
@@ -269,19 +232,19 @@ func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error
 	return g, nil
 }
 
-func (s *Service) resolve(ctx context.Context, g *Grant, input toolInput, permission string) (*Handoff, *seal, error) {
+func (s *Service) resolve(ctx context.Context, g *Grant, input toolInput, permission string) (*Handoff, error) {
 	if g == nil || input.AnchorSeq != g.AnchorSeq || !slices.Contains(g.Permissions, permission) {
-		return nil, nil, ErrPermissionDenied
+		return nil, ErrPermissionDenied
 	}
 	if validate.Struct(input) != nil {
-		return nil, nil, ErrInvalidReference
+		return nil, ErrInvalidReference
 	}
-	h, committed, err := s.handoff(ctx, input.AnchorSeq)
+	h, err := s.handoff(ctx, input.AnchorSeq)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if !matches(*g, h) {
-		return nil, nil, ErrPermissionDenied
+		return nil, ErrPermissionDenied
 	}
-	return h, committed, nil
+	return h, nil
 }

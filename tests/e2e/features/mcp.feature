@@ -15,6 +15,30 @@ Feature: Read-only MCP handoff context
     And the MCP storage and server restart
     Then both MCP tool results are byte-for-byte unchanged
 
+  Scenario: Committing a handoff writes only to Tape
+    Given a "normal" MCP handoff
+    When another handoff commits without changing authorization storage
+    And the controller authorizes the persisted handoff
+    And the MCP storage and server restart
+    Then both MCP tools return the committed role and context
+
+  Scenario: A persisted Tape handoff requires no secondary commit record
+    Given a "normal" MCP handoff
+    When the controller appends the handoff directly to Tape
+    And the MCP storage and server restart
+    Then MCP rejects access with "permission_denied" and no private metadata
+    When the controller authorizes the persisted handoff
+    Then both MCP tools return the committed role and context
+
+  Scenario Outline: Handoff commit rejects an unpersisted window without appending an anchor
+    Given a "normal" MCP handoff
+    When the controller commits a window with "<missing>"
+    Then the handoff commit fails without changing Tape or authorization storage
+    Examples:
+      | missing          |
+      | missing boundary |
+      | missing entry    |
+
   Scenario: MCP reads do not acquire or disturb reasoning admission
     Given a "normal" MCP handoff
     When I remember both MCP tool results
@@ -92,15 +116,16 @@ Feature: Read-only MCP handoff context
     When the committed MCP data suffers "<damage>"
     Then MCP rejects access with "<code>" and no private metadata
     Examples:
-      | damage                   | code                |
-      | non-handoff anchor       | invalid_reference   |
-      | missing anchor           | invalid_reference   |
-      | missing role revision    | invalid_reference   |
-      | changed snapshot content | failed_precondition |
-      | missing snapshot entry   | failed_precondition |
-      | corrupt snapshot entry   | failed_precondition |
-      | changed handoff metadata | failed_precondition |
-      | storage unavailable      | unavailable         |
+      | damage                       | code                |
+      | non-handoff anchor           | invalid_reference   |
+      | missing anchor               | invalid_reference   |
+      | missing role revision        | invalid_reference   |
+      | unsupported snapshot content | failed_precondition |
+      | missing snapshot entry       | failed_precondition |
+      | corrupt snapshot entry       | failed_precondition |
+      | changed handoff binding      | permission_denied   |
+      | missing snapshot boundary    | failed_precondition |
+      | storage unavailable          | unavailable         |
 
   Scenario: Tool calls and results keep their structured relationships
     Given a "tools" MCP handoff
@@ -164,6 +189,19 @@ Feature: Read-only MCP handoff context
       | origin                  |
       | endpoint                |
       | https://trusted.example |
+
+  Scenario Outline: Origin headers must contain exactly one nonempty serialized origin
+    Given a "normal" MCP handoff
+    And the embedding runtime trusts Origin "https://trusted.example"
+    When an authenticated MCP caller sends "<headers>" Origin headers
+    Then MCP returns HTTP 403 without context or private metadata
+    Examples:
+      | headers          |
+      | empty            |
+      | repeated trusted |
+      | trusted and evil |
+      | comma separated  |
+      | space separated  |
 
   Scenario Outline: Invalid Origin configuration is rejected at startup
     Given a "normal" MCP handoff

@@ -19,21 +19,14 @@ var errMissing = errors.New("missing record")
 
 var (
 	rolesBucket  = []byte("anra.mcp.roles.v1")
-	sealsBucket  = []byte("anra.mcp.handoffs.v1")
 	grantsBucket = []byte("anra.mcp.grants.v1")
 	sourceBucket = []byte("anra.mcp.source.v1")
 )
 
-// stateStore persists immutable revisions and handoff seals, together with
-// revocable grants. Only token hashes are stored; the credential is returned once.
+// stateStore persists role revisions and source identity alongside revocable
+// grants. Handoffs and their fixed windows live only on Tape. Only token hashes
+// are stored; the credential is returned once.
 type stateStore struct{ db *bolt.DB }
-
-type seal struct {
-	AnchorDigest string `json:"anchorDigest" validate:"required,len=64,hexadecimal"`
-	WindowDigest string `json:"windowDigest" validate:"required,len=64,hexadecimal"`
-	RoleDigest   string `json:"roleDigest" validate:"required,len=64,hexadecimal"`
-	Projection   string `json:"projection" validate:"eq=anra.context.v1"`
-}
 
 type storedGrant struct {
 	Grant   Grant `json:"grant"`
@@ -72,8 +65,8 @@ func roleKey(r RoleRef) string {
 	return string(data)
 }
 
-func digest(data []byte) string {
-	d := sha256.Sum256(data)
+func tokenHash(token string) string {
+	d := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(d[:])
 }
 
@@ -138,13 +131,13 @@ func (s *stateStore) revoke(ctx context.Context, token string) error {
 			return err
 		}
 		var g storedGrant
-		if err := get(tx, grantsBucket, digest([]byte(token)), &g); err != nil {
+		if err := get(tx, grantsBucket, tokenHash(token), &g); err != nil {
 			if errors.Is(err, errMissing) {
 				return ErrPermissionDenied
 			}
 			return ErrUnavailable
 		}
 		g.Revoked = true
-		return put(tx, grantsBucket, digest([]byte(token)), g)
+		return put(tx, grantsBucket, tokenHash(token), g)
 	})
 }

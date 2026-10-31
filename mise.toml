@@ -40,7 +40,7 @@ run = "go build -o anra ./cmd/anra"
 
 [tasks.e2e]
 description = "Run the executable Given/When/Then acceptance scenarios"
-run = "go test -count=1 -v ./tests/e2e"
+run = "go test -race -count=1 -v ./tests/e2e"
 
 [tasks.test]
 description = "Check the API contract, build all packages, and run BDD E2E scenarios"
