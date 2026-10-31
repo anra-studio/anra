@@ -9,18 +9,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var structValidator = newStructValidator()
+var structValidator = validator.New(validator.WithRequiredStructEnabled())
 
-func newStructValidator() *validator.Validate {
-	v := validator.New(validator.WithRequiredStructEnabled())
-	if err := v.RegisterValidation("jsonobject", func(f validator.FieldLevel) bool {
-		var object map[string]json.RawMessage
-		return json.Unmarshal(f.Field().Bytes(), &object) == nil && object != nil
-	}); err != nil {
-		panic(err)
-	}
-	return v
-}
 func validateStruct(value any) error {
 	if err := structValidator.Struct(value); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidParams, err)

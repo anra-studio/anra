@@ -6,8 +6,8 @@ import (
 	"time"
 
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
-	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -144,27 +144,25 @@ func project(raw te.EntryLike, calls toolDependencies) (*ProjectedEntry, error) 
 		e.Boundary = &Boundary{Schema: h.Schema, Type: h.Type, Origin: h.Origin}
 		return e, nil
 	}
-	exported, err := (a2a.ContextExporter{}).Export(raw)
+	projected, err := projection.Project(raw)
 	if err != nil {
 		return nil, errUnsupportedEntry
 	}
-	if exported.Payload == nil {
-		return nil, errUnsupportedEntry
-	}
-	e.Content = exported.Payload.JsonData
-	if exported.Payload.MediaType == a2a.ContextMediaType {
-		var content a2a.ContextContent
-		if json.Unmarshal(e.Content, &content) != nil {
-			return nil, errUnsupportedEntry
+	var content any = projected.Summary
+	if event := projected.Event; event != nil {
+		if len(event.Parts) == 0 {
+			return nil, nil // thought-only input has no public model content
 		}
-		if len(content.Parts) == 0 {
-			return nil, nil
-		} // thought-only input has no public model content
-		for _, part := range content.Parts {
+		for _, part := range event.Parts {
 			if err := calls.observe(part); err != nil {
 				return nil, err
 			}
 		}
+		content = event
+	}
+	e.Content, err = json.Marshal(content)
+	if err != nil {
+		return nil, errUnsupportedEntry
 	}
 	return e, nil
 }

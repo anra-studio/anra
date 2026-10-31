@@ -1,6 +1,6 @@
 package mcp
 
-import "github.com/anra-studio/anra/pkg/a2a"
+import "github.com/anra-studio/anra/pkg/model/projection"
 
 // toolDependencies owns the open calls in one committed window. A response
 // chunk keeps its call open while willContinue is true. Only the terminal
@@ -15,7 +15,7 @@ func toolKey(id, name string) string {
 	return "name:" + name
 }
 
-func (d toolDependencies) observe(part *a2a.ContextPart) error {
+func (d toolDependencies) observe(part *projection.Part) error {
 	// The shared projection already validates required tool names.
 	if call := part.FunctionCall; call != nil {
 		key := toolKey(call.ID, call.Name)

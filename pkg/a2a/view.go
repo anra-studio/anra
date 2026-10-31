@@ -7,6 +7,7 @@ import (
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -26,32 +27,21 @@ const ContextMediaType = "application/vnd.anra.context-entry+json;version=1"
 // thought parts, and arbitrary custom extensions. Tool calls/results retain
 // their structured content within the lender-selected completed window.
 func (ContextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
-	switch e.GetKind() {
-	case te.EntryUser, te.EntryAssistant, te.EntryToolCall, te.EntryToolResult:
-	default:
-		return nil, ErrUnsupported
-	}
-	extensions := contextExtensions(e)
-	if _, legacy := extensions["anra:runner-message/v1"]; legacy {
-		return nil, ErrUnsupported
-	}
-	value, exists := extensions["adk:event"]
-	if !exists {
-		return (TextExporter{}).Export(e)
-	}
-	payload, ok := value.(string)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	content, summary, err := projectContext(payload)
+	projected, err := projection.Project(e)
 	if err != nil {
 		return nil, ErrUnsupported
+	}
+	var content any = projected.Summary
+	mediaType := TextMediaType
+	if projected.Event != nil {
+		content = projected.Event
+		mediaType = ContextMediaType
 	}
 	data, err := json.Marshal(content)
 	if err != nil {
 		return nil, err
 	}
-	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Summary: summary, Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: ContextMediaType, JsonData: data}}, nil
+	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Summary: projected.Summary, Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: mediaType, JsonData: data}}, nil
 }
 func AdvertiseViews(card *sdk.AgentCard, endpoint string) error {
 	if err := Advertise(card, endpoint); err != nil {

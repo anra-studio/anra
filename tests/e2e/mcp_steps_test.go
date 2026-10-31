@@ -17,6 +17,7 @@ import (
 	"time"
 
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	"github.com/anra-studio/anra/pkg/model/anchor"
@@ -116,6 +117,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^repeated MCP reads leave tape and authorization storage unchanged$`, m.readOnly)
 	sc.Step(`^the MCP window contains every ordered chunk and is complete$`, m.checkStream)
 	sc.Step(`^both MCP result representations preserve the raw business JSON$`, m.checkPreciseJSON)
+	sc.Step(`^A2A exports the same public entry content and identity$`, m.checkA2AProjection)
 	sc.Step(`^both MCP result representations preserve empty business JSON objects$`, func() error { return m.checkBusinessJSON(`{}`) })
 	sc.Step(`^the embedding runtime trusts Origin "([^"]+)"$`, m.trustOrigin)
 	sc.Step(`^an authenticated MCP caller sends Origin "([^"]+)" using "([^"]+)"$`, m.originRequest)
@@ -323,6 +325,11 @@ func (m *mcpScenario) specialWindow(kind string) (*pb.TapeView, error) {
 	switch kind {
 	case "unfinished stream", "complete stream", "precise tool JSON", "empty tool JSON", "unknown content field", "unknown call field", "unknown response field", "unknown response part", "unknown response media", "streamed call arguments", "call continuation":
 		err = m.protocolWindow(kind)
+	case "plain text":
+		_, err = m.append(te.EntryUser, "plain request")
+		if err == nil {
+			_, err = m.append(te.EntryAssistant, "plain answer")
+		}
 	case "large sequences":
 		start = te.MustParseSeq("18446744073709551616000000000000000001")
 		_, err = m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(start), te.WithEntryKind(te.EntryUser), te.WithEntryContent("large sequence request"), te.WithEntryOwner("vesta")))
@@ -1202,6 +1209,66 @@ func (m *mcpScenario) readOnly() error {
 	}
 	if sha256.Sum256(tapeBefore) != sha256.Sum256(tapeAfter) || sha256.Sum256(stateBefore) != sha256.Sum256(stateAfter) {
 		return errors.New("read-only tools changed persistent state")
+	}
+	return nil
+}
+
+// Compare both public HTTP paths over the same persisted Tape range. Raw payload
+// bytes keep this assertion sensitive to number lexemes and empty JSON objects.
+func (m *mcpScenario) checkA2AProjection() error {
+	if err := m.checkWindowResponse(); err != nil {
+		return err
+	}
+	var window anramcp.WindowResult
+	if err := json.Unmarshal(m.lastResult, &window); err != nil {
+		return err
+	}
+	scope := m.handoff.Context.View.Scope
+	service, err := a2a.NewService(a2a.Config{
+		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape,
+		JournalPath: filepath.Join(m.s.root, "projection-grants.db"),
+		Exporter:    a2a.ContextExporter{},
+		Policy: a2a.PolicyFunc(func(context.Context, string, *pb.BorrowRequest, te.Seq) (a2a.Selection, error) {
+			return a2a.Selection{Status: a2a.Granted, TTL: time.Hour, Range: &tv.EntryRange{
+				SeqS: te.MustParseSeq(scope.SeqS), SeqE: te.MustParseSeq(scope.SeqE),
+			}}, nil
+		}),
+	})
+	if err != nil {
+		return err
+	}
+	defer service.Close()
+	handler, err := a2a.NewViewHandler(service, a2a.TrustedPeerIdentity)
+	if err != nil {
+		return err
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	client := restClient{ctx: m.s.ctx, base: server.URL, identity: "projection-reader", extension: true}
+	var borrow pb.BorrowResponse
+	if err := client.message(http.MethodPost, "/v1/tape/borrows", &pb.BorrowRequest{
+		RequestId: "projection-parity", Purpose: "compare public model events", Query: "fixed window",
+	}, &borrow); err != nil {
+		return err
+	}
+	if borrow.Decision == nil || borrow.Decision.Status != a2a.Granted || borrow.Decision.View == nil {
+		return fmt.Errorf("A2A did not grant the projection window: %v", &borrow)
+	}
+	var read pb.ReadResponse
+	if err := client.message(http.MethodGet, "/v1/tape/views/"+borrow.Decision.View.ViewId+"/entries", nil, &read); err != nil {
+		return err
+	}
+	if read.Page == nil || len(read.Page.Entries) != len(window.Entries) || read.Page.NextCursor != "" {
+		return fmt.Errorf("A2A and MCP entry counts differ: %v", &read)
+	}
+	for i, exported := range read.Page.Entries {
+		entry := window.Entries[i]
+		if exported.Seq != entry.Seq || exported.Kind != entry.Kind || !exported.Timestamp.AsTime().Equal(entry.Timestamp) || exported.Payload == nil || !bytes.Equal(exported.Payload.JsonData, entry.Content) {
+			return fmt.Errorf("A2A and MCP entry %d differ: %v / %s", i, exported, entry.Content)
+		}
+		if bytes.Contains(exported.Payload.JsonData, []byte("PRIVATE-")) || strings.Contains(exported.Summary, "PRIVATE-") {
+			return fmt.Errorf("A2A entry %d leaked private data", i)
+		}
 	}
 	return nil
 }

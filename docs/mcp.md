@@ -140,9 +140,14 @@ configuration:
 `isComplete: true`. Entries contain `seq`, `kind`, `timestamp`, and either
 `content` or `boundary`. Plain text content is a JSON string; supported ADK
 content is a JSON object retaining structured function calls and responses.
-The shared A2A/MCP `anra.context.v1` projection uses explicit protocol structures
-and recursively rejects unknown visible fields, including nested function
-response parts and media fields. Tool `args` and `response` objects are opaque
+The shared domain package `pkg/model/projection` projects Tape entries directly
+into public model events, independently of A2A and MCP. A2A serializes those
+events into its existing `ExportedEntry` payload; MCP inspects the typed parts
+for window dependencies before serializing its response, without a payload
+decode round trip or a dependency on `pkg/a2a`. The `anra.context.v1` projection
+uses explicit protocol structures and recursively rejects unknown visible
+fields, including nested function response parts and media fields. Tool `args`
+and `response` objects are opaque
 JSON: unknown business keys, empty objects, large integers, decimal precision,
 and exponent notation are retained without a float64 conversion. Execution
 metadata outside `content` and private thought parts remain excluded.

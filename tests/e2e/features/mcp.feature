@@ -146,6 +146,19 @@ Feature: Read-only MCP handoff context
     When I read the MCP context window
     Then both MCP result representations preserve the raw business JSON
 
+  Scenario Outline: A2A and MCP publish the same model projection
+    Given a "<kind>" MCP handoff
+    When I read the MCP context window
+    Then A2A exports the same public entry content and identity
+    Examples:
+      | kind              |
+      | normal            |
+      | plain text        |
+      | tools             |
+      | complete stream   |
+      | precise tool JSON |
+      | empty tool JSON   |
+
   Scenario: Empty tool argument and response objects are preserved
     Given an "empty tool JSON" MCP handoff
     When I read the MCP context window
