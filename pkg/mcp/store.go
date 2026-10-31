@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -106,22 +107,21 @@ func (s *stateStore) insert(ctx context.Context, bucket []byte, key string, valu
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		var previous json.RawMessage
-		err := get(tx, bucket, key, &previous)
-		if err == nil {
-			current, err := json.Marshal(value)
-			if err != nil {
-				return err
-			}
-			if string(current) == string(previous) {
+		current, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		b, err := tx.CreateBucketIfNotExists(bucket)
+		if err != nil {
+			return err
+		}
+		if previous := b.Get([]byte(key)); previous != nil {
+			if bytes.Equal(current, previous) {
 				return nil
 			}
 			return ErrFailedPrecondition
 		}
-		if !errors.Is(err, errMissing) {
-			return err
-		}
-		return put(tx, bucket, key, value)
+		return b.Put([]byte(key), current)
 	})
 }
 

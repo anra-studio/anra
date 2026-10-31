@@ -9,7 +9,6 @@ import (
 	"io"
 	"time"
 
-	"buf.build/go/protovalidate"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/go-playground/validator/v10"
@@ -122,20 +121,13 @@ var validate = func() *validator.Validate {
 		panic(err)
 	}
 	if err := v.RegisterValidation("jsonobject", func(f validator.FieldLevel) bool {
-		var object map[string]json.RawMessage
-		return json.Unmarshal(f.Field().Bytes(), &object) == nil && object != nil
+		data := bytes.TrimSpace(f.Field().Bytes())
+		return len(data) >= 2 && data[0] == '{' && data[len(data)-1] == '}' && json.Valid(f.Field().Bytes())
 	}); err != nil {
 		panic(err)
 	}
 	return v
 }()
-
-func validateWindow(w WindowRef) error {
-	if validate.Struct(w) != nil || protovalidate.Validate(w.View) != nil {
-		return ErrInvalidReference
-	}
-	return nil
-}
 
 func decode(data []byte, value any) error {
 	d := json.NewDecoder(bytes.NewReader(data))

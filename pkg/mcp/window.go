@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"buf.build/go/protovalidate"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/model/projection"
@@ -42,12 +43,10 @@ type WindowResult struct {
 }
 
 // walkWindow checks every persisted sequence, including the excluded head.
-// Bounded batches and a raw input limit prevent loading an unbounded Tape into
-// memory. Arithmetic remains arbitrary precision throughout.
+// The caller validates ref at the input or decode boundary. Bounded batches and
+// an estimated input limit bound reconstruction; each batch is checked before
+// projection. Arithmetic remains arbitrary precision throughout.
 func (s *Service) walkWindow(ctx context.Context, ref *pb.TapeView, visit func(te.EntryLike, bool) error) error {
-	if validateWindow(WindowRef{ref}) != nil {
-		return ErrFailedPrecondition
-	}
 	start := te.MustParseSeq(ref.Scope.SeqS)
 	head := te.MustParseSeq(ref.SnapshotHead)
 	end := head.Next()
@@ -66,27 +65,60 @@ func (s *Service) walkWindow(ctx context.Context, ref *pb.TapeView, visit func(t
 			if raw.GetID() != expected || raw.GetOwner() != s.config.Owner {
 				return ErrFailedPrecondition
 			}
-			data, err := json.Marshal(raw)
-			if err != nil {
-				return ErrFailedPrecondition
-			}
-			rawBytes += len(data)
+			rawBytes += entryInputBytes(raw)
 			count++
 			if rawBytes > 16*s.config.MaxResponseBytes || count > 10000 {
 				return ErrFailedPrecondition
-			}
-			if visit != nil {
-				if err := visit(raw, expected == head); err != nil {
-					return err
-				}
 			}
 			expected = expected.Next()
 		}
 		if expected != batchEnd {
 			return ErrFailedPrecondition
 		}
+		if visit != nil {
+			for _, raw := range batch.Raw {
+				if err := visit(raw, raw.GetID() == head); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
+}
+
+// Count payload bytes already held by the entry, without encoding another copy.
+// The fixed allowance covers the timestamp and entry structure. Extensions
+// have JSON value types after Tape decoding, including private metadata.
+func entryInputBytes(raw te.EntryLike) int {
+	n := 128 + len(raw.GetID().String()) + len(raw.GetKind()) + len(raw.GetOwner()) + len(raw.GetSummary())
+	switch e := raw.(type) {
+	case te.CustomEntry:
+		n += extensionInputBytes(e.Extensions)
+	case *te.CustomEntry:
+		n += extensionInputBytes(e.Extensions)
+	}
+	return n
+}
+
+func extensionInputBytes(value any) int {
+	switch v := value.(type) {
+	case string:
+		return len(v)
+	case map[string]any:
+		n := 0
+		for key, item := range v {
+			n += len(key) + extensionInputBytes(item)
+		}
+		return n
+	case []any:
+		n := 0
+		for _, item := range v {
+			n += extensionInputBytes(item)
+		}
+		return n
+	default:
+		return 8 // JSON scalar
+	}
 }
 
 func (s *Service) window(ctx context.Context, h *Handoff) (*WindowResult, error) {
@@ -138,7 +170,7 @@ func project(raw te.EntryLike, calls openToolCalls) (*ProjectedEntry, error) {
 			return e, nil
 		}
 		var h Handoff
-		if decode([]byte(raw.GetSummary()), &h) != nil || validate.Struct(h) != nil || validateWindow(h.Context) != nil {
+		if decode([]byte(raw.GetSummary()), &h) != nil || validate.Struct(h) != nil || protovalidate.Validate(h.Context.View) != nil {
 			return nil, errUnsupportedEntry
 		}
 		e.Boundary = &Boundary{Schema: h.Schema, Type: h.Type, Origin: h.Origin}

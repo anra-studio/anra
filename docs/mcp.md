@@ -177,9 +177,10 @@ from nonexistent handoffs or missing ranges.
 
 `MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and counts
 both structured and text tool-result representations. Requests are capped at
-16 KiB. Reconstruction also caps raw input at 16 times the configured result
+16 KiB. Reconstruction also caps estimated entry input at 16 times the configured result
 limit and 10,000 records, including the boundary. Limits fail atomically, with
-no truncation. Responses enforce `Cache-Control: no-store`.
+no truncation. Input estimates count entry fields and extensions before projecting
+each batch, without re-encoding raw entries. Responses enforce `Cache-Control: no-store`.
 
 ## Errors
 

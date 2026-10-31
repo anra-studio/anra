@@ -46,6 +46,17 @@ Feature: Read-only MCP handoff context
     Then both MCP tool results are byte-for-byte unchanged
     And the active reasoning turn can finish normally
 
+  Scenario Outline: Handoff commit rejects excessive input without appending an anchor
+    Given a "normal" MCP handoff
+    When the controller commits a window with "<input>"
+    Then the handoff commit fails without changing Tape or authorization storage
+    Examples:
+      | input                      |
+      | oversized summary          |
+      | oversized event            |
+      | oversized private metadata |
+      | cumulative input           |
+
   Scenario: An explicit persisted prefix of an active turn can be handed off
     Given a "normal" MCP handoff
     When the role starts a blocked reasoning turn

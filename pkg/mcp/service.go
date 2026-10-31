@@ -142,14 +142,11 @@ func (s *Service) CommitHandoff(ctx context.Context, h Handoff) (string, error) 
 	if err != nil {
 		return "", ErrUnavailable
 	}
-	if te.MustParseSeq(h.Context.View.SnapshotHead).Cmp(raw.GetID()) >= 0 {
-		return "", ErrFailedPrecondition
-	}
 	return raw.GetID().String(), nil
 }
 
 func (s *Service) validateHandoff(h Handoff) error {
-	if validate.Struct(h) != nil || validateWindow(h.Context) != nil || h.Role.ID != s.config.Source.AgentId || !proto.Equal(h.Context.View.Source, s.config.Source) {
+	if validate.Struct(h) != nil || protovalidate.Validate(h.Context.View) != nil || h.Role.ID != s.config.Source.AgentId || !proto.Equal(h.Context.View.Source, s.config.Source) {
 		return ErrInvalidReference
 	}
 	return nil
@@ -196,7 +193,7 @@ func tapeReadError(err error, corrupt *Error) error {
 // committed handoff. Deliver it through runtime configuration, never the Tape,
 // a prompt, or an artifact. Only its SHA-256 digest is retained on disk.
 func (s *Service) Authorize(ctx context.Context, g Grant) (string, error) {
-	if validate.Struct(g) != nil || validateWindow(g.Window) != nil || !g.ExpiresAt.After(s.config.Now()) {
+	if validate.Struct(g) != nil || protovalidate.Validate(g.Window.View) != nil || !g.ExpiresAt.After(s.config.Now()) {
 		return "", ErrPermissionDenied
 	}
 	h, err := s.handoff(ctx, g.AnchorSeq)
@@ -235,7 +232,7 @@ func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error
 		return nil, ErrUnavailable
 	}
 	g := &stored.Grant
-	if stored.Revoked || validate.Struct(g) != nil || validateWindow(g.Window) != nil || !s.config.Now().Before(g.ExpiresAt) {
+	if stored.Revoked || validate.Struct(g) != nil || protovalidate.Validate(g.Window.View) != nil || !s.config.Now().Before(g.ExpiresAt) {
 		return nil, ErrPermissionDenied
 	}
 	return g, nil
@@ -244,9 +241,6 @@ func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error
 func (s *Service) resolve(ctx context.Context, g *Grant, input toolInput, permission string) (*Handoff, error) {
 	if g == nil || input.AnchorSeq != g.AnchorSeq || !slices.Contains(g.Permissions, permission) {
 		return nil, ErrPermissionDenied
-	}
-	if validate.Struct(input) != nil {
-		return nil, ErrInvalidReference
 	}
 	h, err := s.handoff(ctx, input.AnchorSeq)
 	if err != nil {

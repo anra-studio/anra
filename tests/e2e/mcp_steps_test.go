@@ -84,10 +84,10 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		m.token, err = m.service.Authorize(m.s.ctx, m.grant)
 		return err
 	})
-	sc.Step(`^the controller commits a window with "([^"]+)"$`, m.commitMissingWindow)
+	sc.Step(`^the controller commits a window with "([^"]+)"$`, m.commitRejectedWindow)
 	sc.Step(`^the handoff commit fails without changing Tape or authorization storage$`, func() error {
 		if !errors.Is(m.controlErr, anramcp.ErrFailedPrecondition) {
-			return fmt.Errorf("missing window commit: %v", m.controlErr)
+			return fmt.Errorf("rejected window commit: %v", m.controlErr)
 		}
 		return nil
 	})
@@ -665,7 +665,7 @@ func (m *mcpScenario) appendHandoff() error {
 	return nil
 }
 
-func (m *mcpScenario) commitMissingWindow(missing string) error {
+func (m *mcpScenario) commitRejectedWindow(problem string) error {
 	state, err := m.tape.Get(m.tapeContext())
 	if err != nil {
 		return err
@@ -673,7 +673,7 @@ func (m *mcpScenario) commitMissingWindow(missing string) error {
 	h := m.handoff
 	h.Context.View = proto.Clone(h.Context.View).(*pb.TapeView)
 	head := state.Scope.SeqE.Next()
-	switch missing {
+	switch problem {
 	case "missing boundary":
 		h.Context.View.SnapshotHead = head.String()
 		h.Context.View.Scope.SeqE = head.String()
@@ -685,8 +685,47 @@ func (m *mcpScenario) commitMissingWindow(missing string) error {
 		}
 		h.Context.View.SnapshotHead = head.String()
 		h.Context.View.Scope = &pb.EntryRange{SeqS: start.String(), SeqE: head.String()}
+	case "oversized summary", "oversized event", "oversized private metadata", "cumulative input":
+		if err := m.service.Close(); err != nil {
+			return err
+		}
+		m.service, err = anramcp.NewService(anramcp.Config{
+			Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, StatePath: m.statePath(), MaxResponseBytes: 4096,
+			Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+		})
+		if err != nil {
+			return err
+		}
+		start := head
+		payload := strings.Repeat("x", 16*4096)
+		switch problem {
+		case "oversized summary":
+			_, err = m.append(te.EntryUser, payload)
+		case "oversized event":
+			err = m.rawEvent(te.EntryAssistant, `{"parts":[{"text":"`+payload+`"}]}`)
+		case "oversized private metadata", "cumulative input":
+			count := 1
+			if problem == "cumulative input" {
+				count, payload = 200, strings.Repeat("x", 256)
+			}
+			for i := 0; i < count && err == nil; i++ {
+				_, err = m.tape.Store(m.tapeContext(), te.CustomEntry{
+					Entry:      te.NewEntry(te.WithEntryKind(te.EntryUser), te.WithEntryOwner("vesta"), te.WithEntryContent("public")),
+					Extensions: map[string]any{"private": map[string]any{"items": []any{payload}}},
+				})
+			}
+		}
+		if err != nil {
+			return err
+		}
+		boundary, err := m.append(te.EntryAssistant, "excluded committed boundary")
+		if err != nil {
+			return err
+		}
+		h.Context.View.SnapshotHead = boundary.GetID().String()
+		h.Context.View.Scope = &pb.EntryRange{SeqS: start.String(), SeqE: boundary.GetID().String()}
 	default:
-		return fmt.Errorf("unknown missing window fixture %q", missing)
+		return fmt.Errorf("unknown rejected window fixture %q", problem)
 	}
 	tapeBefore, err := os.ReadFile(m.tapePath())
 	if err != nil {
