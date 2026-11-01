@@ -15,7 +15,7 @@ import (
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
-	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
+	"github.com/scbizu/tape-go/pkg/tape/storage"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/protobuf/proto"
 )
@@ -23,10 +23,14 @@ import (
 const DefaultMaxResponseBytes = 1024 * 1024
 
 type Config struct {
-	Source    *pb.Source   `validate:"required,structonly"`
-	Owner     string       `validate:"required"`
-	Tape      *bbolt.Bbolt `validate:"required,structonly"`
-	StatePath string       `validate:"required"`
+	Source *pb.Source           `validate:"required,structonly"`
+	Owner  string               `validate:"required"`
+	Tape   storage.EntryStorage `validate:"required,structonly"`
+	// StatePath opens a private bbolt store owned and closed by this service.
+	StatePath string `validate:"excluded_with=State"`
+	// State is caller-owned storage. It must be bound to Source and remain
+	// open until every service using it has stopped. Set State or StatePath.
+	State StateStore `validate:"required_without=StatePath,excluded_with=StatePath,structonly"`
 	// TrustedOrigins is an exact allowlist of browser origins (scheme + host,
 	// optional port). Empty disables Origin restrictions. When configured,
 	// Origin must be a single allowlisted value if present. All clients,
@@ -38,11 +42,12 @@ type Config struct {
 	Now              func() time.Time `validate:"-"`
 }
 
-// Service owns its authorization database, but borrows the initialized Tape.
+// Service borrows Tape and any supplied State, and owns storage opened by path.
 // Readers never acquire an Agent's reasoning admission or mutate the Tape.
 type Service struct {
-	config Config
-	state  *stateStore
+	config     Config
+	state      StateStore
+	closeState func() error
 }
 
 func NewService(c Config) (*Service, error) {
@@ -67,15 +72,28 @@ func NewService(c Config) (*Service, error) {
 	if c.MaxResponseBytes == 0 {
 		c.MaxResponseBytes = DefaultMaxResponseBytes
 	}
-	s, err := openState(c.StatePath, c.Source)
-	if err != nil {
-		return nil, err
+	state := c.State
+	var closeState func() error
+	if c.StatePath != "" {
+		store, err := openState(c.StatePath, c.Source)
+		if err != nil {
+			return nil, err
+		}
+		state, closeState = store, store.Close
+	} else if !proto.Equal(state.Source(), c.Source) {
+		return nil, ErrInvalidReference
 	}
-	return &Service{config: c, state: s}, nil
+	return &Service{config: c, state: state, closeState: closeState}, nil
 }
 
-// Close must follow HTTP server shutdown; it does not close the borrowed Tape.
-func (s *Service) Close() error { return s.state.db.Close() }
+// Close follows HTTP server shutdown and closes only storage opened by path.
+// The caller retains ownership of Tape and any supplied State.
+func (s *Service) Close() error {
+	if s.closeState == nil {
+		return nil
+	}
+	return s.closeState()
+}
 
 // SaveRole publishes an immutable definition revision through the local control
 // plane. Reusing a version for different contents fails.
@@ -86,13 +104,12 @@ func (s *Service) SaveRole(ctx context.Context, r RoleDefinition) error {
 	if len(r.Definition) > s.config.MaxResponseBytes/2 {
 		return ErrFailedPrecondition
 	}
-	return s.state.insert(ctx, rolesBucket, roleKey(r.RoleRef), r)
+	return s.state.SaveRole(ctx, r)
 }
 
 func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error) {
-	var r RoleDefinition
-	err := s.state.load(ctx, rolesBucket, roleKey(ref), &r)
-	if errors.Is(err, errMissing) {
+	r, err := s.state.Role(ctx, ref)
+	if errors.Is(err, ErrStateNotFound) {
 		return nil, ErrInvalidReference
 	}
 	if err != nil {
@@ -195,7 +212,7 @@ func (s *Service) Authorize(ctx context.Context, g Grant) (string, error) {
 		return "", err
 	}
 	token := rand.Text()
-	if err := s.state.insert(ctx, grantsBucket, tokenHash(token), storedGrant{Grant: g}); err != nil {
+	if err := s.state.SaveGrant(ctx, tokenHash(token), g); err != nil {
 		return "", ErrUnavailable
 	}
 	return token, nil
@@ -206,15 +223,24 @@ func matches(g Grant, h *Handoff) bool {
 }
 
 // Revoke is idempotent and durable across server restarts.
-func (s *Service) Revoke(ctx context.Context, token string) error { return s.state.revoke(ctx, token) }
+func (s *Service) Revoke(ctx context.Context, token string) error {
+	err := s.state.RevokeGrant(ctx, tokenHash(token))
+	if errors.Is(err, ErrStateNotFound) {
+		return ErrPermissionDenied
+	}
+	if err != nil {
+		return ErrUnavailable
+	}
+	return nil
+}
 
 func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error) {
 	if token == "" || len(token) > 512 {
 		return nil, ErrPermissionDenied
 	}
-	var stored storedGrant
-	if err := s.state.load(ctx, grantsBucket, tokenHash(token), &stored); err != nil {
-		if errors.Is(err, errMissing) {
+	stored, err := s.state.Grant(ctx, tokenHash(token))
+	if err != nil {
+		if errors.Is(err, ErrStateNotFound) {
 			return nil, ErrPermissionDenied
 		}
 		return nil, ErrUnavailable

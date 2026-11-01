@@ -24,6 +24,34 @@ Feature: Read-only MCP handoff context
     When an official MCP client connects with the handoff credential
     Then both MCP tools return the committed role and context
 
+  Scenario: MCP can commit and read handoffs through JSONL Tape storage
+    Given a "normal" MCP handoff
+    When the embedding runtime uses JSONL Tape storage
+    And another handoff commits without changing authorization storage
+    And the controller authorizes the persisted handoff
+    And an official MCP client connects with the handoff credential
+    Then both MCP tools return the committed role and context
+
+  Scenario: Caller-owned state survives service restarts and retains revocations
+    Given a "normal" MCP handoff
+    When I remember both MCP tool results
+    And the embedding runtime supplies its state store
+    And the controller authorizes the persisted handoff
+    Then both MCP tool results are byte-for-byte unchanged
+    When the MCP service restarts with the supplied state store
+    Then both MCP tool results are byte-for-byte unchanged
+    And reusing the role version with different contents fails
+    When the MCP credential is "revoked"
+    And the MCP service restarts with the supplied state store
+    And I read the MCP context window
+    Then MCP rejects access with "permission_denied" and no private metadata
+
+  Scenario: A supplied state store is bound to its Source
+    Given a "normal" MCP handoff
+    When the embedding runtime supplies its state store
+    Then a service using that state store rejects another Source
+    And both MCP tools return the committed role and context
+
   Scenario: Committing a handoff writes only to Tape
     Given a "normal" MCP handoff
     When another handoff commits without changing authorization storage

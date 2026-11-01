@@ -39,11 +39,21 @@ trust does not grant CORS access or replace connection authentication. See the
 
 ## Local controller lifecycle
 
-One service owns one source's private state database and borrows the initialized
-Anra Tape. The caller supplies the matching Source and Tape. The Agent runtime
+The service accepts Tape through tape-go's `storage.EntryStorage` interface;
+both bbolt and JSONL implementations can supply its `Store` and `Range` methods.
+The caller owns Tape and supplies its matching Source. The Agent runtime
 owns initialization and recovery; the initialization anchor need not be the first
-entry. The controller owns the HTTP listener and the Tape; stop HTTP requests
-before closing the service, and drain the agent before closing its Tape.
+entry. Stop HTTP requests before closing the service, and drain the agent before
+closing its Tape.
+
+Configure exactly one state-storage option: `Config.StatePath` opens the bundled
+bbolt implementation, which `Service.Close` closes; `Config.State` accepts a
+caller-owned `StateStore`, which the service leaves open. A supplied store must
+be bound to the configured Source and support concurrent calls. `StateStore`
+exposes typed role-revision and credential operations, keeping buckets, keys,
+serialization, and transactions inside the implementation. Missing records
+return `ErrStateNotFound`. Inserts must atomically preserve immutable contents;
+revocation must be atomic, idempotent, and cannot be undone by saving a grant.
 
 The following APIs are local Go methods, never MCP tools:
 
@@ -99,6 +109,13 @@ credential, err := service.Authorize(ctx, mcp.Grant{
 mux.Handle("/mcp", service.Handler())
 ```
 
+To share the bundled implementation across service lifetimes, open it with
+`state, err := mcp.OpenState(path, source)` and pass `State: state` instead of
+`StatePath`. Handle the error before constructing services. Close the store
+explicitly after every service using it has stopped. Other implementations can
+satisfy `StateStore` directly; credential operations receive only SHA-256
+digests, never bearer tokens.
+
 Definition publication, Tape handoff commit, grant issuance, and secure
 credential delivery must all succeed before dispatch claims context is
 available. Launching sessions, resolving application bindings, OAuth issuance,
@@ -123,7 +140,7 @@ and complete authorization before dispatching.
 
 The state database retains immutable Role definitions and source identity;
 authorization is solely token-hash-to-grant records, including expiration and
-revocation. It is created with mode `0600`. Tape handoffs, Role revisions, grants,
+revocation. The bundled bbolt file is created with mode `0600`. Tape handoffs, Role revisions, grants,
 and revocations survive restarts in their respective stores.
 
 ## Tool contract

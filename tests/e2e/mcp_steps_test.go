@@ -34,26 +34,27 @@ import (
 )
 
 type mcpScenario struct {
-	s          *scenario
-	tape       *bbolt.Bbolt
-	agent      *agent.Anra
-	service    *anramcp.Service
-	server     *httptest.Server
-	client     *sdk.ClientSession
-	tools      *sdk.ListToolsResult
-	role       anramcp.RoleDefinition
-	handoff    anramcp.Handoff
-	grant      anramcp.Grant
-	token      string
-	clock      atomic.Int64
-	lastStatus int
-	lastBody   []byte
-	lastResult json.RawMessage
-	original   map[string]json.RawMessage
-	controlErr error
-	entered    chan struct{}
-	release    chan struct{}
-	finished   chan error
+	s             *scenario
+	tape          *bbolt.Bbolt
+	agent         *agent.Anra
+	service       *anramcp.Service
+	suppliedState anramcp.StateStore
+	server        *httptest.Server
+	client        *sdk.ClientSession
+	tools         *sdk.ListToolsResult
+	role          anramcp.RoleDefinition
+	handoff       anramcp.Handoff
+	grant         anramcp.Grant
+	token         string
+	clock         atomic.Int64
+	lastStatus    int
+	lastBody      []byte
+	lastResult    json.RawMessage
+	original      map[string]json.RawMessage
+	controlErr    error
+	entered       chan struct{}
+	release       chan struct{}
+	finished      chan error
 }
 
 func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
@@ -68,10 +69,15 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 			close(m.release)
 			m.release = nil
 		}
-		return ctx, m.close()
+		err := m.close()
+		if m.suppliedState != nil {
+			err = errors.Join(err, m.suppliedState.Close())
+		}
+		return ctx, err
 	})
 	sc.Step(`^an? "([^"]+)" MCP handoff$`, m.setup)
 	sc.Step(`^a Tape containing entries before Anra initialization$`, m.seedLegacyTape)
+	initializeMCPStorage(sc, m)
 	sc.Step(`^an official MCP client connects with the handoff credential$`, m.connect)
 	sc.Step(`^it discovers exactly the two read-only context tools$`, m.discover)
 	sc.Step(`^both MCP tools return the committed role and context$`, m.checkBoth)
