@@ -71,6 +71,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		return ctx, m.close()
 	})
 	sc.Step(`^an? "([^"]+)" MCP handoff$`, m.setup)
+	sc.Step(`^a Tape containing entries before Anra initialization$`, m.seedLegacyTape)
 	sc.Step(`^an official MCP client connects with the handoff credential$`, m.connect)
 	sc.Step(`^it discovers exactly the two read-only context tools$`, m.discover)
 	sc.Step(`^both MCP tools return the committed role and context$`, m.checkBoth)
@@ -170,6 +171,19 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 func (m *mcpScenario) statePath() string            { return filepath.Join(m.s.root, "mcp-state.db") }
 func (m *mcpScenario) tapePath() string             { return filepath.Join(m.s.root, "mcp-tape.db") }
 func (m *mcpScenario) tapeContext() context.Context { return owner.WithOwnerId(m.s.ctx, "vesta") }
+
+func (m *mcpScenario) seedLegacyTape() error {
+	tape, err := bbolt.NewBboltStorage("mcp-session", m.tapePath())
+	if err != nil {
+		return err
+	}
+	defer tape.Close()
+	if err := tape.Init(m.tapeContext()); err != nil {
+		return err
+	}
+	_, err = tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(te.EntryUser), te.WithEntryOwner("vesta"), te.WithEntryContent("existing Tape input")))
+	return err
+}
 
 func (m *mcpScenario) open() error {
 	var err error

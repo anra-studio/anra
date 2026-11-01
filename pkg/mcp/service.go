@@ -61,18 +61,6 @@ func NewService(c Config) (*Service, error) {
 	}
 	c.Source = proto.Clone(c.Source).(*pb.Source)
 	c.TrustedOrigins = slices.Clone(c.TrustedOrigins)
-	// A source is the persisted Tape incarnation, not a caller-selected label.
-	first, err := c.Tape.Range(owner.WithOwnerId(context.Background(), c.Owner), tv.EntryRange{SeqS: te.SeqFromUint64(1), SeqE: te.SeqFromUint64(2)})
-	if err != nil {
-		return nil, err
-	}
-	if len(first.Raw) != 1 || first.Raw[0].GetID() != te.SeqFromUint64(1) || first.Raw[0].GetOwner() != c.Owner {
-		return nil, ErrInvalidReference
-	}
-	initialized, err := anchor.Decode(first.Raw[0])
-	if err != nil || initialized == nil || initialized.Type != anchor.TapeInitialized || !proto.Equal(initialized.Source, c.Source) {
-		return nil, ErrInvalidReference
-	}
 	if c.Now == nil {
 		c.Now = time.Now
 	}

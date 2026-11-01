@@ -15,6 +15,15 @@ Feature: Read-only MCP handoff context
     And the MCP storage and server restart
     Then both MCP tool results are byte-for-byte unchanged
 
+  Scenario: Anra initialization can follow existing Tape entries
+    Given a Tape containing entries before Anra initialization
+    And a "normal" MCP handoff
+    When I remember both MCP tool results
+    And the MCP storage and server restart
+    Then both MCP tool results are byte-for-byte unchanged
+    When an official MCP client connects with the handoff credential
+    Then both MCP tools return the committed role and context
+
   Scenario: Committing a handoff writes only to Tape
     Given a "normal" MCP handoff
     When another handoff commits without changing authorization storage

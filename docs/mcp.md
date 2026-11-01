@@ -40,8 +40,9 @@ trust does not grant CORS access or replace connection authentication. See the
 ## Local controller lifecycle
 
 One service owns one source's private state database and borrows the initialized
-Anra Tape. Its configured Source must match the persisted `tape.initialized`
-record. The controller owns the HTTP listener and the Tape; stop HTTP requests
+Anra Tape. The caller supplies the matching Source and Tape. The Agent runtime
+owns initialization and recovery; the initialization anchor need not be the first
+entry. The controller owns the HTTP listener and the Tape; stop HTTP requests
 before closing the service, and drain the agent before closing its Tape.
 
 The following APIs are local Go methods, never MCP tools:
