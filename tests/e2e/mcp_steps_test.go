@@ -37,7 +37,7 @@ import (
 type mcpScenario struct {
 	s           *scenario
 	tape        *bbolt.Bbolt
-	handoffTape storage.EntryStorage
+	handoffTape storage.TapeStorage
 	agent       *agent.Anra
 	service     *anramcp.Service
 	providers   *mcpProviders
@@ -102,7 +102,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		m.token = m.authorize(m.grant)
 		return nil
 	})
-	sc.Step(`^the controller supplies a window with "([^"]+)"$`, m.supplyInvalidWindow)
+	sc.Step(`^the controller supplies a window with "([^"]+)"$`, m.supplyWindow)
 	sc.Step(`^both MCP tool results are byte-for-byte unchanged$`, m.unchanged)
 	sc.Step(`^the role starts a blocked reasoning turn$`, m.hold)
 	sc.Step(`^the active reasoning turn can finish normally$`, m.finish)
@@ -118,6 +118,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^the MCP window preserves tool identities and omits private event metadata$`, m.checkTools)
 	sc.Step(`^the MCP window preserves turn and integration session boundaries$`, m.checkBoundaries)
 	sc.Step(`^the MCP window has zero entries and is complete$`, m.checkEmpty)
+	sc.Step(`^the MCP window contains only its public content$`, m.checkPublicContent)
 	sc.Step(`^I read the MCP context window$`, func() error { return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil) })
 	sc.Step(`^I read the MCP role$`, func() error { return m.call(anramcp.ReadRole, m.token, m.grant.AnchorSeq, nil) })
 	sc.Step(`^the provider returns a different role revision$`, m.wrongRole)
@@ -665,8 +666,12 @@ func (m *mcpScenario) appendHandoff() error {
 	return nil
 }
 
-func (m *mcpScenario) supplyInvalidWindow(problem string) error {
-	state, err := m.tape.Get(m.tapeContext())
+func (m *mcpScenario) supplyWindow(problem string) error {
+	tape := m.handoffTape
+	if tape == nil {
+		tape = m.tape
+	}
+	state, err := tape.Get(m.tapeContext())
 	if err != nil {
 		return err
 	}
@@ -678,39 +683,46 @@ func (m *mcpScenario) supplyInvalidWindow(problem string) error {
 		h.Context.View.SnapshotHead = head.String()
 		h.Context.View.Scope.SeqE = head.String()
 		// Leave a real gap before the later handoff anchor.
-		if _, err := m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(head.Next()), te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("entry after missing boundary"), te.WithEntryOwner("vesta"))); err != nil {
+		if _, err := tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(head.Next()), te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("entry after missing boundary"), te.WithEntryOwner("vesta"))); err != nil {
 			return err
 		}
 	case "missing entry":
 		start := head
 		head = head.Next()
-		if _, err := m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(head), te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("persisted boundary after gap"), te.WithEntryOwner("vesta"))); err != nil {
+		if _, err := tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(head), te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("persisted boundary after gap"), te.WithEntryOwner("vesta"))); err != nil {
 			return err
 		}
 		h.Context.View.SnapshotHead = head.String()
 		h.Context.View.Scope = &pb.EntryRange{SeqS: start.String(), SeqE: head.String()}
-	case "oversized summary", "oversized event", "oversized private metadata", "cumulative input":
+	case "oversized summary", "oversized event", "oversized private metadata", "cumulative content", "many thoughts":
 		m.service, err = anramcp.NewService(anramcp.Config{
-			Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers, MaxResponseBytes: 4096,
+			Source: m.agent.Source(), Owner: "vesta", Tape: tape, Roles: m.providers, Grants: m.providers, MaxResponseBytes: 4096,
 			Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
 		})
 		if err != nil {
 			return err
 		}
 		start := head
-		payload := strings.Repeat("x", 16*4096)
+		payload := strings.Repeat("PRIVATE-", 10000)
 		switch problem {
 		case "oversized summary":
 			_, err = m.append(te.EntryUser, payload)
 		case "oversized event":
 			err = m.rawEvent(te.EntryAssistant, `{"parts":[{"text":"`+payload+`"}]}`)
-		case "oversized private metadata", "cumulative input":
+		case "many thoughts":
+			for i := 0; i < 10001 && err == nil; i++ {
+				_, err = tape.Store(m.tapeContext(), te.CustomEntry{
+					Entry:      te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta")),
+					Extensions: map[string]any{"adk:event": `{"content":{"role":"model","parts":[{"text":"PRIVATE-THOUGHT","thought":true}]}}`},
+				})
+			}
+		case "oversized private metadata", "cumulative content":
 			count := 1
-			if problem == "cumulative input" {
+			if problem == "cumulative content" {
 				count, payload = 200, strings.Repeat("x", 256)
 			}
 			for i := 0; i < count && err == nil; i++ {
-				_, err = m.tape.Store(m.tapeContext(), te.CustomEntry{
+				_, err = tape.Store(m.tapeContext(), te.CustomEntry{
 					Entry:      te.NewEntry(te.WithEntryKind(te.EntryUser), te.WithEntryOwner("vesta"), te.WithEntryContent("public")),
 					Extensions: map[string]any{"private": map[string]any{"items": []any{payload}}},
 				})
@@ -719,20 +731,21 @@ func (m *mcpScenario) supplyInvalidWindow(problem string) error {
 		if err != nil {
 			return err
 		}
-		boundary, err := m.append(te.EntryAssistant, "excluded committed boundary")
+		boundary, err := tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("excluded committed boundary")))
 		if err != nil {
 			return err
 		}
 		h.Context.View.SnapshotHead = boundary.GetID().String()
 		h.Context.View.Scope = &pb.EntryRange{SeqS: start.String(), SeqE: boundary.GetID().String()}
 	default:
-		return fmt.Errorf("unknown rejected window fixture %q", problem)
+		return fmt.Errorf("unknown window fixture %q", problem)
 	}
 	// The controller appends the reference; MCP validates it on read.
 	seq, err := m.commitHandoff(h)
 	if err != nil {
 		return err
 	}
+	m.handoff = h
 	m.grant.AnchorSeq = seq
 	m.grant.Window = h.Context
 	m.token = m.authorize(m.grant)
@@ -1202,6 +1215,20 @@ func (m *mcpScenario) checkEmpty() error {
 	}
 	if !w.IsComplete || w.Entries == nil || len(w.Entries) != 0 || len(w.View) == 0 {
 		return fmt.Errorf("not a complete empty window: %s", data)
+	}
+	return nil
+}
+
+func (m *mcpScenario) checkPublicContent() error {
+	if err := m.checkWindowResponse(); err != nil {
+		return err
+	}
+	var window anramcp.WindowResult
+	if err := json.Unmarshal(m.lastResult, &window); err != nil {
+		return err
+	}
+	if len(window.Entries) != 1 || string(window.Entries[0].Content) != `"public"` || bytes.Contains(m.lastBody, []byte("PRIVATE-")) {
+		return fmt.Errorf("unexpected public projection: %s", m.lastBody)
 	}
 	return nil
 }

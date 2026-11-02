@@ -108,16 +108,20 @@ Feature: Read-only MCP handoff context
     Then both MCP tool results are byte-for-byte unchanged
     And the active reasoning turn can finish normally
 
-  Scenario Outline: MCP rejects excessive window input on read
+  Scenario Outline: MCP rejects excessive projected window content on read
     Given a "normal" MCP handoff
     When the controller supplies a window with "<input>"
     Then MCP rejects access with "failed_precondition" and no private metadata
     Examples:
-      | input                      |
-      | oversized summary          |
-      | oversized event            |
-      | oversized private metadata |
-      | cumulative input           |
+      | input                |
+      | oversized summary    |
+      | oversized event      |
+      | cumulative content   |
+
+  Scenario: Private metadata does not consume the projected window budget
+    Given a "normal" MCP handoff
+    When the controller supplies a window with "oversized private metadata"
+    Then the MCP window contains only its public content
 
   Scenario: An explicit persisted prefix of an active turn can be handed off
     Given a "normal" MCP handoff
@@ -362,6 +366,12 @@ Feature: Read-only MCP handoff context
 
   Scenario: A legitimately empty projection is complete and distinguishable
     Given an "empty" MCP handoff
+    Then the MCP window has zero entries and is complete
+
+  Scenario: A window with more than 10000 thought entries has a complete empty projection
+    Given a "normal" MCP handoff
+    When the embedding runtime uses JSONL Tape storage
+    And the controller supplies a window with "many thoughts"
     Then the MCP window has zero entries and is complete
 
   Scenario: Tape sequences retain arbitrary precision over MCP

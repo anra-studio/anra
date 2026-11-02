@@ -166,11 +166,10 @@ from nonexistent handoffs or missing ranges.
 `MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and bounds
 role definitions, the committed handoff, and the projected window entries. Each
 tool result repeats its content as text and structured JSON; its serialized size
-is not checked. Requests are capped at 16 KiB. Reconstruction also caps estimated
-entry input at 16 times the configured result limit and 10,000 records, including
-the boundary. Limits fail atomically, with no
-truncation. Input estimates count entry fields and extensions before projecting
-each batch, without re-encoding raw entries. Responses enforce `Cache-Control: no-store`.
+is not checked. Requests are capped at 16 KiB. The committed window is read with
+Tape's native range operation; only serialized projected entries consume the
+window budget. Private metadata and thought-only entries do not consume it.
+Limits fail atomically, with no truncation. Responses enforce `Cache-Control: no-store`.
 
 ## Errors
 

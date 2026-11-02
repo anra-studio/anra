@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"buf.build/go/protovalidate"
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
@@ -42,114 +41,50 @@ type WindowResult struct {
 	IsComplete bool             `json:"isComplete"`
 }
 
-// walkWindow checks every persisted sequence, including the excluded head.
-// The caller validates ref at the input or decode boundary. Bounded batches and
-// an estimated input limit bound reconstruction; each batch is checked before
-// projection. Arithmetic remains arbitrary precision throughout.
-func (s *Service) walkWindow(ctx context.Context, ref *pb.TapeView, visit func(te.EntryLike, bool) error) error {
-	start := te.MustParseSeq(ref.Scope.SeqS)
-	head := te.MustParseSeq(ref.SnapshotHead)
-	end := head.Next()
-	expected := start
-	rawBytes, count := 0, 0
-	for expected.Cmp(end) < 0 {
-		batchEnd := expected
-		for i := 0; i < 128 && batchEnd.Cmp(end) < 0; i++ {
-			batchEnd = batchEnd.Next()
-		}
-		batch, err := s.config.Tape.Range(s.tapeContext(ctx), tv.EntryRange{SeqS: expected, SeqE: batchEnd})
-		if err != nil {
-			return ErrUnavailable
-		}
-		for _, raw := range batch.Raw {
-			if raw.GetID() != expected || raw.GetOwner() != s.config.Owner {
-				return ErrFailedPrecondition
-			}
-			rawBytes += entryInputBytes(raw)
-			count++
-			if rawBytes > 16*s.config.MaxResponseBytes || count > 10000 {
-				return ErrFailedPrecondition
-			}
-			expected = expected.Next()
-		}
-		if expected != batchEnd {
-			return ErrFailedPrecondition
-		}
-		if visit != nil {
-			for _, raw := range batch.Raw {
-				if err := visit(raw, raw.GetID() == head); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// Count payload bytes already held by the entry, without encoding another copy.
-// The fixed allowance covers the timestamp and entry structure. Extensions
-// have JSON value types after Tape decoding, including private metadata.
-func entryInputBytes(raw te.EntryLike) int {
-	n := 128 + len(raw.GetID().String()) + len(raw.GetKind()) + len(raw.GetOwner()) + len(raw.GetSummary())
-	switch e := raw.(type) {
-	case te.CustomEntry:
-		n += extensionInputBytes(e.Extensions)
-	case *te.CustomEntry:
-		n += extensionInputBytes(e.Extensions)
-	}
-	return n
-}
-
-func extensionInputBytes(value any) int {
-	switch v := value.(type) {
-	case string:
-		return len(v)
-	case map[string]any:
-		n := 0
-		for key, item := range v {
-			n += len(key) + extensionInputBytes(item)
-		}
-		return n
-	case []any:
-		n := 0
-		for _, item := range v {
-			n += extensionInputBytes(item)
-		}
-		return n
-	default:
-		return 8 // JSON scalar
-	}
-}
-
 func (s *Service) window(ctx context.Context, h *Handoff) (*WindowResult, error) {
+	r := tv.EntryRange{
+		SeqS: te.MustParseSeq(h.Context.View.Scope.SeqS),
+		SeqE: te.MustParseSeq(h.Context.View.Scope.SeqE),
+	}
+	batch, err := s.config.Tape.Range(s.tapeContext(ctx), r)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	// The excluded snapshot head must also be persisted by the controller.
+	boundary, err := s.config.Tape.Range(s.tapeContext(ctx), tv.EntryRange{SeqS: r.SeqE, SeqE: r.SeqE.Next()})
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	if len(boundary.Raw) != 1 || boundary.Raw[0].GetID() != r.SeqE || boundary.Raw[0].GetOwner() != s.config.Owner {
+		return nil, ErrFailedPrecondition
+	}
 	result := &WindowResult{View: anchor.ProtoJSON(h.Context.View), Entries: []ProjectedEntry{}, IsComplete: true}
 	calls := make(openToolCalls)
+	expected := r.SeqS
 	projectedBytes := 0
-	err := s.walkWindow(ctx, h.Context.View, func(raw te.EntryLike, boundary bool) error {
-		if boundary {
-			return nil
+	for _, raw := range batch.Raw {
+		if raw.GetID() != expected || raw.GetOwner() != s.config.Owner {
+			return nil, ErrFailedPrecondition
 		}
+		expected = expected.Next()
 		e, err := project(raw, calls)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if e != nil {
-			data, err := json.Marshal(e)
-			if err != nil {
-				return ErrFailedPrecondition
-			}
-			projectedBytes += len(data)
-			if projectedBytes > s.config.MaxResponseBytes {
-				return ErrFailedPrecondition
-			}
-			result.Entries = append(result.Entries, *e)
+		if e == nil {
+			continue
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		data, err := json.Marshal(e)
+		if err != nil {
+			return nil, ErrFailedPrecondition
+		}
+		projectedBytes += len(data)
+		if projectedBytes > s.config.MaxResponseBytes {
+			return nil, ErrFailedPrecondition
+		}
+		result.Entries = append(result.Entries, *e)
 	}
-	if len(calls) != 0 {
+	if expected != r.SeqE || len(calls) != 0 {
 		return nil, ErrFailedPrecondition
 	}
 	return result, nil
