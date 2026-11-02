@@ -163,11 +163,13 @@ atomically with `failed_precondition`. No partial window is returned.
 Thought-only windows yield `entries: []` and `isComplete: true`, distinct
 from nonexistent handoffs or missing ranges.
 
-`MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and counts
-both structured and text tool-result representations. Requests are capped at
-16 KiB. Reconstruction also caps estimated entry input at 16 times the configured result
-limit and 10,000 records, including the boundary. Limits fail atomically, with
-no truncation. Input estimates count entry fields and extensions before projecting
+`MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and bounds
+role definitions, the committed handoff, and the projected window entries. Each
+tool result repeats its content as text and structured JSON; its serialized size
+is not checked. Requests are capped at 16 KiB. Reconstruction also caps estimated
+entry input at 16 times the configured result limit and 10,000 records, including
+the boundary. Limits fail atomically, with no
+truncation. Input estimates count entry fields and extensions before projecting
 each batch, without re-encoding raw entries. Responses enforce `Cache-Control: no-store`.
 
 ## Errors
@@ -182,7 +184,7 @@ diagnostics.
 | `permission_denied` | Wrong anchor/binding/Role/scope, missing tool permission, or missing/expired/revoked credential |
 | `invalid_reference` | Malformed arguments, missing/non-handoff anchor, or missing Role revision |
 | `failed_precondition` | Missing window entries or excluded boundary, unsupported/incomplete projection, or exceeded limits |
-| `unavailable` | Transient storage/service failure |
+| `unavailable` | Tape read failure (including undecodable stored entries) or provider failure |
 
 Authentication failures return HTTP 401 with the generic `permission_denied`
 envelope and a Bearer challenge. Storage failures during authentication return

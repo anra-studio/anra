@@ -75,6 +75,19 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		return ctx, err
 	})
 	sc.Step(`^an? "([^"]+)" MCP handoff$`, m.setup)
+	sc.Step(`^the controller authorizes a credential with (\d+) characters$`, func(length int) error {
+		m.token = strings.Repeat("credential", length/len("credential")) + strings.Repeat("x", length%len("credential"))
+		m.providers.mu.Lock()
+		defer m.providers.mu.Unlock()
+		m.providers.grants[m.token] = m.grant
+		return nil
+	})
+	sc.Step(`^the role provider supplies a definition with (\d+) bytes$`, func(length int) error {
+		const prefix, suffix = `{"instructions":"`, `"}`
+		m.role.Definition = json.RawMessage(prefix + strings.Repeat("x", length-len(prefix)-len(suffix)) + suffix)
+		m.providers.setRole(m.role)
+		return nil
+	})
 	sc.Step(`^a Tape containing entries before Anra initialization$`, m.seedLegacyTape)
 	initializeMCPStorage(sc, m)
 	sc.Step(`^an official MCP client connects with the handoff credential$`, m.connect)
@@ -106,6 +119,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^the MCP window preserves turn and integration session boundaries$`, m.checkBoundaries)
 	sc.Step(`^the MCP window has zero entries and is complete$`, m.checkEmpty)
 	sc.Step(`^I read the MCP context window$`, func() error { return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil) })
+	sc.Step(`^I read the MCP role$`, func() error { return m.call(anramcp.ReadRole, m.token, m.grant.AnchorSeq, nil) })
 	sc.Step(`^the provider returns a different role revision$`, m.wrongRole)
 	sc.Step(`^MCP construction and repeated reads create no files and leave Tape unchanged$`, m.readOnly)
 	sc.Step(`^the MCP window contains every ordered chunk and is complete$`, m.checkStream)
@@ -358,7 +372,9 @@ func (m *mcpScenario) specialWindow(kind string) (*pb.TapeView, error) {
 	case "unknown":
 		_, err = m.append("integration:unknown", "PRIVATE-UNKNOWN")
 	case "oversized":
-		_, err = m.append(te.EntryUser, strings.Repeat("large-window-", 50000))
+		// The projected entry alone must exceed the 1 MiB default limit; the
+		// serialized tool result is not size-checked.
+		_, err = m.append(te.EntryUser, strings.Repeat("large-window-", 100000))
 	case "tools", "orphan result", "unfinished call":
 		if kind != "orphan result" {
 			_, err = m.event(te.EntryToolCall, &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "tool-42", Name: "lookup", Args: map[string]any{"query": "Anra"}}}, {Text: "PRIVATE-THOUGHT", Thought: true}}})
@@ -912,19 +928,19 @@ func (m *mcpScenario) damage(damage string) error {
 		m.providers.mu.Lock()
 		delete(m.providers.roles, m.role.RoleRef)
 		m.providers.mu.Unlock()
-	case "missing anchor", "missing snapshot entry", "missing snapshot boundary", "corrupt snapshot entry":
+	case "missing anchor", "missing snapshot entry", "missing snapshot boundary", "corrupt snapshot entry", "corrupt handoff entry":
 		// Stop all users before modifying the physical Tape file offline.
 		if err := m.close(); err != nil {
 			return err
 		}
 		seq := m.grant.AnchorSeq
-		if damage != "missing anchor" {
+		if damage != "missing anchor" && damage != "corrupt handoff entry" {
 			seq = m.grant.Window.View.Scope.SeqS
 		}
 		if damage == "missing snapshot boundary" {
 			seq = m.grant.Window.View.SnapshotHead
 		}
-		if err := damageMCPPhysicalEntry(m.tapePath(), seq, damage == "corrupt snapshot entry"); err != nil {
+		if err := damageMCPPhysicalEntry(m.tapePath(), seq, strings.HasPrefix(damage, "corrupt")); err != nil {
 			return err
 		}
 		// Avoid agent recovery here: the fault is specifically tested by MCP.

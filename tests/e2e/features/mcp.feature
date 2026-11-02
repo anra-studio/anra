@@ -8,6 +8,29 @@ Feature: Read-only MCP handoff context
     Then it discovers exactly the two read-only context tools
     And both MCP tools return the committed role and context
 
+  Scenario: Credential length is decided by the injected verifier
+    Given a "normal" MCP handoff
+    When the controller authorizes a credential with 1024 characters
+    Then both MCP tools return the committed role and context
+    When the MCP credential is "revoked"
+    And I read the MCP context window
+    Then MCP rejects access with "permission_denied" and no private metadata
+
+  Scenario Outline: Role definitions can use the full configured content budget
+    Given a "normal" MCP handoff
+    When the role provider supplies a definition with <bytes> bytes
+    Then both MCP tools return the committed role and context
+    Examples:
+      | bytes   |
+      | 524289  |
+      | 1048576 |
+
+  Scenario: Role definitions exceeding the content budget fail atomically
+    Given a "normal" MCP handoff
+    When the role provider supplies a definition with 1048577 bytes
+    And I read the MCP role
+    Then MCP rejects access with "failed_precondition" and no private metadata
+
   Scenario Outline: Read-only providers must be injected at construction
     Given a "normal" MCP handoff
     Then MCP construction rejects a missing "<provider>" provider
@@ -172,7 +195,8 @@ Feature: Read-only MCP handoff context
       | missing role revision        | invalid_reference   |
       | unsupported snapshot content | failed_precondition |
       | missing snapshot entry       | failed_precondition |
-      | corrupt snapshot entry       | failed_precondition |
+      | corrupt snapshot entry       | unavailable         |
+      | corrupt handoff entry        | unavailable         |
       | changed handoff binding      | permission_denied   |
       | missing snapshot boundary    | failed_precondition |
       | storage unavailable          | unavailable         |

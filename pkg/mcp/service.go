@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -39,8 +38,10 @@ type Config struct {
 	// Entries are compared byte-for-byte without normalization. Configure the
 	// serialized scheme, host, and port sent by the browser.
 	TrustedOrigins []string `validate:"dive,http_url,excludes=*"`
-	// Zero uses 1 MiB. Limits apply to the entire MCP tool result, including its
-	// structured and text representations. Oversized results fail atomically.
+	// Zero uses 1 MiB. Bounds role definitions, committed handoffs, and projected
+	// window entries, so an oversized window fails atomically instead of being
+	// truncated. A tool result repeats that projection as both text and
+	// structured content, so its serialized size is not checked.
 	MaxResponseBytes int              `validate:"omitempty,min=1024,max=16777216"`
 	Now              func() time.Time `validate:"-"`
 }
@@ -74,10 +75,10 @@ func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	if r == nil || validate.Struct(r) != nil || r.RoleRef != ref {
+	if validate.Struct(r) != nil || r.RoleRef != ref {
 		return nil, ErrInvalidReference
 	}
-	if len(r.Definition) > s.config.MaxResponseBytes/2 {
+	if len(r.Definition) > s.config.MaxResponseBytes {
 		return nil, ErrFailedPrecondition
 	}
 	return r, nil
@@ -95,13 +96,11 @@ func (s *Service) tapeContext(ctx context.Context) context.Context {
 }
 
 func (s *Service) handoff(ctx context.Context, seq string) (*Handoff, error) {
-	n, err := te.ParseSeq(seq)
-	if err != nil || n.IsZero() {
-		return nil, ErrInvalidReference
-	}
+	// resolve supplies the sequence from validated tool input and grant.
+	n := te.MustParseSeq(seq)
 	entries, err := s.config.Tape.Range(s.tapeContext(ctx), tv.EntryRange{SeqS: n, SeqE: n.Next()})
 	if err != nil {
-		return nil, tapeReadError(err, ErrInvalidReference)
+		return nil, ErrUnavailable
 	}
 	if len(entries.Raw) != 1 || entries.Raw[0].GetID() != n || entries.Raw[0].GetKind() != anchor.Kind {
 		return nil, ErrInvalidReference
@@ -111,23 +110,13 @@ func (s *Service) handoff(ctx context.Context, seq string) (*Handoff, error) {
 		return nil, ErrFailedPrecondition
 	}
 	var h Handoff
-	if raw.GetOwner() != s.config.Owner || decode([]byte(raw.GetSummary()), &h) != nil || s.validateHandoff(h) != nil {
+	if decode([]byte(raw.GetSummary()), &h) != nil || s.validateHandoff(h) != nil {
 		return nil, ErrInvalidReference
 	}
-	if te.MustParseSeq(h.Context.View.SnapshotHead).Cmp(n) >= 0 {
+	if raw.GetOwner() != s.config.Owner || te.MustParseSeq(h.Context.View.SnapshotHead).Cmp(n) >= 0 {
 		return nil, ErrInvalidReference
 	}
 	return &h, nil
-}
-
-func tapeReadError(err error, corrupt *Error) error {
-	var syntax *json.SyntaxError
-	var shape *json.UnmarshalTypeError
-	var timestamp *time.ParseError
-	if errors.As(err, &syntax) || errors.As(err, &shape) || errors.As(err, &timestamp) || errors.Is(err, te.ErrInvalidSeq) {
-		return corrupt
-	}
-	return ErrUnavailable
 }
 
 func matches(g Grant, h *Handoff) bool {
@@ -135,7 +124,7 @@ func matches(g Grant, h *Handoff) bool {
 }
 
 func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error) {
-	if token == "" || len(token) > 512 {
+	if token == "" {
 		return nil, ErrPermissionDenied
 	}
 	g, err := s.config.Grants.VerifyGrant(ctx, token)
@@ -145,7 +134,10 @@ func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	if g == nil || validate.Struct(g) != nil || protovalidate.Validate(g.Window.View) != nil || !s.config.Now().Before(g.ExpiresAt) || g.RoleID != s.config.Source.AgentId || !proto.Equal(g.Window.View.Source, s.config.Source) {
+	if validate.Struct(g) != nil || protovalidate.Validate(g.Window.View) != nil {
+		return nil, ErrPermissionDenied
+	}
+	if g.ExpiresAt.Compare(s.config.Now()) <= 0 || g.RoleID != s.config.Source.AgentId || !proto.Equal(g.Window.View.Source, s.config.Source) {
 		return nil, ErrPermissionDenied
 	}
 	return g, nil

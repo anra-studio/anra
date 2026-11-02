@@ -59,7 +59,7 @@ func (s *Service) walkWindow(ctx context.Context, ref *pb.TapeView, visit func(t
 		}
 		batch, err := s.config.Tape.Range(s.tapeContext(ctx), tv.EntryRange{SeqS: expected, SeqE: batchEnd})
 		if err != nil {
-			return tapeReadError(err, ErrFailedPrecondition)
+			return ErrUnavailable
 		}
 		for _, raw := range batch.Raw {
 			if raw.GetID() != expected || raw.GetOwner() != s.config.Owner {

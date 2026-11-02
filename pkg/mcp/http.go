@@ -125,14 +125,8 @@ func (s *Service) toolResult(value any, err error) *sdk.CallToolResult {
 	if marshalErr != nil {
 		return s.toolResult(nil, ErrFailedPrecondition)
 	}
-	result := &sdk.CallToolResult{
+	return &sdk.CallToolResult{
 		Content:           []sdk.Content{&sdk.TextContent{Text: string(data)}},
 		StructuredContent: json.RawMessage(data), IsError: err != nil,
 	}
-	wire, marshalErr := json.Marshal(result)
-	// Reserve space for the SDK's JSON-RPC envelope. No partial result is sent.
-	if marshalErr != nil || len(wire) > s.config.MaxResponseBytes-256 {
-		return s.toolResult(nil, ErrFailedPrecondition)
-	}
-	return result
 }
