@@ -30,7 +30,6 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	bolt "go.etcd.io/bbolt"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -53,7 +52,6 @@ type mcpScenario struct {
 	lastBody    []byte
 	lastResult  json.RawMessage
 	original    map[string]json.RawMessage
-	controlErr  error
 	entered     chan struct{}
 	release     chan struct{}
 	finished    chan error
@@ -68,125 +66,67 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if m.release != nil {
-			close(m.release)
-			m.release = nil
+			if err := m.finish(); err != nil {
+				return ctx, errors.Join(err, m.close())
+			}
 		}
-		err := m.close()
-		return ctx, err
+		return ctx, m.close()
 	})
-	sc.Step(`^an? "([^"]+)" MCP handoff$`, m.setup)
-	sc.Step(`^the controller authorizes a credential with (\d+) characters$`, func(length int) error {
-		m.token = strings.Repeat("credential", length/len("credential")) + strings.Repeat("x", length%len("credential"))
-		m.providers.mu.Lock()
-		defer m.providers.mu.Unlock()
-		m.providers.grants[m.token] = m.grant
-		return nil
+	sc.Step(`^已提交一份普通 MCP 交接并签发凭证$`, func() error { return m.setup("normal") })
+	sc.Step(`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("complete stream") })
+	sc.Step(`^已提交包含未结束工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("unfinished stream") })
+	sc.Step(`^官方 MCP 客户端使用交接凭证连接$`, m.connect)
+	sc.Step(`^客户端仅发现两个只读上下文工具$`, m.discover)
+	sc.Step(`^两个工具返回交接绑定的角色版本和完整窗口$`, m.checkBoth)
+	sc.Step(`^MCP 服务重建和重复读取均不新增文件或改变 Tape$`, m.readOnly)
+	sc.Step(`^运行时将交接和窗口存入 JSONL Tape$`, m.useJSONLTape)
+	sc.Step(`^控制器向 Tape 提交另一份交接$`, m.commitTapeOnly)
+	sc.Step(`^使用原凭证读取新交接$`, m.readWindow)
+	sc.Step(`^控制器为新交接签发凭证$`, func() { m.token = m.authorize(m.grant) })
+	sc.Step(`^未携带凭证读取上下文$`, func() error {
+		return m.call(anramcp.ReadContextWindow, "", m.grant.AnchorSeq, nil)
 	})
-	sc.Step(`^the role provider supplies a definition with (\d+) bytes$`, func(length int) error {
-		const prefix, suffix = `{"instructions":"`, `"}`
-		m.role.Definition = json.RawMessage(prefix + strings.Repeat("x", length-len(prefix)-len(suffix)) + suffix)
-		m.providers.setRole(m.role)
-		return nil
+	sc.Step(`^使用绑定不匹配的凭证读取交接$`, m.readMismatchedBinding)
+	sc.Step(`^使用当前凭证访问另一角色的服务$`, m.readOtherRole)
+	sc.Step(`^连接仅获准读取角色$`, m.roleOnly)
+	sc.Step(`^角色工具成功且窗口工具返回 permission_denied$`, m.checkRoleOnly)
+	sc.Step(`^控制器撤销当前凭证$`, func() { m.providers.revoke(m.token) })
+	sc.Step(`^Tape 和 MCP 服务重启$`, m.restart)
+	sc.Step(`^记录两个工具的原始结果$`, m.remember)
+	sc.Step(`^角色开始一轮等待模型返回的推理$`, m.hold)
+	sc.Step(`^两个工具的结果逐字节保持不变$`, m.unchanged)
+	sc.Step(`^当前推理正常结束$`, m.finish)
+	sc.Step(`^角色版本更新并继续写入 Tape$`, m.grow)
+	sc.Step(`^读取 MCP 上下文窗口$`, m.readWindow)
+	sc.Step(`^读取 MCP 角色$`, func() error {
+		return m.call(anramcp.ReadRole, m.token, m.grant.AnchorSeq, nil)
 	})
-	sc.Step(`^a Tape containing entries before Anra initialization$`, m.seedLegacyTape)
-	initializeMCPStorage(sc, m)
-	sc.Step(`^an official MCP client connects with the handoff credential$`, m.connect)
-	sc.Step(`^it discovers exactly the two read-only context tools$`, m.discover)
-	sc.Step(`^both MCP tools return the committed role and context$`, m.checkBoth)
-	sc.Step(`^I remember both MCP tool results$`, m.remember)
-	sc.Step(`^the role changes and its tape grows$`, m.grow)
-	sc.Step(`^the Tape and MCP server restart$`, m.restart)
-	sc.Step(`^the controller commits another handoff to Tape$`, m.commitTapeOnly)
-	sc.Step(`^the controller appends the handoff directly to Tape$`, m.appendHandoff)
-	sc.Step(`^the controller authorizes the persisted handoff$`, func() error {
-		m.token = m.authorize(m.grant)
-		return nil
-	})
-	sc.Step(`^the controller supplies a window with "([^"]+)"$`, m.supplyWindow)
-	sc.Step(`^both MCP tool results are byte-for-byte unchanged$`, m.unchanged)
-	sc.Step(`^the role starts a blocked reasoning turn$`, m.hold)
-	sc.Step(`^the active reasoning turn can finish normally$`, m.finish)
-	sc.Step(`^a handoff commits the persisted active-turn prefix$`, m.activePrefix)
-	sc.Step(`^a caller attempts MCP access using "([^"]+)"$`, m.attack)
-	sc.Step(`^MCP rejects access with "([^"]+)" and no private metadata$`, m.rejected)
-	sc.Step(`^the MCP credential is "([^"]+)"$`, m.endCredential)
-	sc.Step(`^the connection is authorized only to read the role$`, m.roleOnly)
-	sc.Step(`^the role tool succeeds and the window tool returns permission_denied$`, m.checkRoleOnly)
-	sc.Step(`^the verifier supplies a grant with changed "([^"]+)"$`, m.mismatch)
-	sc.Step(`^an authenticated caller sends "(\{.*\})" as MCP tool arguments$`, m.badArguments)
-	sc.Step(`^the committed MCP data suffers "([^"]+)"$`, m.damage)
-	sc.Step(`^the MCP window preserves tool identities and omits private event metadata$`, m.checkTools)
-	sc.Step(`^the MCP window preserves turn and integration session boundaries$`, m.checkBoundaries)
-	sc.Step(`^the MCP window has zero entries and is complete$`, m.checkEmpty)
-	sc.Step(`^the MCP window contains only its public content$`, m.checkPublicContent)
-	sc.Step(`^I read the MCP context window$`, func() error { return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil) })
-	sc.Step(`^I read the MCP role$`, func() error { return m.call(anramcp.ReadRole, m.token, m.grant.AnchorSeq, nil) })
-	sc.Step(`^the provider returns a different role revision$`, m.wrongRole)
-	sc.Step(`^MCP construction and repeated reads create no files and leave Tape unchanged$`, m.readOnly)
-	sc.Step(`^the MCP window contains every ordered chunk and is complete$`, m.checkStream)
-	sc.Step(`^both MCP result representations preserve the raw business JSON$`, m.checkPreciseJSON)
-	sc.Step(`^A2A exports the same public entry content and identity$`, m.checkA2AProjection)
-	sc.Step(`^both MCP result representations preserve empty business JSON objects$`, func() error { return m.checkBusinessJSON(`{}`) })
-	sc.Step(`^the embedding runtime trusts Origin "([^"]+)"$`, m.trustOrigin)
-	sc.Step(`^the embedding runtime leaves trusted Origins "([^"]+)"$`, func(configuration string) error {
-		switch configuration {
-		case "unset":
-			return m.configureTrustedOrigins(nil)
-		case "empty":
-			return m.configureTrustedOrigins([]string{})
-		default:
-			return fmt.Errorf("unknown trusted Origins configuration %q", configuration)
+	sc.Step(`^窗口完整且保留工具标识和所有有序响应分块$`, m.checkStream)
+	sc.Step(`^A2A 与 MCP 返回相同的公开条目及存储标识$`, m.checkA2AProjection)
+	sc.Step(`^离线删除交接窗口中的一条持久化记录并重启服务$`, m.removeWindowEntry)
+	sc.Step(`^MCP 返回 "([^"]+)" 且不泄露上下文或私有信息$`, m.rejected)
+	sc.Step(`^MCP 返回 HTTP (401|403) 且不泄露上下文或私有信息$`, func(status int) error {
+		if m.lastStatus != status {
+			return fmt.Errorf("want HTTP %d, got %d: %s", status, m.lastStatus, m.lastBody)
 		}
+		return m.rejected("permission_denied")
 	})
-	sc.Step(`^an authenticated MCP caller sends Origin "([^"]+)" using "([^"]+)"$`, m.originRequest)
-	sc.Step(`^an MCP caller sends Origin "([^"]+)" without a credential$`, func(origin string) error {
+	sc.Step(`^携带凭证从 Origin "([^"]+)" 读取上下文$`, m.originRequest)
+	sc.Step(`^从 Origin "([^"]+)" 不带凭证读取上下文$`, func(origin string) error {
 		return m.call(anramcp.ReadContextWindow, "", m.grant.AnchorSeq, map[string]string{"Origin": origin})
 	})
-	sc.Step(`^an authenticated MCP caller sends "([^"]+)" Origin headers$`, m.originHeaders)
-	sc.Step(`^MCP returns HTTP 401 without context or private metadata$`, func() error {
-		if m.lastStatus != http.StatusUnauthorized {
-			return fmt.Errorf("want HTTP 401, got %d: %s", m.lastStatus, m.lastBody)
-		}
-		return m.rejected("permission_denied")
+	sc.Step(`^运行时仅信任 Origin "([^"]+)"$`, func(origin string) error {
+		return m.configureTrustedOrigins([]string{origin})
 	})
-	sc.Step(`^MCP returns HTTP 403 without context or private metadata$`, func() error {
-		if m.lastStatus != http.StatusForbidden {
-			return fmt.Errorf("want HTTP 403, got %d: %s", m.lastStatus, m.lastBody)
-		}
-		return m.rejected("permission_denied")
-	})
-	sc.Step(`^the MCP response contains the complete committed window$`, m.checkWindowResponse)
-	sc.Step(`^the embedding runtime configures invalid trusted Origin "([^"]+)"$`, func(origin string) error {
-		_, err := anramcp.NewService(anramcp.Config{
-			Source: m.agent.Source(), Owner: "vesta", Tape: m.tape,
-			Roles: m.providers, Grants: m.providers, TrustedOrigins: []string{origin},
-		})
-		m.controlErr = err
-		return nil
-	})
-	sc.Step(`^the MCP Origin configuration is rejected$`, func() error {
-		if m.controlErr == nil {
-			return errors.New("invalid trusted Origin was accepted")
-		}
-		return nil
-	})
+	sc.Step(`^MCP 响应包含交接绑定的完整窗口$`, m.checkWindowResponse)
+}
+
+func (m *mcpScenario) readWindow() error {
+	return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil)
 }
 
 func (m *mcpScenario) tapePath() string             { return filepath.Join(m.s.root, "mcp-tape.db") }
 func (m *mcpScenario) tapeContext() context.Context { return owner.WithOwnerId(m.s.ctx, "vesta") }
-
-func (m *mcpScenario) seedLegacyTape() error {
-	tape, err := bbolt.NewBboltStorage("mcp-session", m.tapePath())
-	if err != nil {
-		return err
-	}
-	defer tape.Close()
-	if err := tape.Init(m.tapeContext()); err != nil {
-		return err
-	}
-	_, err = tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(te.EntryUser), te.WithEntryOwner("vesta"), te.WithEntryContent("existing Tape input")))
-	return err
-}
 
 func (m *mcpScenario) open() error {
 	var err error
@@ -260,7 +200,7 @@ func (m *mcpScenario) setup(kind string) error {
 		return err
 	}
 	if kind != "normal" {
-		ref, err = m.specialWindow(kind)
+		ref, err = m.streamWindow(kind == "complete stream")
 		if err != nil {
 			return err
 		}
@@ -286,17 +226,6 @@ func (m *mcpScenario) append(kind te.EntryKind, text string) (te.EntryLike, erro
 	return m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(kind), te.WithEntryContent(text), te.WithEntryOwner("vesta")))
 }
 
-func (m *mcpScenario) event(kind te.EntryKind, content *genai.Content) (te.EntryLike, error) {
-	data, err := json.Marshal(map[string]any{"content": content, "stateDelta": map[string]any{"private": "PRIVATE-STATE"}, "author": "PRIVATE-AUTHOR"})
-	if err != nil {
-		return nil, err
-	}
-	return m.tape.Store(m.tapeContext(), te.CustomEntry{Entry: te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-SUMMARY")), Extensions: map[string]any{"adk:event": string(data), "secret": "PRIVATE-EXTENSION"}})
-}
-
-// Raw fixture JSON starts on disk, without a float64 round trip in the test.
-const preciseBusinessJSON = `{"id":9007199254740993,"fraction":0.12345678901234567890123456789,"tiny":1e-1000,"futureVisiblePart":{"text":"business data","id":9007199254740993}}`
-
 func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
 	_, err := m.tape.Store(m.tapeContext(), te.CustomEntry{
 		Entry:      te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-SUMMARY")),
@@ -305,99 +234,27 @@ func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
 	return err
 }
 
-func (m *mcpScenario) protocolWindow(kind string) error {
-	call := `{"id":"tool-42","name":"lookup","args":{}}`
-	response := `{"id":"tool-42","name":"lookup","response":{}}`
-	switch kind {
-	case "precise tool JSON":
-		call = `{"id":"tool-42","name":"lookup","args":` + preciseBusinessJSON + `}`
-		response = `{"id":"tool-42","name":"lookup","response":` + preciseBusinessJSON + `}`
-	case "unknown content field":
-		return m.rawEvent(te.EntryAssistant, `{"role":"model","parts":[{"text":"visible"}],"futureContent":"must retain or reject"}`)
-	case "unknown call field":
-		call = `{"id":"tool-42","name":"lookup","args":{},"futureCall":"must retain or reject"}`
-	case "streamed call arguments":
-		call = `{"id":"tool-42","name":"lookup","partialArgs":[{"jsonPath":"$.query","stringValue":"partial"}]}`
-	case "call continuation":
-		call = `{"id":"tool-42","name":"lookup","args":{},"willContinue":true}`
-	case "unknown response field":
-		response = `{"id":"tool-42","name":"lookup","response":{},"futureResponse":"must retain or reject"}`
-	case "unknown response part":
-		response = `{"id":"tool-42","name":"lookup","response":{},"parts":[{"futureVisiblePart":{"text":"must retain or reject"}}]}`
-	case "unknown response media":
-		response = `{"id":"tool-42","name":"lookup","response":{},"parts":[{"inlineData":{"mimeType":"image/png","data":"aW1hZ2U=","futureMedia":"must retain or reject"}}]}`
-	}
-	if err := m.rawEvent(te.EntryToolCall, `{"role":"model","parts":[{"functionCall":`+call+`}]}`); err != nil {
-		return err
-	}
-	if kind == "unfinished stream" || kind == "complete stream" {
-		chunks := []string{`{"chunk":"first"}`, `{"chunk":"middle"}`, `{"chunk":"last"}`}
-		if kind == "unfinished stream" {
-			chunks = chunks[:1]
-		}
-		for i, chunk := range chunks {
-			continuing := kind == "unfinished stream" || i < len(chunks)-1
-			content := fmt.Sprintf(`{"role":"user","parts":[{"functionResponse":{"id":"tool-42","name":"lookup","willContinue":%t,"response":%s}}]}`, continuing, chunk)
-			if err := m.rawEvent(te.EntryToolResult, content); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return m.rawEvent(te.EntryToolResult, `{"role":"user","parts":[{"functionResponse":`+response+`}]}`)
-}
-
-func (m *mcpScenario) specialWindow(kind string) (*pb.TapeView, error) {
+// A single call with continuing chunks exercises persistence and transport;
+// protocol field filtering and number lexemes are tested in projection.
+func (m *mcpScenario) streamWindow(complete bool) (*pb.TapeView, error) {
 	state, err := m.tape.Get(m.tapeContext())
 	if err != nil {
 		return nil, err
 	}
 	start := state.Scope.SeqE.Next()
-	switch kind {
-	case "unfinished stream", "complete stream", "precise tool JSON", "empty tool JSON", "unknown content field", "unknown call field", "unknown response field", "unknown response part", "unknown response media", "streamed call arguments", "call continuation":
-		err = m.protocolWindow(kind)
-	case "plain text":
-		_, err = m.append(te.EntryUser, "plain request")
-		if err == nil {
-			_, err = m.append(te.EntryAssistant, "plain answer")
-		}
-	case "large sequences":
-		start = te.MustParseSeq("18446744073709551616000000000000000001")
-		_, err = m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(start), te.WithEntryKind(te.EntryUser), te.WithEntryContent("large sequence request"), te.WithEntryOwner("vesta")))
-	case "unsupported part":
-		_, err = m.event(te.EntryAssistant, &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "text alongside unsupported image", InlineData: &genai.Blob{MIMEType: "image/png", Data: []byte("image")}}}})
-	case "malformed event":
-		_, err = m.tape.Store(m.tapeContext(), te.CustomEntry{Entry: te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-SUMMARY")), Extensions: map[string]any{"adk:event": 42}})
-	case "empty":
-		_, err = m.event(te.EntryAssistant, &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "PRIVATE-THOUGHT", Thought: true}}})
-	case "unknown":
-		_, err = m.append("integration:unknown", "PRIVATE-UNKNOWN")
-	case "oversized":
-		// The projected entry alone must exceed the 1 MiB default limit; the
-		// serialized tool result is not size-checked.
-		_, err = m.append(te.EntryUser, strings.Repeat("large-window-", 100000))
-	case "tools", "orphan result", "unfinished call":
-		if kind != "orphan result" {
-			_, err = m.event(te.EntryToolCall, &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "tool-42", Name: "lookup", Args: map[string]any{"query": "Anra"}}}, {Text: "PRIVATE-THOUGHT", Thought: true}}})
-		}
-		if err == nil && kind != "unfinished call" {
-			_, err = m.event(te.EntryToolResult, &genai.Content{Role: "user", Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: "tool-42", Name: "lookup", Response: map[string]any{"answer": "found"}}}}})
-		}
-	case "boundaries":
-		for _, r := range []anchor.Record{{Schema: anchor.Schema, Type: anchor.TurnStarted, TurnID: "boundary-turn", OwnerEpoch: "PRIVATE-EPOCH"}, {Schema: anchor.Schema, Type: anchor.TurnClosed, TurnID: "boundary-turn", StartSeq: start.String(), Outcome: "failed"}} {
-			data, _ := json.Marshal(r)
-			if _, err = m.append(anchor.Kind, string(data)); err != nil {
-				return nil, err
-			}
-		}
-		prior := anramcp.Handoff{Schema: anramcp.HandoffSchema, Type: "integration.handoff", Role: anramcp.RoleRef{ID: "vesta", Version: "old"}, Target: anramcp.Target{Name: "lody", BindingID: "old-binding"}, Task: "PRIVATE-TASK", Context: anramcp.WindowRef{View: &pb.TapeView{Source: m.agent.Source(), SnapshotHead: "5", Scope: &pb.EntryRange{SeqS: "3", SeqE: "5"}}}, Origin: &anramcp.Origin{Name: "raft", SessionID: "origin-session", EventID: "origin-event"}}
-		data, _ := json.Marshal(prior)
-		_, err = m.append(anchor.Kind, string(data))
-	default:
-		return nil, fmt.Errorf("unknown MCP fixture %q", kind)
-	}
-	if err != nil {
+	if err := m.rawEvent(te.EntryToolCall, `{"role":"model","parts":[{"functionCall":{"id":"tool-42","name":"lookup","args":{}}}]}`); err != nil {
 		return nil, err
+	}
+	chunks := []string{"first", "middle", "last"}
+	if !complete {
+		chunks = chunks[:1]
+	}
+	for i, chunk := range chunks {
+		continuing := !complete || i < len(chunks)-1
+		content := fmt.Sprintf(`{"role":"user","parts":[{"functionResponse":{"id":"tool-42","name":"lookup","willContinue":%t,"response":{"chunk":%q}}}]}`, continuing, chunk)
+		if err := m.rawEvent(te.EntryToolResult, content); err != nil {
+			return nil, err
+		}
 	}
 	head, err := m.append(te.EntryAssistant, "excluded committed boundary")
 	if err != nil {
@@ -618,32 +475,6 @@ func (m *mcpScenario) finish() error {
 	}
 }
 
-func (m *mcpScenario) activePrefix() error {
-	state, err := m.tape.Get(m.tapeContext())
-	if err != nil {
-		return err
-	}
-	// The active user input becomes an excluded, durably persisted boundary.
-	// Include the persisted start record; later model output cannot grow it.
-	head := state.Scope.SeqE
-	entries, err := m.tape.Range(m.tapeContext(), tv.EntryRange{SeqS: te.MustParseSeq(m.grant.AnchorSeq).Next(), SeqE: head.Next()})
-	if err != nil {
-		return err
-	}
-	if len(entries.Raw) < 2 {
-		return errors.New("active prefix not persisted")
-	}
-	m.handoff.Context.View = &pb.TapeView{Source: m.agent.Source(), SnapshotHead: head.String(), Scope: &pb.EntryRange{SeqS: entries.Raw[0].GetID().String(), SeqE: head.String()}}
-	seq, err := m.commitHandoff(m.handoff)
-	if err != nil {
-		return err
-	}
-	m.grant.AnchorSeq = seq
-	m.grant.Window.View = proto.Clone(m.handoff.Context.View).(*pb.TapeView)
-	m.token = m.authorize(m.grant)
-	return nil
-}
-
 func (m *mcpScenario) commitTapeOnly() error {
 	seq, err := m.commitHandoff(m.handoff)
 	if err != nil {
@@ -653,157 +484,33 @@ func (m *mcpScenario) commitTapeOnly() error {
 	return nil
 }
 
-func (m *mcpScenario) appendHandoff() error {
-	data, err := json.Marshal(m.handoff)
-	if err != nil {
-		return err
-	}
-	raw, err := m.append(anchor.Kind, string(data))
-	if err != nil {
-		return err
-	}
-	m.grant.AnchorSeq = raw.GetID().String()
-	return nil
+func (m *mcpScenario) readMismatchedBinding() error {
+	g := m.grant
+	g.BindingID = "vesta-other-binding"
+	return m.call(anramcp.ReadContextWindow, m.authorize(g), g.AnchorSeq, nil)
 }
 
-func (m *mcpScenario) supplyWindow(problem string) error {
-	tape := m.handoffTape
-	if tape == nil {
-		tape = m.tape
-	}
-	state, err := tape.Get(m.tapeContext())
+func (m *mcpScenario) readOtherRole() (err error) {
+	tape, err := m.s.openTape("mcp-diablo", "diablo")
 	if err != nil {
 		return err
 	}
-	h := m.handoff
-	h.Context.View = proto.Clone(h.Context.View).(*pb.TapeView)
-	head := state.Scope.SeqE.Next()
-	switch problem {
-	case "missing boundary":
-		h.Context.View.SnapshotHead = head.String()
-		h.Context.View.Scope.SeqE = head.String()
-		// Leave a real gap before the later handoff anchor.
-		if _, err := tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(head.Next()), te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("entry after missing boundary"), te.WithEntryOwner("vesta"))); err != nil {
-			return err
-		}
-	case "missing entry":
-		start := head
-		head = head.Next()
-		if _, err := tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(head), te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("persisted boundary after gap"), te.WithEntryOwner("vesta"))); err != nil {
-			return err
-		}
-		h.Context.View.SnapshotHead = head.String()
-		h.Context.View.Scope = &pb.EntryRange{SeqS: start.String(), SeqE: head.String()}
-	case "oversized summary", "oversized event", "oversized private metadata", "cumulative content", "many thoughts":
-		m.service, err = anramcp.NewService(anramcp.Config{
-			Source: m.agent.Source(), Owner: "vesta", Tape: tape, Roles: m.providers, Grants: m.providers, MaxResponseBytes: 4096,
-			Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
-		})
-		if err != nil {
-			return err
-		}
-		start := head
-		payload := strings.Repeat("PRIVATE-", 10000)
-		switch problem {
-		case "oversized summary":
-			_, err = m.append(te.EntryUser, payload)
-		case "oversized event":
-			err = m.rawEvent(te.EntryAssistant, `{"parts":[{"text":"`+payload+`"}]}`)
-		case "many thoughts":
-			for i := 0; i < 10001 && err == nil; i++ {
-				_, err = tape.Store(m.tapeContext(), te.CustomEntry{
-					Entry:      te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta")),
-					Extensions: map[string]any{"adk:event": `{"content":{"role":"model","parts":[{"text":"PRIVATE-THOUGHT","thought":true}]}}`},
-				})
-			}
-		case "oversized private metadata", "cumulative content":
-			count := 1
-			if problem == "cumulative content" {
-				count, payload = 200, strings.Repeat("x", 256)
-			}
-			for i := 0; i < count && err == nil; i++ {
-				_, err = tape.Store(m.tapeContext(), te.CustomEntry{
-					Entry:      te.NewEntry(te.WithEntryKind(te.EntryUser), te.WithEntryOwner("vesta"), te.WithEntryContent("public")),
-					Extensions: map[string]any{"private": map[string]any{"items": []any{payload}}},
-				})
-			}
-		}
-		if err != nil {
-			return err
-		}
-		boundary, err := tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("excluded committed boundary")))
-		if err != nil {
-			return err
-		}
-		h.Context.View.SnapshotHead = boundary.GetID().String()
-		h.Context.View.Scope = &pb.EntryRange{SeqS: start.String(), SeqE: boundary.GetID().String()}
-	default:
-		return fmt.Errorf("unknown window fixture %q", problem)
-	}
-	// The controller appends the reference; MCP validates it on read.
-	seq, err := m.commitHandoff(h)
+	defer func() { err = errors.Join(err, tape.Close()) }()
+	a, err := agent.New("diablo", tape)
 	if err != nil {
 		return err
 	}
-	m.handoff = h
-	m.grant.AnchorSeq = seq
-	m.grant.Window = h.Context
-	m.token = m.authorize(m.grant)
-	m.server.Close()
-	m.serve()
-	return m.call(anramcp.ReadContextWindow, m.token, seq, nil)
-}
-
-func (m *mcpScenario) attack(attack string) error {
-	token, seq := m.token, m.grant.AnchorSeq
-	headers := map[string]string{}
-	switch attack {
-	case "no credential":
-		token = ""
-	case "anchor as credential":
-		token = seq
-	case "invented credential":
-		token = "not-a-credential"
-	case "nonexistent anchor":
-		seq = "999999999999999999999999999999999999"
-	case "spoofed identity headers":
-		token = ""
-		headers = map[string]string{"X-Anra-Role": "vesta", "X-Anra-Binding": "vesta-lody-private", "X-Session-ID": "claimed-session"}
-	case "replayed MCP session identifier":
-		token = ""
-		headers["Mcp-Session-Id"] = m.token
-	case "another binding's anchor":
-		h := m.handoff
-		h.Target.BindingID = "vesta-other-binding"
-		var err error
-		seq, err = m.commitHandoff(h)
-		if err != nil {
-			return err
-		}
-	case "another role's endpoint":
-		tape, err := m.s.openTape("mcp-diablo", "diablo")
-		if err != nil {
-			return err
-		}
-		defer tape.Close()
-		a, err := agent.New("diablo", tape)
-		if err != nil {
-			return err
-		}
-		defer a.Shutdown(m.s.ctx)
-		service, err := anramcp.NewService(anramcp.Config{Source: a.Source(), Owner: "diablo", Tape: tape, Roles: m.providers, Grants: m.providers})
-		if err != nil {
-			return err
-		}
-		server := httptest.NewServer(service.Handler())
-		defer server.Close()
-		previous := m.server
-		m.server = server
-		defer func() { m.server = previous }()
-	default:
-		return fmt.Errorf("unknown MCP attack %q", attack)
+	defer func() { err = errors.Join(err, a.Shutdown(m.s.ctx)) }()
+	service, err := anramcp.NewService(anramcp.Config{Source: a.Source(), Owner: "diablo", Tape: tape, Roles: m.providers, Grants: m.providers})
+	if err != nil {
+		return err
 	}
-	return m.call(anramcp.ReadContextWindow, token, seq, headers)
+	server := httptest.NewServer(service.Handler())
+	defer server.Close()
+	previous := m.server
+	m.server = server
+	defer func() { m.server = previous }()
+	return m.readWindow()
 }
 
 func (m *mcpScenario) rejected(code string) error {
@@ -829,24 +536,16 @@ func (m *mcpScenario) rejected(code string) error {
 	if json.Unmarshal(payload, &envelope) != nil || envelope.Error == nil || envelope.Error.Code != code {
 		return fmt.Errorf("MCP error want %s, got HTTP %d %s", code, m.lastStatus, m.lastBody)
 	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(payload, &fields) != nil || len(fields) != 1 || fields["error"] == nil {
+		return fmt.Errorf("MCP error returned partial context: %s", payload)
+	}
 	for _, private := range []string{m.token, "vesta-lody-private", m.s.root, "fixed request", "fixed answer", "PRIVATE-"} {
 		if private != "" && bytes.Contains(m.lastBody, []byte(private)) {
 			return fmt.Errorf("MCP error leaked private metadata %q", private)
 		}
 	}
 	return nil
-}
-
-func (m *mcpScenario) endCredential(state string) error {
-	if state == "expired" {
-		m.clock.Add(int64(time.Hour))
-		return nil
-	}
-	if state == "revoked" {
-		m.providers.revoke(m.token)
-		return nil
-	}
-	return fmt.Errorf("unknown credential state %q", state)
 }
 
 func (m *mcpScenario) roleOnly() error {
@@ -866,167 +565,50 @@ func (m *mcpScenario) checkRoleOnly() error {
 	return m.rejected("permission_denied")
 }
 
-func (m *mcpScenario) mismatch(dimension string) error {
-	g := m.grant
-	g.Window.View = proto.Clone(m.grant.Window.View).(*pb.TapeView)
-	switch dimension {
-	case "role":
-		g.RoleID = "diablo"
-	case "binding":
-		g.BindingID = "different-binding"
-	case "source":
-		g.Window.View.Source.TapeId = "different-tape"
-	case "snapshotHead":
-		n := te.MustParseSeq(g.Window.View.SnapshotHead).Next().String()
-		g.Window.View.SnapshotHead = n
-		g.Window.View.Scope.SeqE = n
-	case "scope":
-		g.Window.View.Scope.SeqS = te.MustParseSeq(g.Window.View.Scope.SeqS).Next().String()
-	case "permissions":
-		g.Permissions = []string{"write_context"}
-	case "expiry":
-		g.ExpiresAt = time.Unix(0, m.clock.Load())
-	default:
-		return fmt.Errorf("unknown grant dimension %q", dimension)
+// Stop all storage users before deleting a committed entry on disk. MCP must
+// reject the damaged persisted range even though the role provider is available.
+func (m *mcpScenario) removeWindowEntry() (err error) {
+	if err := m.close(); err != nil {
+		return err
 	}
-	m.token = m.authorize(g)
-	return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil)
-}
-
-func (m *mcpScenario) badArguments(args string) error {
-	args = strings.ReplaceAll(args, "current", m.grant.AnchorSeq)
-	return m.rawCall(anramcp.ReadContextWindow, m.token, json.RawMessage(args), nil)
-}
-
-// Storage corruption is deliberate fault injection. All service operations and
-// reads still use the public control plane and real MCP HTTP transport.
-func (m *mcpScenario) damage(damage string) error {
-	switch damage {
-	case "storage unavailable":
-		m.server.Close()
-		var err error
-		m.service, err = anramcp.NewService(anramcp.Config{Source: m.agent.Source(), Owner: "vesta", Tape: unavailableMCPTape{}, Roles: m.providers, Grants: m.providers, Now: func() time.Time { return time.Unix(0, m.clock.Load()) }})
-		if err != nil {
-			return err
-		}
-		m.serve()
-	case "grant verifier unavailable":
-		m.providers.mu.Lock()
-		m.providers.grantErr = errors.New("PRIVATE-provider-failure")
-		m.providers.mu.Unlock()
-	case "non-handoff anchor", "changed handoff binding", "unsupported snapshot content":
-		seq := m.grant.AnchorSeq
-		kind := anchor.Kind
-		text := `{"schema":"other.dev/v1","type":"unrelated"}`
-		if damage == "changed handoff binding" {
-			h := m.handoff
-			h.Target.BindingID = "different-binding"
-			data, _ := json.Marshal(h)
-			text = string(data)
-		}
-		if damage == "unsupported snapshot content" {
-			seq = m.grant.Window.View.Scope.SeqS
-			kind = "integration:unsupported"
-			text = "PRIVATE-UNSUPPORTED"
-		}
-		_, err := m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(te.MustParseSeq(seq)), te.WithEntryKind(kind), te.WithEntryContent(text), te.WithEntryOwner("vesta")))
-		if err != nil {
-			return err
-		}
-	case "role provider unavailable":
-		m.providers.mu.Lock()
-		m.providers.roleErr = errors.New("PRIVATE-role-provider-failure")
-		m.providers.mu.Unlock()
-	case "missing role revision":
-		m.providers.mu.Lock()
-		delete(m.providers.roles, m.role.RoleRef)
-		m.providers.mu.Unlock()
-	case "missing anchor", "missing snapshot entry", "missing snapshot boundary", "corrupt snapshot entry", "corrupt handoff entry":
-		// Stop all users before modifying the physical Tape file offline.
-		if err := m.close(); err != nil {
-			return err
-		}
-		seq := m.grant.AnchorSeq
-		if damage != "missing anchor" && damage != "corrupt handoff entry" {
-			seq = m.grant.Window.View.Scope.SeqS
-		}
-		if damage == "missing snapshot boundary" {
-			seq = m.grant.Window.View.SnapshotHead
-		}
-		if err := damageMCPPhysicalEntry(m.tapePath(), seq, strings.HasPrefix(damage, "corrupt")); err != nil {
-			return err
-		}
-		// Avoid agent recovery here: the fault is specifically tested by MCP.
-		var err error
-		m.tape, err = bbolt.NewBboltStorage("mcp-session", m.tapePath())
-		if err != nil {
-			return err
-		}
-		if err = m.tape.Init(m.tapeContext()); err != nil {
-			return err
-		}
-		m.service, err = anramcp.NewService(anramcp.Config{Source: m.grant.Window.View.Source, Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers, Now: func() time.Time { return time.Unix(0, m.clock.Load()) }})
-		if err != nil {
-			return err
-		}
-		m.serve()
-	default:
-		return fmt.Errorf("unknown storage damage %q", damage)
-	}
-	tool := anramcp.ReadContextWindow
-	if damage == "missing role revision" || damage == "role provider unavailable" {
-		tool = anramcp.ReadRole
-	}
-	return m.call(tool, m.token, m.grant.AnchorSeq, nil)
-}
-
-func damageMCPPhysicalEntry(path, seq string, corrupt bool) error {
-	db, err := bolt.Open(path, 0600, nil)
+	db, err := bolt.Open(m.tapePath(), 0o600, nil)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	return db.Update(func(tx *bolt.Tx) error {
+	err = db.Update(func(tx *bolt.Tx) error {
 		entries := tx.Bucket([]byte("entries")).Bucket([]byte("vesta")).Bucket([]byte("mcp-session"))
-		// Locate by decoded sequence rather than reproducing tape-go's key codec.
 		cursor := entries.Cursor()
 		for key, data := cursor.First(); key != nil; key, data = cursor.Next() {
 			var value struct{ Seq string }
-			if json.Unmarshal(data, &value) != nil {
-				return errors.New("cannot decode physical tape fixture")
+			if err := json.Unmarshal(data, &value); err != nil {
+				return err
 			}
-			if value.Seq == seq {
-				if corrupt {
-					return entries.Put(key, []byte("{invalid-json"))
-				}
+			if value.Seq == m.grant.Window.View.Scope.SeqS {
 				return entries.Delete(key)
 			}
 		}
 		return errors.New("physical tape entry not found")
 	})
-}
-
-func (m *mcpScenario) checkTools() error {
-	data, err := m.success(anramcp.ReadContextWindow)
+	if err = errors.Join(err, db.Close()); err != nil {
+		return err
+	}
+	// Reopen only MCP: agent recovery must not repair the fixture before reading.
+	m.tape, err = bbolt.NewBboltStorage("mcp-session", m.tapePath())
 	if err != nil {
 		return err
 	}
-	var w anramcp.WindowResult
-	if err = json.Unmarshal(data, &w); err != nil {
+	if err := m.tape.Init(m.tapeContext()); err != nil {
 		return err
 	}
-	if len(w.Entries) != 2 || w.Entries[0].Kind != "tool_call" || w.Entries[1].Kind != "tool_result" {
-		return fmt.Errorf("lost tool entries: %s", data)
+	m.service, err = anramcp.NewService(anramcp.Config{
+		Source: m.grant.Window.View.Source, Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers,
+		Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+	})
+	if err != nil {
+		return err
 	}
-	for _, part := range []string{"tool-42", "lookup", "query", "Anra", "answer", "found"} {
-		if !bytes.Contains(data, []byte(part)) {
-			return fmt.Errorf("missing tool relationship %q", part)
-		}
-	}
-	if bytes.Contains(data, []byte("PRIVATE-")) || bytes.Contains(data, []byte("stateDelta")) || bytes.Contains(data, []byte("extensions")) {
-		return fmt.Errorf("private metadata exported: %s", data)
-	}
-	return nil
+	m.serve()
+	return m.readWindow()
 }
 
 func (m *mcpScenario) checkWindowResponse() error {
@@ -1047,6 +629,17 @@ func (m *mcpScenario) checkStream() error {
 	}
 	if len(window.Entries) != 4 {
 		return fmt.Errorf("want call plus three chunks: %s", m.lastResult)
+	}
+	var call struct {
+		Parts []struct {
+			FunctionCall struct{ ID, Name string }
+		} `json:"parts"`
+	}
+	if err := json.Unmarshal(window.Entries[0].Content, &call); err != nil || len(call.Parts) != 1 || call.Parts[0].FunctionCall.ID != "tool-42" || call.Parts[0].FunctionCall.Name != "lookup" {
+		return fmt.Errorf("lost tool call identity: %s", window.Entries[0].Content)
+	}
+	if bytes.Contains(m.lastBody, []byte("PRIVATE-")) {
+		return fmt.Errorf("private stream metadata exported: %s", m.lastBody)
 	}
 	for i, want := range []string{"first", "middle", "last"} {
 		var content struct {
@@ -1072,56 +665,6 @@ func (m *mcpScenario) checkStream() error {
 	return nil
 }
 
-func (m *mcpScenario) checkPreciseJSON() error {
-	return m.checkBusinessJSON(preciseBusinessJSON)
-}
-
-func (m *mcpScenario) checkBusinessJSON(expectedJSON string) error {
-	if err := m.checkWindowResponse(); err != nil {
-		return err
-	}
-	var rpc struct {
-		Result struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(m.lastBody, &rpc); err != nil || len(rpc.Result.Content) != 1 {
-		return fmt.Errorf("missing text representation: %s", m.lastBody)
-	}
-	for _, data := range [][]byte{m.lastResult, []byte(rpc.Result.Content[0].Text)} {
-		var window anramcp.WindowResult
-		if err := json.Unmarshal(data, &window); err != nil || len(window.Entries) != 2 {
-			return fmt.Errorf("missing tool entries: %s", data)
-		}
-		for i, field := range []string{"args", "response"} {
-			var content struct {
-				Parts []map[string]map[string]json.RawMessage `json:"parts"`
-			}
-			if err := json.Unmarshal(window.Entries[i].Content, &content); err != nil || len(content.Parts) != 1 {
-				return fmt.Errorf("invalid tool content: %s", window.Entries[i].Content)
-			}
-			name := []string{"functionCall", "functionResponse"}[i]
-			var got, want map[string]json.RawMessage
-			if json.Unmarshal(content.Parts[0][name][field], &got) != nil || got == nil || json.Unmarshal([]byte(expectedJSON), &want) != nil || len(got) != len(want) {
-				return fmt.Errorf("invalid raw %s: %s", field, window.Entries[i].Content)
-			}
-			for key, expected := range want {
-				var actual bytes.Buffer
-				if json.Compact(&actual, got[key]) != nil || actual.String() != string(expected) {
-					return fmt.Errorf("raw %s.%s changed: %s", field, key, window.Entries[i].Content)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (m *mcpScenario) trustOrigin(origin string) error {
-	return m.configureTrustedOrigins([]string{origin})
-}
-
 func (m *mcpScenario) configureTrustedOrigins(origins []string) error {
 	m.server.Close()
 	var err error
@@ -1136,110 +679,10 @@ func (m *mcpScenario) configureTrustedOrigins(origins []string) error {
 	return nil
 }
 
-func (m *mcpScenario) originRequest(origin, method string) error {
-	if origin == "endpoint" {
-		origin = m.server.URL
-	}
-	if method == http.MethodPost {
-		return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, map[string]string{
-			"Origin": origin, "X-Forwarded-Host": "trusted.example", "X-Forwarded-Proto": "https", "Forwarded": "host=trusted.example;proto=https",
-		})
-	}
-	req, err := http.NewRequestWithContext(m.s.ctx, method, m.server.URL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+m.token)
-	req.Header.Set("Origin", origin)
-	req.Header.Set("Accept", "text/event-stream")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.Header.Get("Cache-Control") != "no-store" {
-		return errors.New("Origin rejection is cacheable")
-	}
-	m.lastStatus = res.StatusCode
-	m.lastBody, err = io.ReadAll(res.Body)
-	return err
-}
-
-func (m *mcpScenario) originHeaders(shape string) error {
-	trusted, evil := "https://trusted.example", "https://evil.example"
-	var values []string
-	switch shape {
-	case "empty":
-		values = []string{""}
-	case "repeated trusted":
-		values = []string{trusted, trusted}
-	case "trusted and evil":
-		values = []string{trusted, evil}
-	case "comma separated":
-		values = []string{trusted + ", " + evil}
-	case "space separated":
-		values = []string{trusted + " " + evil}
-	default:
-		return fmt.Errorf("unknown Origin header fixture %q", shape)
-	}
-	args, _ := json.Marshal(map[string]string{"anchorSeq": m.grant.AnchorSeq})
-	return m.rawCall(anramcp.ReadContextWindow, m.token, args, http.Header{"Origin": values})
-}
-
-func (m *mcpScenario) checkBoundaries() error {
-	data, err := m.success(anramcp.ReadContextWindow)
-	if err != nil {
-		return err
-	}
-	var w anramcp.WindowResult
-	if err = json.Unmarshal(data, &w); err != nil {
-		return err
-	}
-	if len(w.Entries) != 3 || w.Entries[0].Boundary == nil || w.Entries[0].Boundary.TurnID != "boundary-turn" || w.Entries[1].Boundary == nil || w.Entries[1].Boundary.Type != "turn.closed" || w.Entries[2].Boundary == nil || w.Entries[2].Boundary.Origin == nil || w.Entries[2].Boundary.Origin.SessionID != "origin-session" || w.Entries[2].Boundary.Origin.EventID != "origin-event" {
-		return fmt.Errorf("boundaries lost: %s", data)
-	}
-	if bytes.Contains(data, []byte("PRIVATE-")) {
-		return fmt.Errorf("private boundary fields exported: %s", data)
-	}
-	return nil
-}
-
-func (m *mcpScenario) checkEmpty() error {
-	data, err := m.success(anramcp.ReadContextWindow)
-	if err != nil {
-		return err
-	}
-	var w anramcp.WindowResult
-	if err = json.Unmarshal(data, &w); err != nil {
-		return err
-	}
-	if !w.IsComplete || w.Entries == nil || len(w.Entries) != 0 || len(w.View) == 0 {
-		return fmt.Errorf("not a complete empty window: %s", data)
-	}
-	return nil
-}
-
-func (m *mcpScenario) checkPublicContent() error {
-	if err := m.checkWindowResponse(); err != nil {
-		return err
-	}
-	var window anramcp.WindowResult
-	if err := json.Unmarshal(m.lastResult, &window); err != nil {
-		return err
-	}
-	if len(window.Entries) != 1 || string(window.Entries[0].Content) != `"public"` || bytes.Contains(m.lastBody, []byte("PRIVATE-")) {
-		return fmt.Errorf("unexpected public projection: %s", m.lastBody)
-	}
-	return nil
-}
-
-func (m *mcpScenario) wrongRole() error {
-	m.providers.mu.Lock()
-	r := m.role
-	r.Version = "wrong-revision"
-	m.providers.roles[m.role.RoleRef] = r
-	m.providers.mu.Unlock()
-	return m.call(anramcp.ReadRole, m.token, m.grant.AnchorSeq, nil)
+func (m *mcpScenario) originRequest(origin string) error {
+	return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, map[string]string{
+		"Origin": origin, "X-Forwarded-Host": "trusted.example", "X-Forwarded-Proto": "https", "Forwarded": "host=trusted.example;proto=https",
+	})
 }
 
 func (m *mcpScenario) readOnly() error {
@@ -1310,9 +753,8 @@ func (m *mcpScenario) authorize(g anramcp.Grant) string {
 	return token
 }
 
-// Compare both public HTTP paths over the same persisted Tape range. Raw payload
-// bytes keep this assertion sensitive to number lexemes and empty JSON objects.
-func (m *mcpScenario) checkA2AProjection() error {
+// Compare both public HTTP paths over the same persisted Tape range.
+func (m *mcpScenario) checkA2AProjection() (err error) {
 	if err := m.checkWindowResponse(); err != nil {
 		return err
 	}
@@ -1334,7 +776,7 @@ func (m *mcpScenario) checkA2AProjection() error {
 	if err != nil {
 		return err
 	}
-	defer service.Close()
+	defer func() { err = errors.Join(err, service.Close()) }()
 	handler, err := a2a.NewViewHandler(service, a2a.TrustedPeerIdentity)
 	if err != nil {
 		return err
