@@ -291,19 +291,28 @@ Feature: Read-only MCP handoff context
     When the embedding runtime configures invalid trusted Origin "<origin>"
     Then the MCP Origin configuration is rejected
     Examples:
-      | origin                          |
-      | *                               |
-      | null                            |
-      | https://trusted.example/        |
-      | https://trusted.example/path    |
-      | https://user@trusted.example    |
-      | https://*.example               |
-      | https://trusted.example?query=1 |
-      | ftp://trusted.example           |
-      | https://:443                    |
-      | https://trusted.example#part    |
-      | https://trusted.example?        |
-      | https://trusted.example#        |
+      | origin                |
+      | *                     |
+      | null                  |
+      | https://*.example     |
+      | ftp://trusted.example |
+
+  Scenario Outline: Configured Origin values are never normalized to trust a browser
+    Given a "normal" MCP handoff
+    And the embedding runtime trusts Origin "<configured>"
+    When an authenticated MCP caller sends Origin "https://trusted.example" using "POST"
+    Then MCP returns HTTP 403 without context or private metadata
+    Examples:
+      | configured                      |
+      | https://trusted.example/         |
+      | https://trusted.example/path     |
+      | https://user@trusted.example     |
+      | https://trusted.example?query=1  |
+      | https://:443                     |
+      | https://trusted.example#part     |
+      | https://trusted.example?         |
+      | https://trusted.example#         |
+      | https://TRUSTED.example          |
 
   Scenario Outline: Explicitly trusted browser Origins can read the committed window
     Given a "normal" MCP handoff

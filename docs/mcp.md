@@ -20,13 +20,16 @@ for example `[]string{"https://console.example"}`. When unset or empty
 (`len(TrustedOrigins) == 0`), the service does not restrict Origin; requests
 carrying Origin are allowed with valid Bearer credentials. A nonempty allowlist
 requires requests carrying Origin to contain exactly one value matching an
-entry. Configuration is validated once at startup. Untrusted, malformed, empty or
-repeated Origin headers then fail with HTTP 403, the static `permission_denied`
-envelope and `Cache-Control: no-store`. Entries include scheme, host and any
-explicit port; paths, credentials, queries, fragments and wildcards are invalid
-configuration. Requests without Origin remain usable by native clients in both
-modes. Every request still requires valid Bearer credentials; Origin validation
-is independent of Bearer authentication.
+entry. Built-in validator tags check HTTP(S) URLs and reject wildcards once at
+startup. With an allowlist configured, nonmatching, empty or repeated Origin
+headers fail with HTTP 403, the static `permission_denied` envelope and
+`Cache-Control: no-store`. Matching is byte-for-byte: configuration and request
+values are never parsed or normalized for comparison. Use the browser's
+serialized scheme, host and port. A trailing slash, path, credentials, query,
+fragment or differently cased host in configuration does not match that Origin.
+Requests without Origin remain usable by native clients in both modes. Every
+request still requires valid Bearer credentials; Origin validation is independent
+of Bearer authentication.
 
 The embedding runtime owns the listener, TLS, and browser trust configuration.
 Local deployments should bind loopback. Configure browser origins explicitly
