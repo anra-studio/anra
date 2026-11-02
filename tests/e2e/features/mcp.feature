@@ -8,69 +8,71 @@ Feature: Read-only MCP handoff context
     Then it discovers exactly the two read-only context tools
     And both MCP tools return the committed role and context
 
+  Scenario Outline: Read-only providers must be injected at construction
+    Given a "normal" MCP handoff
+    Then MCP construction rejects a missing "<provider>" provider
+    Examples:
+      | provider         |
+      | roles            |
+      | grants           |
+      | typed nil roles  |
+      | typed nil grants |
+
   Scenario: Role revisions and context survive growth and restart unchanged
     Given a "normal" MCP handoff
     When I remember both MCP tool results
     And the role changes and its tape grows
-    And the MCP storage and server restart
+    And the Tape and MCP server restart
     Then both MCP tool results are byte-for-byte unchanged
 
   Scenario: Anra initialization can follow existing Tape entries
     Given a Tape containing entries before Anra initialization
     And a "normal" MCP handoff
     When I remember both MCP tool results
-    And the MCP storage and server restart
+    And the Tape and MCP server restart
     Then both MCP tool results are byte-for-byte unchanged
     When an official MCP client connects with the handoff credential
     Then both MCP tools return the committed role and context
 
-  Scenario: MCP can commit and read handoffs through JSONL Tape storage
+  Scenario: MCP reads controller handoffs through JSONL Tape storage
     Given a "normal" MCP handoff
     When the embedding runtime uses JSONL Tape storage
-    And another handoff commits without changing authorization storage
+    And the controller commits another handoff to Tape
     And the controller authorizes the persisted handoff
     And an official MCP client connects with the handoff credential
     Then both MCP tools return the committed role and context
 
-  Scenario: Caller-owned state survives service restarts and retains revocations
+  Scenario: Injected providers survive service restarts and retain revocations
     Given a "normal" MCP handoff
     When I remember both MCP tool results
-    And the embedding runtime supplies its state store
-    And the controller authorizes the persisted handoff
+    And the MCP service restarts with the injected providers
     Then both MCP tool results are byte-for-byte unchanged
-    When the MCP service restarts with the supplied state store
-    Then both MCP tool results are byte-for-byte unchanged
-    And reusing the role version with different contents fails
     When the MCP credential is "revoked"
-    And the MCP service restarts with the supplied state store
+    And I read the MCP context window
+    Then MCP rejects access with "permission_denied" and no private metadata
+    When the MCP service restarts with the injected providers
     And I read the MCP context window
     Then MCP rejects access with "permission_denied" and no private metadata
 
-  Scenario: A supplied state store is bound to its Source
+  Scenario: The controller commits a handoff directly to Tape
     Given a "normal" MCP handoff
-    When the embedding runtime supplies its state store
-    Then a service using that state store rejects another Source
-    And both MCP tools return the committed role and context
-
-  Scenario: Committing a handoff writes only to Tape
-    Given a "normal" MCP handoff
-    When another handoff commits without changing authorization storage
+    When the controller commits another handoff to Tape
     And the controller authorizes the persisted handoff
-    And the MCP storage and server restart
+    And the Tape and MCP server restart
     Then both MCP tools return the committed role and context
 
   Scenario: A persisted Tape handoff requires no secondary commit record
     Given a "normal" MCP handoff
     When the controller appends the handoff directly to Tape
-    And the MCP storage and server restart
+    And the Tape and MCP server restart
     Then MCP rejects access with "permission_denied" and no private metadata
     When the controller authorizes the persisted handoff
     Then both MCP tools return the committed role and context
 
-  Scenario Outline: Handoff commit rejects an unpersisted window without appending an anchor
+  Scenario Outline: MCP rejects an unpersisted window on read
     Given a "normal" MCP handoff
-    When the controller commits a window with "<missing>"
-    Then the handoff commit fails without changing Tape or authorization storage
+    When the controller supplies a window with "<missing>"
+    Then MCP rejects access with "failed_precondition" and no private metadata
     Examples:
       | missing          |
       | missing boundary |
@@ -83,10 +85,10 @@ Feature: Read-only MCP handoff context
     Then both MCP tool results are byte-for-byte unchanged
     And the active reasoning turn can finish normally
 
-  Scenario Outline: Handoff commit rejects excessive input without appending an anchor
+  Scenario Outline: MCP rejects excessive window input on read
     Given a "normal" MCP handoff
-    When the controller commits a window with "<input>"
-    Then the handoff commit fails without changing Tape or authorization storage
+    When the controller supplies a window with "<input>"
+    Then MCP rejects access with "failed_precondition" and no private metadata
     Examples:
       | input                      |
       | oversized summary          |
@@ -117,10 +119,10 @@ Feature: Read-only MCP handoff context
       | spoofed identity headers        |
       | replayed MCP session identifier |
 
-  Scenario Outline: Credentials expire and can be revoked durably
+  Scenario Outline: Credentials expire and external revocation survives MCP restart
     Given a "normal" MCP handoff
     When the MCP credential is "<state>"
-    And the MCP storage and server restart
+    And the Tape and MCP server restart
     Then MCP rejects access with "permission_denied" and no private metadata
     Examples:
       | state   |
@@ -132,10 +134,10 @@ Feature: Read-only MCP handoff context
     When the connection is authorized only to read the role
     Then the role tool succeeds and the window tool returns permission_denied
 
-  Scenario Outline: The control plane rejects every mismatched grant dimension
+  Scenario Outline: MCP rejects every mismatched grant dimension
     Given a "normal" MCP handoff
-    When the controller authorizes a grant with changed "<dimension>"
-    Then the mismatched MCP grant is denied
+    When the verifier supplies a grant with changed "<dimension>"
+    Then MCP rejects access with "permission_denied" and no private metadata
     Examples:
       | dimension    |
       | role         |
@@ -174,6 +176,8 @@ Feature: Read-only MCP handoff context
       | changed handoff binding      | permission_denied   |
       | missing snapshot boundary    | failed_precondition |
       | storage unavailable          | unavailable         |
+      | grant verifier unavailable   | unavailable         |
+      | role provider unavailable    | unavailable         |
 
   Scenario: Tool calls and results keep their structured relationships
     Given a "tools" MCP handoff
@@ -344,10 +348,11 @@ Feature: Read-only MCP handoff context
       | unsupported part |
       | malformed event  |
 
-  Scenario: Published role versions cannot be overwritten
+  Scenario: MCP rejects a provider returning another role revision
     Given a "normal" MCP handoff
-    Then reusing the role version with different contents fails
+    When the provider returns a different role revision
+    Then MCP rejects access with "invalid_reference" and no private metadata
 
   Scenario: MCP reads leave persistent storage untouched
     Given a "normal" MCP handoff
-    Then repeated MCP reads leave tape and authorization storage unchanged
+    Then MCP construction and repeated reads create no files and leave Tape unchanged

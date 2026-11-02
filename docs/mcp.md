@@ -37,111 +37,78 @@ and terminate TLS securely. Do not strip Origin to bypass this check. Origin
 trust does not grant CORS access or replace connection authentication. See the
 [MCP transport security requirements](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning).
 
-## Local controller lifecycle
+## Read-only dependencies and lifecycle
 
-The service accepts Tape through tape-go's `storage.EntryStorage` interface;
-both bbolt and JSONL implementations can supply its `Store` and `Range` methods.
-The caller owns Tape and supplies its matching Source. The Agent runtime
-owns initialization and recovery; the initialization anchor need not be the first
-entry. Stop HTTP requests before closing the service, and drain the agent before
-closing its Tape.
+MCP is a stateless reader. It opens no database, creates no files, writes no
+Tape entries, and owns no dependency lifecycle. `Service` has no close method.
+The embedding runtime owns the listener and HTTP shutdown, Tape initialization
+and recovery, Role publication, and credential issuance and revocation. Stop
+HTTP requests before closing the dependencies; drain the Agent before closing
+its Tape. No MCP state is recovered or copied when constructing a new service.
 
-Configure exactly one state-storage option: `Config.StatePath` opens the bundled
-bbolt implementation, which `Service.Close` closes; `Config.State` accepts a
-caller-owned `StateStore`, which the service leaves open. A supplied store must
-be bound to the configured Source and support concurrent calls. `StateStore`
-exposes typed role-revision and credential operations, keeping buckets, keys,
-serialization, and transactions inside the implementation. Missing records
-return `ErrStateNotFound`. Inserts must atomically preserve immutable contents;
-revocation must be atomic, idempotent, and cannot be undone by saving a grant.
+`Config.Tape` accepts `TapeReader`, the `Range` portion of tape-go's existing
+`storage.EntryStorage`. Both bbolt and JSONL Tape implementations satisfy it.
+MCP cannot call `Store` through this interface. The caller supplies the matching
+Source and owner. Tape is the sole source of truth for handoff anchors and their
+fixed windows; the initialization anchor need not be the first entry.
 
-The following APIs are local Go methods, never MCP tools:
+Two required read-only interfaces supply the remaining data:
 
-1. `SaveRole(ctx, RoleDefinition)` publishes the complete reproducible definition
-   as a JSON object under `(id, version)`. Include everything needed to rebuild
-   that revision, without live aliases or credentials. Saving identical contents
-   is idempotent; overwriting a revision fails.
-2. `CommitHandoff(ctx, Handoff)` validates the `anra.dev/anchor/intr/v1`
-   `integration.handoff` record and its explicit protobuf TapeView. All sequences
-   in `[seqS, seqE)`, and the excluded `snapshotHead == seqE` boundary, must
-   already exist on disk. It validates the persisted range and appends the
-   handoff anchor to Tape before returning its sequence. This operation does
-   not write the state database; Tape alone owns handoffs and their windows.
-3. `Authorize(ctx, Grant)` requires an exact match of Role ID, handoff sequence,
-   target RoleBinding, source, snapshot head, and scope. Permissions are an
-   explicit subset of `read_role` and `read_context_window`, with a required
-   future expiration. It returns a cryptographically random credential once;
-   only its SHA-256 digest is stored.
-4. `Revoke(ctx, credential)` durably and idempotently ends access. Each HTTP
-   request reloads its grant and checks expiry and revocation.
+- `Config.Roles` accepts `RoleProvider.GetRole(ctx, RoleRef)`. The provider returns
+  the complete JSON object for exactly `(id, version)`, with stable contents for
+  that revision. It returns `(nil, nil)` for a missing revision. MCP validates
+  the returned reference and definition (capped at half `MaxResponseBytes`);
+  missing or mismatched revisions fail
+  with `invalid_reference`, and provider errors become `unavailable`.
+- `Config.Grants` accepts `GrantVerifier.VerifyGrant(ctx, credential)`. The
+  embedding runtime verifies credentials using its own authorization component,
+  existing journal, or an in-memory map. Unknown or revoked credentials return
+  `(nil, nil)` or `ErrPermissionDenied`; other errors become `unavailable`.
+  Verification runs on every HTTP request, including discovery. MCP additionally
+  validates expiry, permissions, Role ID and Source, then checks the exact
+  handoff sequence, target binding and TapeView on tool invocation.
 
-For example, after creating an agent and selecting an explicit persisted view:
+Both providers must support concurrent calls and return values that remain
+immutable for the duration of the request. MCP does not cache Role revisions or
+grants. Provider implementations own retention and revocation across service
+restarts. An in-memory provider survives MCP reconstruction when retained by
+the embedding runtime; it does not imply persistence across process restarts.
+
+For example, given an existing Tape, Role provider and credential verifier:
 
 ```go
 service, err := mcp.NewService(mcp.Config{
     Source: a.Source(), Owner: "vesta", Tape: a.Tape(),
-    StatePath: "/private/runtime/vesta-mcp.db",
+    Roles: roleProvider, Grants: grantVerifier,
 })
-// Handle err; close service after the HTTP server has stopped.
-
-revision := mcp.RoleRef{ID: "vesta", Version: "role-revision-42"}
-err = service.SaveRole(ctx, mcp.RoleDefinition{
-    RoleRef: revision,
-    Definition: json.RawMessage(`{"instructions":"Help maintain Anra"}`),
-})
-// Handle err before committing the handoff.
-
-anchorSeq, err := service.CommitHandoff(ctx, mcp.Handoff{
-    Schema: mcp.HandoffSchema, Type: "integration.handoff", Role: revision,
-    Target: mcp.Target{Name: "lody", BindingID: "vesta-lody"},
-    Task: "Implement the requested feature", Context: mcp.WindowRef{View: fixedView},
-    Origin: &mcp.Origin{Name: "raft", SessionID: "origin-session"},
-})
-// Handle err before issuing credentials or dispatching external work.
-
-credential, err := service.Authorize(ctx, mcp.Grant{
-    RoleID: "vesta", BindingID: "vesta-lody", AnchorSeq: anchorSeq,
-    Window: mcp.WindowRef{View: fixedView},
-    Permissions: []string{mcp.ReadRole, mcp.ReadContextWindow},
-    ExpiresAt: time.Now().Add(time.Hour),
-})
-// Handle err. Deliver credential through secure runtime configuration only.
+if err != nil {
+    return err
+}
 mux.Handle("/mcp", service.Handler())
 ```
 
-To share the bundled implementation across service lifetimes, open it with
-`state, err := mcp.OpenState(path, source)` and pass `State: state` instead of
-`StatePath`. Handle the error before constructing services. Close the store
-explicitly after every service using it has stopped. Other implementations can
-satisfy `StateStore` directly; credential operations receive only SHA-256
-digests, never bearer tokens.
+Before dispatching external work, the controller publishes the Role revision
+through its existing Role owner, appends an `anra.dev/anchor/intr/v1`
+`integration.handoff` anchor through Tape, and arranges the matching credential
+with its authorization component. A grant binds Role ID, handoff sequence,
+target RoleBinding, Source, snapshot head, scope, explicit permissions
+(`read_role`, `read_context_window`), and expiration. Credential delivery belongs
+to the integration. Never put credentials in prompts, Tape entries, artifacts,
+or logs. MCP provides no publication, commit, issuance or revocation methods.
 
-Definition publication, Tape handoff commit, grant issuance, and secure
-credential delivery must all succeed before dispatch claims context is
-available. Launching sessions, resolving application bindings, OAuth issuance,
-and injecting credentials into Lody or other applications remain integration
-responsibilities. This service does not assume those capabilities exist.
-Never put credentials in prompts, Tape entries, artifacts, or logs.
+On each tool read MCP loads the handoff directly from Tape and verifies it
+against the grant. It returns the selected Role revision or projects the fixed
+window. Every sequence in `[seqS, seqE)` and the excluded
+`snapshotHead == seqE` boundary must already be persisted. Missing ranges,
+unsupported entries and incomplete tool calls fail reconstruction atomically.
+A persisted handoff requires no secondary commit record and can receive a grant
+later without another Tape write.
 
-An explicitly selected persisted prefix can be committed during an active turn.
+An explicitly selected persisted prefix can be read during an active turn.
 Reads never acquire reasoning Admission or select the current Tape head. Later
-model output and background observations cannot expand the window. Tape's
-append-only contract owns immutability; the service does not maintain duplicate
-handoff records or hash anchors, windows, or Role definitions. Missing records,
-unsupported entries, and incomplete tool calls fail reconstruction.
-
-On every read the service validates the grant and tool permission, loads the
-handoff anchor from Tape by `AnchorSeq`, and verifies its Role, binding and exact
-TapeView against the grant. It then loads that Role revision or projects entries
-directly from the fixed TapeView range. There is no secondary commit record.
-A persisted handoff can be authorized after restart even if credential issuance
-was never completed. The controller must retain the returned anchor reference
-and complete authorization before dispatching.
-
-The state database retains immutable Role definitions and source identity;
-authorization is solely token-hash-to-grant records, including expiration and
-revocation. The bundled bbolt file is created with mode `0600`. Tape handoffs, Role revisions, grants,
-and revocations survive restarts in their respective stores.
+model output and observations cannot expand the window. Tape's append-only
+contract owns immutability; MCP maintains no duplicate handoff records,
+private buckets, or hashes of anchors, windows or Role definitions.
 
 ## Tool contract
 

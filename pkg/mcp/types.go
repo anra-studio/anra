@@ -1,5 +1,5 @@
 // Package mcp serves immutable handoff context to authenticated external runtimes.
-// Its control-plane methods are local Go APIs, never remotely callable MCP tools.
+// Tape, role definitions, and credential verification are supplied by the caller.
 package mcp
 
 import (

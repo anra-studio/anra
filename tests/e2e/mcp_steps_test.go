@@ -3,7 +3,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +26,7 @@ import (
 	"github.com/scbizu/tape-go/pkg/runner"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
+	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	bolt "go.etcd.io/bbolt"
@@ -34,27 +35,28 @@ import (
 )
 
 type mcpScenario struct {
-	s             *scenario
-	tape          *bbolt.Bbolt
-	agent         *agent.Anra
-	service       *anramcp.Service
-	suppliedState anramcp.StateStore
-	server        *httptest.Server
-	client        *sdk.ClientSession
-	tools         *sdk.ListToolsResult
-	role          anramcp.RoleDefinition
-	handoff       anramcp.Handoff
-	grant         anramcp.Grant
-	token         string
-	clock         atomic.Int64
-	lastStatus    int
-	lastBody      []byte
-	lastResult    json.RawMessage
-	original      map[string]json.RawMessage
-	controlErr    error
-	entered       chan struct{}
-	release       chan struct{}
-	finished      chan error
+	s           *scenario
+	tape        *bbolt.Bbolt
+	handoffTape storage.EntryStorage
+	agent       *agent.Anra
+	service     *anramcp.Service
+	providers   *mcpProviders
+	server      *httptest.Server
+	client      *sdk.ClientSession
+	tools       *sdk.ListToolsResult
+	role        anramcp.RoleDefinition
+	handoff     anramcp.Handoff
+	grant       anramcp.Grant
+	token       string
+	clock       atomic.Int64
+	lastStatus  int
+	lastBody    []byte
+	lastResult  json.RawMessage
+	original    map[string]json.RawMessage
+	controlErr  error
+	entered     chan struct{}
+	release     chan struct{}
+	finished    chan error
 }
 
 func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
@@ -70,9 +72,6 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 			m.release = nil
 		}
 		err := m.close()
-		if m.suppliedState != nil {
-			err = errors.Join(err, m.suppliedState.Close())
-		}
 		return ctx, err
 	})
 	sc.Step(`^an? "([^"]+)" MCP handoff$`, m.setup)
@@ -83,21 +82,14 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^both MCP tools return the committed role and context$`, m.checkBoth)
 	sc.Step(`^I remember both MCP tool results$`, m.remember)
 	sc.Step(`^the role changes and its tape grows$`, m.grow)
-	sc.Step(`^the MCP storage and server restart$`, m.restart)
-	sc.Step(`^another handoff commits without changing authorization storage$`, m.commitTapeOnly)
+	sc.Step(`^the Tape and MCP server restart$`, m.restart)
+	sc.Step(`^the controller commits another handoff to Tape$`, m.commitTapeOnly)
 	sc.Step(`^the controller appends the handoff directly to Tape$`, m.appendHandoff)
 	sc.Step(`^the controller authorizes the persisted handoff$`, func() error {
-		var err error
-		m.token, err = m.service.Authorize(m.s.ctx, m.grant)
-		return err
-	})
-	sc.Step(`^the controller commits a window with "([^"]+)"$`, m.commitRejectedWindow)
-	sc.Step(`^the handoff commit fails without changing Tape or authorization storage$`, func() error {
-		if !errors.Is(m.controlErr, anramcp.ErrFailedPrecondition) {
-			return fmt.Errorf("rejected window commit: %v", m.controlErr)
-		}
+		m.token = m.authorize(m.grant)
 		return nil
 	})
+	sc.Step(`^the controller supplies a window with "([^"]+)"$`, m.supplyInvalidWindow)
 	sc.Step(`^both MCP tool results are byte-for-byte unchanged$`, m.unchanged)
 	sc.Step(`^the role starts a blocked reasoning turn$`, m.hold)
 	sc.Step(`^the active reasoning turn can finish normally$`, m.finish)
@@ -107,21 +99,15 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^the MCP credential is "([^"]+)"$`, m.endCredential)
 	sc.Step(`^the connection is authorized only to read the role$`, m.roleOnly)
 	sc.Step(`^the role tool succeeds and the window tool returns permission_denied$`, m.checkRoleOnly)
-	sc.Step(`^the controller authorizes a grant with changed "([^"]+)"$`, m.mismatch)
-	sc.Step(`^the mismatched MCP grant is denied$`, func() error {
-		if !errors.Is(m.controlErr, anramcp.ErrPermissionDenied) {
-			return fmt.Errorf("grant mismatch: %v", m.controlErr)
-		}
-		return nil
-	})
+	sc.Step(`^the verifier supplies a grant with changed "([^"]+)"$`, m.mismatch)
 	sc.Step(`^an authenticated caller sends "(\{.*\})" as MCP tool arguments$`, m.badArguments)
 	sc.Step(`^the committed MCP data suffers "([^"]+)"$`, m.damage)
 	sc.Step(`^the MCP window preserves tool identities and omits private event metadata$`, m.checkTools)
 	sc.Step(`^the MCP window preserves turn and integration session boundaries$`, m.checkBoundaries)
 	sc.Step(`^the MCP window has zero entries and is complete$`, m.checkEmpty)
 	sc.Step(`^I read the MCP context window$`, func() error { return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil) })
-	sc.Step(`^reusing the role version with different contents fails$`, m.immutableRole)
-	sc.Step(`^repeated MCP reads leave tape and authorization storage unchanged$`, m.readOnly)
+	sc.Step(`^the provider returns a different role revision$`, m.wrongRole)
+	sc.Step(`^MCP construction and repeated reads create no files and leave Tape unchanged$`, m.readOnly)
 	sc.Step(`^the MCP window contains every ordered chunk and is complete$`, m.checkStream)
 	sc.Step(`^both MCP result representations preserve the raw business JSON$`, m.checkPreciseJSON)
 	sc.Step(`^A2A exports the same public entry content and identity$`, m.checkA2AProjection)
@@ -156,14 +142,11 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^the MCP response contains the complete committed window$`, m.checkWindowResponse)
 	sc.Step(`^the embedding runtime configures invalid trusted Origin "([^"]+)"$`, func(origin string) error {
-		service, err := anramcp.NewService(anramcp.Config{
+		_, err := anramcp.NewService(anramcp.Config{
 			Source: m.agent.Source(), Owner: "vesta", Tape: m.tape,
-			StatePath: filepath.Join(m.s.root, "invalid-origin.db"), TrustedOrigins: []string{origin},
+			Roles: m.providers, Grants: m.providers, TrustedOrigins: []string{origin},
 		})
 		m.controlErr = err
-		if service != nil {
-			return service.Close()
-		}
 		return nil
 	})
 	sc.Step(`^the MCP Origin configuration is rejected$`, func() error {
@@ -174,7 +157,6 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	})
 }
 
-func (m *mcpScenario) statePath() string            { return filepath.Join(m.s.root, "mcp-state.db") }
 func (m *mcpScenario) tapePath() string             { return filepath.Join(m.s.root, "mcp-tape.db") }
 func (m *mcpScenario) tapeContext() context.Context { return owner.WithOwnerId(m.s.ctx, "vesta") }
 
@@ -193,6 +175,9 @@ func (m *mcpScenario) seedLegacyTape() error {
 
 func (m *mcpScenario) open() error {
 	var err error
+	if m.providers == nil {
+		m.providers = &mcpProviders{roles: make(map[anramcp.RoleRef]anramcp.RoleDefinition), grants: make(map[string]anramcp.Grant)}
+	}
 	m.tape, err = bbolt.NewBboltStorage("mcp-session", m.tapePath())
 	if err != nil {
 		return err
@@ -216,7 +201,7 @@ func (m *mcpScenario) open() error {
 		return err
 	}
 	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, StatePath: m.statePath(),
+		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers,
 		Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
 	})
 	return err
@@ -240,10 +225,7 @@ func (m *mcpScenario) close() error {
 		cancel()
 		m.agent = nil
 	}
-	if m.service != nil {
-		err = errors.Join(err, m.service.Close())
-		m.service = nil
-	}
+	m.service = nil
 	if m.tape != nil {
 		err = errors.Join(err, m.tape.Close())
 		m.tape = nil
@@ -269,23 +251,18 @@ func (m *mcpScenario) setup(kind string) error {
 		}
 	}
 	m.role = anramcp.RoleDefinition{RoleRef: anramcp.RoleRef{ID: "vesta", Version: "revision-42"}, Definition: json.RawMessage(`{"instructions":"Help maintain Anra","tools":["read_files"]}`)}
-	if err := m.service.SaveRole(m.s.ctx, m.role); err != nil {
-		return err
-	}
+	m.providers.setRole(m.role)
 	m.handoff = anramcp.Handoff{
 		Schema: anramcp.HandoffSchema, Type: "integration.handoff", Role: m.role.RoleRef,
 		Target: anramcp.Target{Name: "lody", BindingID: "vesta-lody-private"}, Task: "implement MCP",
 		Context: anramcp.WindowRef{View: ref}, Origin: &anramcp.Origin{Name: "raft", BindingID: "vesta-raft", SessionID: "origin-session", EventID: "origin-event"},
 	}
-	seq, err := m.service.CommitHandoff(m.s.ctx, m.handoff)
+	seq, err := m.commitHandoff(m.handoff)
 	if err != nil {
 		return err
 	}
 	m.grant = anramcp.Grant{RoleID: "vesta", BindingID: m.handoff.Target.BindingID, AnchorSeq: seq, Window: anramcp.WindowRef{View: proto.Clone(ref).(*pb.TapeView)}, Permissions: []string{anramcp.ReadRole, anramcp.ReadContextWindow}, ExpiresAt: time.Unix(0, m.clock.Load()).Add(time.Hour)}
-	m.token, err = m.service.Authorize(m.s.ctx, m.grant)
-	if err != nil {
-		return err
-	}
+	m.token = m.authorize(m.grant)
 	m.serve()
 	return nil
 }
@@ -584,9 +561,7 @@ func (m *mcpScenario) grow() error {
 	r := m.role
 	r.Version = "revision-43"
 	r.Definition = json.RawMessage(`{"instructions":"New behavior"}`)
-	if err := m.service.SaveRole(m.s.ctx, r); err != nil {
-		return err
-	}
+	m.providers.setRole(r)
 	_, err := m.agent.Run(m.s.ctx, "new request after handoff")
 	return err
 }
@@ -642,31 +617,20 @@ func (m *mcpScenario) activePrefix() error {
 		return errors.New("active prefix not persisted")
 	}
 	m.handoff.Context.View = &pb.TapeView{Source: m.agent.Source(), SnapshotHead: head.String(), Scope: &pb.EntryRange{SeqS: entries.Raw[0].GetID().String(), SeqE: head.String()}}
-	seq, err := m.service.CommitHandoff(m.s.ctx, m.handoff)
+	seq, err := m.commitHandoff(m.handoff)
 	if err != nil {
 		return err
 	}
 	m.grant.AnchorSeq = seq
 	m.grant.Window.View = proto.Clone(m.handoff.Context.View).(*pb.TapeView)
-	m.token, err = m.service.Authorize(m.s.ctx, m.grant)
-	return err
+	m.token = m.authorize(m.grant)
+	return nil
 }
 
 func (m *mcpScenario) commitTapeOnly() error {
-	before, err := os.ReadFile(m.statePath())
+	seq, err := m.commitHandoff(m.handoff)
 	if err != nil {
 		return err
-	}
-	seq, err := m.service.CommitHandoff(m.s.ctx, m.handoff)
-	if err != nil {
-		return err
-	}
-	after, err := os.ReadFile(m.statePath())
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(before, after) {
-		return errors.New("handoff commit wrote authorization storage")
 	}
 	m.grant.AnchorSeq = seq
 	return nil
@@ -685,7 +649,7 @@ func (m *mcpScenario) appendHandoff() error {
 	return nil
 }
 
-func (m *mcpScenario) commitRejectedWindow(problem string) error {
+func (m *mcpScenario) supplyInvalidWindow(problem string) error {
 	state, err := m.tape.Get(m.tapeContext())
 	if err != nil {
 		return err
@@ -697,6 +661,10 @@ func (m *mcpScenario) commitRejectedWindow(problem string) error {
 	case "missing boundary":
 		h.Context.View.SnapshotHead = head.String()
 		h.Context.View.Scope.SeqE = head.String()
+		// Leave a real gap before the later handoff anchor.
+		if _, err := m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryID(head.Next()), te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("entry after missing boundary"), te.WithEntryOwner("vesta"))); err != nil {
+			return err
+		}
 	case "missing entry":
 		start := head
 		head = head.Next()
@@ -706,11 +674,8 @@ func (m *mcpScenario) commitRejectedWindow(problem string) error {
 		h.Context.View.SnapshotHead = head.String()
 		h.Context.View.Scope = &pb.EntryRange{SeqS: start.String(), SeqE: head.String()}
 	case "oversized summary", "oversized event", "oversized private metadata", "cumulative input":
-		if err := m.service.Close(); err != nil {
-			return err
-		}
 		m.service, err = anramcp.NewService(anramcp.Config{
-			Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, StatePath: m.statePath(), MaxResponseBytes: 4096,
+			Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers, MaxResponseBytes: 4096,
 			Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
 		})
 		if err != nil {
@@ -747,31 +712,17 @@ func (m *mcpScenario) commitRejectedWindow(problem string) error {
 	default:
 		return fmt.Errorf("unknown rejected window fixture %q", problem)
 	}
-	tapeBefore, err := os.ReadFile(m.tapePath())
+	// The controller appends the reference; MCP validates it on read.
+	seq, err := m.commitHandoff(h)
 	if err != nil {
 		return err
 	}
-	stateBefore, err := os.ReadFile(m.statePath())
-	if err != nil {
-		return err
-	}
-	seq, commitErr := m.service.CommitHandoff(m.s.ctx, h)
-	m.controlErr = commitErr
-	if seq != "" {
-		return fmt.Errorf("failed commit returned anchor %s", seq)
-	}
-	tapeAfter, err := os.ReadFile(m.tapePath())
-	if err != nil {
-		return err
-	}
-	stateAfter, err := os.ReadFile(m.statePath())
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(tapeBefore, tapeAfter) || !bytes.Equal(stateBefore, stateAfter) {
-		return errors.New("failed handoff commit changed persistent storage")
-	}
-	return nil
+	m.grant.AnchorSeq = seq
+	m.grant.Window = h.Context
+	m.token = m.authorize(m.grant)
+	m.server.Close()
+	m.serve()
+	return m.call(anramcp.ReadContextWindow, m.token, seq, nil)
 }
 
 func (m *mcpScenario) attack(attack string) error {
@@ -796,7 +747,7 @@ func (m *mcpScenario) attack(attack string) error {
 		h := m.handoff
 		h.Target.BindingID = "vesta-other-binding"
 		var err error
-		seq, err = m.service.CommitHandoff(m.s.ctx, h)
+		seq, err = m.commitHandoff(h)
 		if err != nil {
 			return err
 		}
@@ -811,11 +762,10 @@ func (m *mcpScenario) attack(attack string) error {
 			return err
 		}
 		defer a.Shutdown(m.s.ctx)
-		service, err := anramcp.NewService(anramcp.Config{Source: a.Source(), Owner: "diablo", Tape: tape, StatePath: filepath.Join(m.s.root, "diablo-mcp.db")})
+		service, err := anramcp.NewService(anramcp.Config{Source: a.Source(), Owner: "diablo", Tape: tape, Roles: m.providers, Grants: m.providers})
 		if err != nil {
 			return err
 		}
-		defer service.Close()
 		server := httptest.NewServer(service.Handler())
 		defer server.Close()
 		previous := m.server
@@ -864,10 +814,8 @@ func (m *mcpScenario) endCredential(state string) error {
 		return nil
 	}
 	if state == "revoked" {
-		if err := m.service.Revoke(m.s.ctx, m.token); err != nil {
-			return err
-		}
-		return m.service.Revoke(m.s.ctx, m.token)
+		m.providers.revoke(m.token)
+		return nil
 	}
 	return fmt.Errorf("unknown credential state %q", state)
 }
@@ -875,9 +823,8 @@ func (m *mcpScenario) endCredential(state string) error {
 func (m *mcpScenario) roleOnly() error {
 	g := m.grant
 	g.Permissions = []string{anramcp.ReadRole}
-	var err error
-	m.token, err = m.service.Authorize(m.s.ctx, g)
-	return err
+	m.token = m.authorize(g)
+	return nil
 }
 
 func (m *mcpScenario) checkRoleOnly() error {
@@ -913,8 +860,8 @@ func (m *mcpScenario) mismatch(dimension string) error {
 	default:
 		return fmt.Errorf("unknown grant dimension %q", dimension)
 	}
-	_, m.controlErr = m.service.Authorize(m.s.ctx, g)
-	return nil
+	m.token = m.authorize(g)
+	return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil)
 }
 
 func (m *mcpScenario) badArguments(args string) error {
@@ -927,10 +874,17 @@ func (m *mcpScenario) badArguments(args string) error {
 func (m *mcpScenario) damage(damage string) error {
 	switch damage {
 	case "storage unavailable":
-		if err := m.service.Close(); err != nil {
+		m.server.Close()
+		var err error
+		m.service, err = anramcp.NewService(anramcp.Config{Source: m.agent.Source(), Owner: "vesta", Tape: unavailableMCPTape{}, Roles: m.providers, Grants: m.providers, Now: func() time.Time { return time.Unix(0, m.clock.Load()) }})
+		if err != nil {
 			return err
 		}
-		m.service = nil // The HTTP handler retains the closed store for this fault.
+		m.serve()
+	case "grant verifier unavailable":
+		m.providers.mu.Lock()
+		m.providers.grantErr = errors.New("PRIVATE-provider-failure")
+		m.providers.mu.Unlock()
 	case "non-handoff anchor", "changed handoff binding", "unsupported snapshot content":
 		seq := m.grant.AnchorSeq
 		kind := anchor.Kind
@@ -950,27 +904,14 @@ func (m *mcpScenario) damage(damage string) error {
 		if err != nil {
 			return err
 		}
+	case "role provider unavailable":
+		m.providers.mu.Lock()
+		m.providers.roleErr = errors.New("PRIVATE-role-provider-failure")
+		m.providers.mu.Unlock()
 	case "missing role revision":
-		m.server.Close()
-		m.server = nil
-		if err := m.service.Close(); err != nil {
-			return err
-		}
-		m.service = nil
-		db, err := bolt.Open(m.statePath(), 0600, nil)
-		if err != nil {
-			return err
-		}
-		err = db.Update(func(tx *bolt.Tx) error { return tx.DeleteBucket([]byte("anra.mcp.roles.v1")) })
-		err = errors.Join(err, db.Close())
-		if err != nil {
-			return err
-		}
-		m.service, err = anramcp.NewService(anramcp.Config{Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, StatePath: m.statePath(), Now: func() time.Time { return time.Unix(0, m.clock.Load()) }})
-		if err != nil {
-			return err
-		}
-		m.serve()
+		m.providers.mu.Lock()
+		delete(m.providers.roles, m.role.RoleRef)
+		m.providers.mu.Unlock()
 	case "missing anchor", "missing snapshot entry", "missing snapshot boundary", "corrupt snapshot entry":
 		// Stop all users before modifying the physical Tape file offline.
 		if err := m.close(); err != nil {
@@ -995,7 +936,7 @@ func (m *mcpScenario) damage(damage string) error {
 		if err = m.tape.Init(m.tapeContext()); err != nil {
 			return err
 		}
-		m.service, err = anramcp.NewService(anramcp.Config{Source: m.grant.Window.View.Source, Owner: "vesta", Tape: m.tape, StatePath: m.statePath(), Now: func() time.Time { return time.Unix(0, m.clock.Load()) }})
+		m.service, err = anramcp.NewService(anramcp.Config{Source: m.grant.Window.View.Source, Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers, Now: func() time.Time { return time.Unix(0, m.clock.Load()) }})
 		if err != nil {
 			return err
 		}
@@ -1004,7 +945,7 @@ func (m *mcpScenario) damage(damage string) error {
 		return fmt.Errorf("unknown storage damage %q", damage)
 	}
 	tool := anramcp.ReadContextWindow
-	if damage == "missing role revision" {
+	if damage == "missing role revision" || damage == "role provider unavailable" {
 		tool = anramcp.ReadRole
 	}
 	return m.call(tool, m.token, m.grant.AnchorSeq, nil)
@@ -1154,12 +1095,9 @@ func (m *mcpScenario) trustOrigin(origin string) error {
 
 func (m *mcpScenario) configureTrustedOrigins(origins []string) error {
 	m.server.Close()
-	if err := m.service.Close(); err != nil {
-		return err
-	}
 	var err error
 	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, StatePath: m.statePath(),
+		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers,
 		TrustedOrigins: origins, Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
 	})
 	if err != nil {
@@ -1252,47 +1190,81 @@ func (m *mcpScenario) checkEmpty() error {
 	return nil
 }
 
-func (m *mcpScenario) immutableRole() error {
-	if err := m.service.SaveRole(m.s.ctx, m.role); err != nil {
-		return fmt.Errorf("idempotent role save: %w", err)
-	}
+func (m *mcpScenario) wrongRole() error {
+	m.providers.mu.Lock()
 	r := m.role
-	r.Definition = json.RawMessage(`{"instructions":"replacement"}`)
-	if err := m.service.SaveRole(m.s.ctx, r); !errors.Is(err, anramcp.ErrFailedPrecondition) {
-		return fmt.Errorf("role overwrite: %v", err)
-	}
-	return m.checkBoth()
+	r.Version = "wrong-revision"
+	m.providers.roles[m.role.RoleRef] = r
+	m.providers.mu.Unlock()
+	return m.call(anramcp.ReadRole, m.token, m.grant.AnchorSeq, nil)
 }
 
 func (m *mcpScenario) readOnly() error {
-	tapeBefore, err := os.ReadFile(m.tapePath())
+	before, err := os.ReadFile(m.tapePath())
 	if err != nil {
 		return err
 	}
-	stateBefore, err := os.ReadFile(m.statePath())
+	filesBefore, err := os.ReadDir(m.s.root)
 	if err != nil {
 		return err
 	}
-	if bytes.Contains(tapeBefore, []byte(m.token)) || bytes.Contains(stateBefore, []byte(m.token)) {
+	if bytes.Contains(before, []byte(m.token)) {
 		return errors.New("plaintext credential was persisted")
+	}
+	// Reconstruct only MCP, borrowing the same Tape and external providers.
+	if err := m.restartService(); err != nil {
+		return err
 	}
 	for i := 0; i < 3; i++ {
 		if err := m.checkBoth(); err != nil {
 			return err
 		}
 	}
-	tapeAfter, err := os.ReadFile(m.tapePath())
+	after, err := os.ReadFile(m.tapePath())
 	if err != nil {
 		return err
 	}
-	stateAfter, err := os.ReadFile(m.statePath())
+	filesAfter, err := os.ReadDir(m.s.root)
 	if err != nil {
 		return err
 	}
-	if sha256.Sum256(tapeBefore) != sha256.Sum256(tapeAfter) || sha256.Sum256(stateBefore) != sha256.Sum256(stateAfter) {
-		return errors.New("read-only tools changed persistent state")
+	if !bytes.Equal(before, after) || len(filesBefore) != len(filesAfter) {
+		return errors.New("MCP construction or reads changed persistent storage")
+	}
+	for i := range filesBefore {
+		if filesBefore[i].Name() != filesAfter[i].Name() {
+			return errors.New("MCP changed files in runtime directory")
+		}
 	}
 	return nil
+}
+
+// The embedding controller writes Tape and issues credentials. These fixture
+// helpers are deliberately outside pkg/mcp and own only in-memory authorization.
+func (m *mcpScenario) commitHandoff(h anramcp.Handoff) (string, error) {
+	data, err := json.Marshal(h)
+	if err != nil {
+		return "", err
+	}
+	tape := m.handoffTape
+	if tape == nil {
+		tape = m.tape
+	}
+	raw, err := tape.Store(m.tapeContext(), te.NewAnchor(te.Seq{}, "vesta", te.AnchorKindCustom, data))
+	if err != nil {
+		return "", err
+	}
+	return raw.GetID().String(), nil
+}
+
+func (m *mcpScenario) authorize(g anramcp.Grant) string {
+	token := rand.Text()
+	g.Window.View = proto.Clone(g.Window.View).(*pb.TapeView)
+	g.Permissions = append([]string(nil), g.Permissions...)
+	m.providers.mu.Lock()
+	m.providers.grants[token] = g
+	m.providers.mu.Unlock()
+	return token
 }
 
 // Compare both public HTTP paths over the same persisted Tape range. Raw payload

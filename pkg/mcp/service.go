@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,15 +21,18 @@ import (
 
 const DefaultMaxResponseBytes = 1024 * 1024
 
+// TapeReader is the read-only portion of tape-go's storage.EntryStorage.
+// The caller owns initialization, recovery, writes, and storage lifetime.
+type TapeReader interface {
+	Range(context.Context, tv.EntryRange, ...storage.RangeBy) (tv.EntryView, error)
+}
+
 type Config struct {
-	Source *pb.Source           `validate:"required,structonly"`
-	Owner  string               `validate:"required"`
-	Tape   storage.EntryStorage `validate:"required,structonly"`
-	// StatePath opens a private bbolt store owned and closed by this service.
-	StatePath string `validate:"excluded_with=State"`
-	// State is caller-owned storage. It must be bound to Source and remain
-	// open until every service using it has stopped. Set State or StatePath.
-	State StateStore `validate:"required_without=StatePath,excluded_with=StatePath,structonly"`
+	Source *pb.Source    `validate:"required,structonly"`
+	Owner  string        `validate:"required"`
+	Tape   TapeReader    `validate:"required,structonly"`
+	Roles  RoleProvider  `validate:"required,structonly"`
+	Grants GrantVerifier `validate:"required,structonly"`
 	// TrustedOrigins is an exact allowlist of browser origins (scheme + host,
 	// optional port). Empty disables Origin restrictions. When configured,
 	// Origin must be a single allowlisted value if present. All clients,
@@ -42,12 +44,10 @@ type Config struct {
 	Now              func() time.Time `validate:"-"`
 }
 
-// Service borrows Tape and any supplied State, and owns storage opened by path.
-// Readers never acquire an Agent's reasoning admission or mutate the Tape.
+// Service reads caller-owned Tape, role definitions, and authorization.
+// It creates no files, owns no storage, and never mutates its dependencies.
 type Service struct {
-	config     Config
-	state      StateStore
-	closeState func() error
+	config Config
 }
 
 func NewService(c Config) (*Service, error) {
@@ -72,82 +72,21 @@ func NewService(c Config) (*Service, error) {
 	if c.MaxResponseBytes == 0 {
 		c.MaxResponseBytes = DefaultMaxResponseBytes
 	}
-	state := c.State
-	var closeState func() error
-	if c.StatePath != "" {
-		store, err := openState(c.StatePath, c.Source)
-		if err != nil {
-			return nil, err
-		}
-		state, closeState = store, store.Close
-	} else if !proto.Equal(state.Source(), c.Source) {
-		return nil, ErrInvalidReference
-	}
-	return &Service{config: c, state: state, closeState: closeState}, nil
-}
-
-// Close follows HTTP server shutdown and closes only storage opened by path.
-// The caller retains ownership of Tape and any supplied State.
-func (s *Service) Close() error {
-	if s.closeState == nil {
-		return nil
-	}
-	return s.closeState()
-}
-
-// SaveRole publishes an immutable definition revision through the local control
-// plane. Reusing a version for different contents fails.
-func (s *Service) SaveRole(ctx context.Context, r RoleDefinition) error {
-	if validate.Struct(r) != nil || r.ID != s.config.Source.AgentId {
-		return ErrInvalidReference
-	}
-	if len(r.Definition) > s.config.MaxResponseBytes/2 {
-		return ErrFailedPrecondition
-	}
-	return s.state.SaveRole(ctx, r)
+	return &Service{config: c}, nil
 }
 
 func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error) {
-	r, err := s.state.Role(ctx, ref)
-	if errors.Is(err, ErrStateNotFound) {
-		return nil, ErrInvalidReference
-	}
+	r, err := s.config.Roles.GetRole(ctx, ref)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	if validate.Struct(r) != nil || r.RoleRef != ref {
+	if r == nil || validate.Struct(r) != nil || r.RoleRef != ref {
 		return nil, ErrInvalidReference
 	}
-	return &r, nil
-}
-
-// CommitHandoff appends an integration anchor to Tape, the sole source of truth
-// for handoffs and their fixed windows. The explicit view must already be fully
-// persisted, including its excluded boundary. A prefix of an active turn is
-// allowed: the prefix is fixed and never follows the live head. No authorization
-// state is written until the controller separately calls Authorize.
-func (s *Service) CommitHandoff(ctx context.Context, h Handoff) (string, error) {
-	if err := s.validateHandoff(h); err != nil {
-		return "", err
+	if len(r.Definition) > s.config.MaxResponseBytes/2 {
+		return nil, ErrFailedPrecondition
 	}
-	if _, err := s.role(ctx, h.Role); err != nil {
-		return "", err
-	}
-	if err := s.walkWindow(ctx, h.Context.View, nil); err != nil {
-		return "", err
-	}
-	data, err := json.Marshal(h)
-	if err != nil {
-		return "", ErrInvalidReference
-	}
-	if len(data) > s.config.MaxResponseBytes {
-		return "", ErrFailedPrecondition
-	}
-	raw, err := s.config.Tape.Store(s.tapeContext(ctx), te.NewAnchor(te.Seq{}, s.config.Owner, te.AnchorKindCustom, data))
-	if err != nil {
-		return "", ErrUnavailable
-	}
-	return raw.GetID().String(), nil
+	return r, nil
 }
 
 func (s *Service) validateHandoff(h Handoff) error {
@@ -174,6 +113,9 @@ func (s *Service) handoff(ctx context.Context, seq string) (*Handoff, error) {
 		return nil, ErrInvalidReference
 	}
 	raw := entries.Raw[0]
+	if len(raw.GetSummary()) > s.config.MaxResponseBytes {
+		return nil, ErrFailedPrecondition
+	}
 	var h Handoff
 	if raw.GetOwner() != s.config.Owner || decode([]byte(raw.GetSummary()), &h) != nil || s.validateHandoff(h) != nil {
 		return nil, ErrInvalidReference
@@ -194,59 +136,22 @@ func tapeReadError(err error, corrupt *Error) error {
 	return ErrUnavailable
 }
 
-// Authorize issues a new high-entropy credential only for an exactly matched,
-// committed handoff. Deliver it through runtime configuration, never the Tape,
-// a prompt, or an artifact. Only its SHA-256 digest is retained on disk.
-func (s *Service) Authorize(ctx context.Context, g Grant) (string, error) {
-	if validate.Struct(g) != nil || protovalidate.Validate(g.Window.View) != nil || !g.ExpiresAt.After(s.config.Now()) {
-		return "", ErrPermissionDenied
-	}
-	h, err := s.handoff(ctx, g.AnchorSeq)
-	if err != nil {
-		return "", err
-	}
-	if !matches(g, h) {
-		return "", ErrPermissionDenied
-	}
-	if _, err := s.role(ctx, h.Role); err != nil {
-		return "", err
-	}
-	token := rand.Text()
-	if err := s.state.SaveGrant(ctx, tokenHash(token), g); err != nil {
-		return "", ErrUnavailable
-	}
-	return token, nil
-}
-
 func matches(g Grant, h *Handoff) bool {
 	return g.RoleID == h.Role.ID && g.BindingID == h.Target.BindingID && proto.Equal(g.Window.View, h.Context.View)
-}
-
-// Revoke is idempotent and durable across server restarts.
-func (s *Service) Revoke(ctx context.Context, token string) error {
-	err := s.state.RevokeGrant(ctx, tokenHash(token))
-	if errors.Is(err, ErrStateNotFound) {
-		return ErrPermissionDenied
-	}
-	if err != nil {
-		return ErrUnavailable
-	}
-	return nil
 }
 
 func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error) {
 	if token == "" || len(token) > 512 {
 		return nil, ErrPermissionDenied
 	}
-	stored, err := s.state.Grant(ctx, tokenHash(token))
+	g, err := s.config.Grants.VerifyGrant(ctx, token)
+	if errors.Is(err, ErrPermissionDenied) {
+		return nil, ErrPermissionDenied
+	}
 	if err != nil {
-		if errors.Is(err, ErrStateNotFound) {
-			return nil, ErrPermissionDenied
-		}
 		return nil, ErrUnavailable
 	}
-	g := &stored.Grant
-	if stored.Revoked || validate.Struct(g) != nil || protovalidate.Validate(g.Window.View) != nil || !s.config.Now().Before(g.ExpiresAt) {
+	if g == nil || validate.Struct(g) != nil || protovalidate.Validate(g.Window.View) != nil || !s.config.Now().Before(g.ExpiresAt) || g.RoleID != s.config.Source.AgentId || !proto.Equal(g.Window.View.Source, s.config.Source) {
 		return nil, ErrPermissionDenied
 	}
 	return g, nil
