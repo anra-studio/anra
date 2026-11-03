@@ -98,6 +98,11 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		return m.rawCall(anramcp.ReadContextWindow, "", args, headers)
 	})
 	sc.Step(`^使用绑定不匹配的凭证读取交接$`, m.readMismatchedBinding)
+	sc.Step(`^凭证验证服务暂时不可用$`, func() {
+		m.providers.mu.Lock()
+		defer m.providers.mu.Unlock()
+		m.providers.grantErr = errors.New("PRIVATE-grant-provider unavailable")
+	})
 	sc.Step(`^使用当前凭证访问另一角色的服务$`, m.readOtherRole)
 	sc.Step(`^连接仅获准读取角色$`, m.roleOnly)
 	sc.Step(`^角色工具成功且窗口工具返回 permission_denied$`, m.checkRoleOnly)
@@ -121,6 +126,12 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 			return fmt.Errorf("want HTTP %d, got %d: %s", status, m.lastStatus, m.lastBody)
 		}
 		return m.rejected("permission_denied")
+	})
+	sc.Step(`^MCP 返回 HTTP 503 且不泄露上下文或私有信息$`, func() error {
+		if m.lastStatus != http.StatusServiceUnavailable {
+			return fmt.Errorf("want HTTP 503, got %d: %s", m.lastStatus, m.lastBody)
+		}
+		return m.rejected("unavailable")
 	})
 	sc.Step(`^携带凭证从 Origin "([^"]+)" 读取上下文$`, m.originRequest)
 	sc.Step(`^从 Origin "([^"]+)" 不带凭证读取上下文$`, func(origin string) error {
@@ -352,6 +363,12 @@ func (m *mcpScenario) rawCall(tool, token string, args json.RawMessage, headers 
 	}
 	if res.Header.Get("Cache-Control") != "no-store" {
 		return errors.New("context response is cacheable")
+	}
+	if res.StatusCode == http.StatusUnauthorized && res.Header.Get("WWW-Authenticate") != "Bearer" {
+		return errors.New("unauthorized response is missing the Bearer challenge")
+	}
+	if res.StatusCode == http.StatusServiceUnavailable && res.Header.Get("WWW-Authenticate") != "" {
+		return errors.New("unavailable response contains an authentication challenge")
 	}
 	var rpc struct {
 		Result struct {

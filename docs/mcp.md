@@ -9,6 +9,14 @@ The service uses the [official Go MCP SDK](https://github.com/modelcontextprotoc
 for protocol negotiation, JSON-RPC, and stateless Streamable HTTP with JSON
 responses. Mount `Service.Handler()` at the embedding runtime's `/mcp` endpoint.
 Every HTTP request, including discovery, requires `Authorization: Bearer …`.
+After Origin checks, the HTTP authentication middleware rejects multiple
+Authorization fields with HTTP 401 and a Bearer challenge, regardless of their
+order or values. A single
+field keeps case-insensitive scheme matching and accepts multiple ASCII spaces
+after the scheme. The trimmed credential is passed to the external
+`GrantVerifier`; no token68 character restriction is imposed. Only a successful
+authentication adds the Grant to the current request context and dispatches to
+the protected MCP transport.
 Remote deployments terminate TLS. When configured, the handler enforces the
 Origin allowlist on every method; the SDK's localhost Host/DNS rebinding check
 also remains enabled.
@@ -37,7 +45,10 @@ from trusted deployment settings. The handler never derives trust from Host,
 Forwarded or X-Forwarded-* headers. Reverse proxies must preserve Origin and
 Authorization, reject untrusted hostnames, prevent direct access to the backend,
 and terminate TLS securely. Do not strip Origin to bypass this check. Origin
-trust does not grant CORS access or replace connection authentication. See the
+is checked before authentication. The backend can reject only duplicate fields
+that reach it: a proxy that merges or drops Authorization fields can hide the
+original multiplicity. Enforce duplicate rejection at that proxy as well.
+Origin trust does not grant CORS access or replace connection authentication. See the
 [MCP transport security requirements](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning).
 
 ## Read-only dependencies and lifecycle

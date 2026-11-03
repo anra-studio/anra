@@ -6,12 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"slices"
-	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-type grantContextKey struct{}
 
 func (s *Service) allowsOrigin(r *http.Request) bool {
 	if len(s.config.TrustedOrigins) == 0 {
@@ -74,6 +71,10 @@ func (s *Service) Handler() http.Handler {
 		})
 	}
 	transport := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	authenticated := s.authenticateRequest(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+		transport.ServeHTTP(noStoreWriter{w}, r)
+	}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		// Apply to every method before transport dispatch or authentication.
@@ -84,25 +85,7 @@ func (s *Service) Handler() http.Handler {
 			_ = json.NewEncoder(w).Encode(errorEnvelope(ErrPermissionDenied))
 			return
 		}
-		var token string
-		if scheme, val, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
-			token = strings.TrimSpace(val)
-		}
-		g, err := s.authenticate(r.Context(), token)
-		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			status := http.StatusUnauthorized
-			if errors.Is(err, ErrUnavailable) {
-				status = http.StatusServiceUnavailable
-			} else {
-				w.Header().Set("WWW-Authenticate", "Bearer")
-			}
-			w.WriteHeader(status)
-			_ = json.NewEncoder(w).Encode(errorEnvelope(err))
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-		transport.ServeHTTP(noStoreWriter{w}, r.WithContext(context.WithValue(r.Context(), grantContextKey{}, g)))
+		authenticated.ServeHTTP(w, r)
 	})
 }
 

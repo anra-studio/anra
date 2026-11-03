@@ -15,9 +15,10 @@ import (
 // The embedding runtime owns these fixtures across MCP service lifetimes.
 // Values are replaced under the lock and never mutated after publication.
 type mcpProviders struct {
-	mu     sync.RWMutex
-	roles  map[anramcp.RoleRef]anramcp.RoleDefinition
-	grants map[string]anramcp.Grant
+	mu       sync.RWMutex
+	roles    map[anramcp.RoleRef]anramcp.RoleDefinition
+	grants   map[string]anramcp.Grant
+	grantErr error
 }
 
 func (p *mcpProviders) GetRole(ctx context.Context, ref anramcp.RoleRef) (*anramcp.RoleDefinition, error) {
@@ -39,6 +40,9 @@ func (p *mcpProviders) VerifyGrant(ctx context.Context, credential string) (*anr
 	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	if p.grantErr != nil {
+		return nil, p.grantErr
+	}
 	g, ok := p.grants[credential]
 	if !ok {
 		return nil, nil

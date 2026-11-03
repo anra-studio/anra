@@ -37,14 +37,21 @@
     而且 读取 MCP 角色
     那么 MCP 返回 "permission_denied" 且不泄露上下文或私有信息
 
-  场景: Bearer 凭证从首个 Authorization 头提取且无效凭证返回 401
+  场景: 单个 Bearer 凭证兼容大小写和多个空格且重复认证头一律拒绝
     假如 已提交一份普通 MCP 交接并签发凭证
     当 携带以下 Authorization 请求头读取上下文
       | bEaReR   {token} |
-      | Bearer invalid  |
     那么 MCP 响应包含交接绑定的完整窗口
     当 携带以下 Authorization 请求头读取上下文
+      | Bearer {token} |
       | Bearer invalid |
+    那么 MCP 返回 HTTP 401 且不泄露上下文或私有信息
+    当 携带以下 Authorization 请求头读取上下文
+      | Bearer invalid |
+      | Bearer {token} |
+    那么 MCP 返回 HTTP 401 且不泄露上下文或私有信息
+    当 携带以下 Authorization 请求头读取上下文
+      | Bearer {token} |
       | Bearer {token} |
     那么 MCP 返回 HTTP 401 且不泄露上下文或私有信息
     当 携带以下 Authorization 请求头读取上下文
@@ -52,6 +59,18 @@
     那么 MCP 返回 HTTP 401 且不泄露上下文或私有信息
     当 携带以下 Authorization 请求头读取上下文
       | Bearer {token} extra |
+    那么 MCP 返回 HTTP 401 且不泄露上下文或私有信息
+    当 读取 MCP 上下文窗口
+    那么 MCP 响应包含交接绑定的完整窗口
+
+  场景: 凭证验证不可用返回 503 且重复认证头仍返回 401
+    假如 已提交一份普通 MCP 交接并签发凭证
+    当 凭证验证服务暂时不可用
+    而且 读取 MCP 上下文窗口
+    那么 MCP 返回 HTTP 503 且不泄露上下文或私有信息
+    当 携带以下 Authorization 请求头读取上下文
+      | Bearer {token} |
+      | Bearer {token} |
     那么 MCP 返回 HTTP 401 且不泄露上下文或私有信息
 
   场景: 并发推理和重启不会改变已交接快照
@@ -87,7 +106,9 @@
     当 从 Origin "https://trusted.example" 不带凭证读取上下文
     那么 MCP 返回 HTTP 401 且不泄露上下文或私有信息
     当 运行时仅信任 Origin "https://trusted.example"
-    而且 携带凭证从 Origin "https://evil.example" 读取上下文
+    而且 从 Origin "https://evil.example" 不带凭证读取上下文
+    那么 MCP 返回 HTTP 403 且不泄露上下文或私有信息
+    当 携带凭证从 Origin "https://evil.example" 读取上下文
     那么 MCP 返回 HTTP 403 且不泄露上下文或私有信息
     当 携带凭证从 Origin "https://trusted.example" 读取上下文
     那么 MCP 响应包含交接绑定的完整窗口
