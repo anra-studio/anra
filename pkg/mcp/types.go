@@ -32,6 +32,11 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
 
+// ErrorResponse is the public error envelope for HTTP and MCP tool responses.
+type ErrorResponse struct {
+	Error *Error `json:"error"`
+}
+
 var (
 	ErrPermissionDenied   = &Error{"permission_denied", "unauthorized connection or missing grant for target handoff anchor"}
 	ErrInvalidReference   = &Error{"invalid_reference", "invalid handoff reference or missing role revision"}

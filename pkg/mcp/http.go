@@ -106,14 +106,12 @@ func (s *Service) Handler() http.Handler {
 	})
 }
 
-func errorEnvelope(err error) any {
+func errorEnvelope(err error) ErrorResponse {
 	var public *Error
 	if !errors.As(err, &public) {
 		public = ErrUnavailable
 	}
-	return struct {
-		Error *Error `json:"error"`
-	}{public}
+	return ErrorResponse{Error: public}
 }
 
 func (s *Service) toolResult(value any, err error) *sdk.CallToolResult {
