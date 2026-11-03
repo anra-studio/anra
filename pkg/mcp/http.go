@@ -84,10 +84,9 @@ func (s *Service) Handler() http.Handler {
 			_ = json.NewEncoder(w).Encode(errorEnvelope(ErrPermissionDenied))
 			return
 		}
-		fields := strings.Fields(r.Header.Get("Authorization"))
 		var token string
-		if len(r.Header.Values("Authorization")) == 1 && len(fields) == 2 && strings.EqualFold(fields[0], "Bearer") {
-			token = fields[1]
+		if scheme, val, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") {
+			token = strings.TrimSpace(val)
 		}
 		g, err := s.authenticate(r.Context(), token)
 		if err != nil {

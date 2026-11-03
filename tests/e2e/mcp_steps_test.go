@@ -86,6 +86,17 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^未携带凭证读取上下文$`, func() error {
 		return m.call(anramcp.ReadContextWindow, "", m.grant.AnchorSeq, nil)
 	})
+	sc.Step(`^携带以下 Authorization 请求头读取上下文$`, func(table *godog.Table) error {
+		headers := make(http.Header)
+		for _, row := range table.Rows {
+			headers.Add("Authorization", strings.ReplaceAll(row.Cells[0].Value, "{token}", m.token))
+		}
+		args, err := json.Marshal(map[string]string{"anchorSeq": m.grant.AnchorSeq})
+		if err != nil {
+			return err
+		}
+		return m.rawCall(anramcp.ReadContextWindow, "", args, headers)
+	})
 	sc.Step(`^使用绑定不匹配的凭证读取交接$`, m.readMismatchedBinding)
 	sc.Step(`^使用当前凭证访问另一角色的服务$`, m.readOtherRole)
 	sc.Step(`^连接仅获准读取角色$`, m.roleOnly)
