@@ -59,10 +59,10 @@ Two required read-only interfaces supply the remaining data:
 
 - `Config.Roles` accepts `RoleProvider.GetRole(ctx, RoleRef)`. The provider returns
   the complete JSON object for exactly `(id, version)`, with stable contents for
-  that revision. It returns `(nil, nil)` for a missing revision. MCP validates
-  the returned reference and definition (capped at half `MaxResponseBytes`);
-  missing or mismatched revisions fail
-  with `invalid_reference`, and provider errors become `unavailable`.
+  that revision. The provider owns definition validation. It returns `(nil, nil)`
+  for a missing revision, which MCP reports as `invalid_reference`; provider
+  errors become `unavailable`. Definitions exceeding `MaxResponseBytes` fail
+  with `failed_precondition`.
 - `Config.Grants` accepts `GrantVerifier.VerifyGrant(ctx, credential)`. The
   embedding runtime verifies credentials using its own authorization component,
   existing journal, or an in-memory map. Unknown or revoked credentials return

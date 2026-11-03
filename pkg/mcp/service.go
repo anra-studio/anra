@@ -75,7 +75,7 @@ func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	if validate.Struct(r) != nil || r.RoleRef != ref {
+	if r == nil {
 		return nil, ErrInvalidReference
 	}
 	if len(r.Definition) > s.config.MaxResponseBytes {
