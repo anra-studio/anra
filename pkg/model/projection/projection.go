@@ -24,8 +24,7 @@ type Entry struct {
 }
 
 // Project removes private execution metadata and thoughts while preserving
-// supported model content. Unknown visible protocol fields and legacy runner
-// messages fail explicitly. Business args/response JSON remains opaque.
+// supported model content. Unknown visible protocol fields fail explicitly. Business args/response JSON remains opaque.
 func Project(raw te.EntryLike) (*Entry, error) {
 	switch raw.GetKind() {
 	case te.EntryUser, te.EntryAssistant, te.EntryToolCall, te.EntryToolResult:
@@ -33,9 +32,6 @@ func Project(raw te.EntryLike) (*Entry, error) {
 		return nil, ErrUnsupported
 	}
 	extensions := extensionsOf(raw)
-	if _, legacy := extensions["anra:runner-message/v1"]; legacy {
-		return nil, ErrUnsupported
-	}
 	value, exists := extensions["adk:event"]
 	if !exists {
 		switch raw.GetKind() {
