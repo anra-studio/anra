@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"buf.build/go/protovalidate"
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
@@ -35,16 +35,24 @@ type Boundary struct {
 	Origin   *Origin `json:"origin,omitempty"`
 }
 
+// integrationHandoff is the part of a third-party handoff anchor that a window
+// exposes as a boundary.
+type integrationHandoff struct {
+	Schema string  `json:"schema" validate:"eq=anra.dev/anchor/intr/v1"`
+	Type   string  `json:"type" validate:"eq=integration.handoff"`
+	Origin *Origin `json:"origin,omitempty" validate:"omitempty"`
+}
+
 type WindowResult struct {
 	View       json.RawMessage  `json:"view"`
 	Entries    []ProjectedEntry `json:"entries"`
 	IsComplete bool             `json:"isComplete"`
 }
 
-func (s *Service) window(ctx context.Context, h *Handoff) (*WindowResult, error) {
+func (s *Service) window(ctx context.Context, view *pb.TapeView) (*WindowResult, error) {
 	r := tv.EntryRange{
-		SeqS: te.MustParseSeq(h.Context.View.Scope.SeqS),
-		SeqE: te.MustParseSeq(h.Context.View.Scope.SeqE),
+		SeqS: te.MustParseSeq(view.Scope.SeqS),
+		SeqE: te.MustParseSeq(view.Scope.SeqE),
 	}
 	batch, err := s.config.Tape.Range(s.tapeContext(ctx), r)
 	if err != nil {
@@ -58,7 +66,7 @@ func (s *Service) window(ctx context.Context, h *Handoff) (*WindowResult, error)
 	if len(boundary.Raw) != 1 || boundary.Raw[0].GetID() != r.SeqE || boundary.Raw[0].GetOwner() != s.config.Owner {
 		return nil, ErrFailedPrecondition
 	}
-	result := &WindowResult{View: anchor.ProtoJSON(h.Context.View), Entries: []ProjectedEntry{}, IsComplete: true}
+	result := &WindowResult{View: anchor.ProtoJSON(view), Entries: []ProjectedEntry{}, IsComplete: true}
 	calls := make(openToolCalls)
 	expected := r.SeqS
 	projectedBytes := 0
@@ -104,8 +112,8 @@ func project(raw te.EntryLike, calls openToolCalls) (*ProjectedEntry, error) {
 			e.Boundary = &Boundary{Schema: r.Schema, Type: string(r.Type), TurnID: r.TurnID, StartSeq: r.StartSeq, Outcome: r.Outcome}
 			return e, nil
 		}
-		var h Handoff
-		if decode([]byte(raw.GetSummary()), &h) != nil || validate.Struct(h) != nil || protovalidate.Validate(h.Context.View) != nil {
+		var h integrationHandoff
+		if decode([]byte(raw.GetSummary()), &h) != nil || validate.Struct(h) != nil {
 			return nil, errUnsupportedEntry
 		}
 		e.Boundary = &Boundary{Schema: h.Schema, Type: h.Type, Origin: h.Origin}

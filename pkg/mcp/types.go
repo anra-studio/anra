@@ -15,8 +15,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-const HandoffSchema = "anra.dev/anchor/intr/v1"
-
 const (
 	ReadRole          = "read_role"
 	ReadContextWindow = "read_context_window"
@@ -57,11 +55,6 @@ type RoleDefinition struct {
 	Definition json.RawMessage `json:"definition" validate:"required,json"`
 }
 
-type Target struct {
-	Name      string `json:"name" validate:"required,max=256"`
-	BindingID string `json:"bindingId" validate:"required,max=256"`
-}
-
 type Origin struct {
 	Name      string `json:"name" validate:"required,max=256"`
 	BindingID string `json:"bindingId,omitempty" validate:"max=256"`
@@ -92,22 +85,11 @@ func (w *WindowRef) UnmarshalJSON(data []byte) error {
 	return protojson.Unmarshal(v.View, w.View)
 }
 
-type Handoff struct {
-	Schema  string    `json:"schema" validate:"eq=anra.dev/anchor/intr/v1"`
-	Type    string    `json:"type" validate:"eq=integration.handoff"`
-	Role    RoleRef   `json:"role"`
-	Target  Target    `json:"target"`
-	Task    string    `json:"task" validate:"required,max=8192"`
-	Context WindowRef `json:"context"`
-	Origin  *Origin   `json:"origin,omitempty" validate:"omitempty"`
-}
-
-// Grant is supplied by a trusted controller. Every dimension must exactly match
-// the committed handoff; neither tool arguments nor caller-supplied session IDs
-// can establish any of these identities.
+// Grant is supplied by a trusted controller. It authorizes reading the role
+// revision and the Tape window (SeqS to SeqE) that the handoff anchored at
+// AnchorSeq committed. Tool arguments cannot establish any of these identities.
 type Grant struct {
-	RoleID      string    `json:"roleId" validate:"required,max=256"`
-	BindingID   string    `json:"bindingId" validate:"required,max=256"`
+	Role        RoleRef   `json:"role"`
 	AnchorSeq   string    `json:"anchorSeq" validate:"required,number,startsnotwith=0"`
 	Window      WindowRef `json:"window"`
 	Permissions []string  `json:"permissions" validate:"min=1,max=2,unique,dive,oneof=read_role read_context_window"`

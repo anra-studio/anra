@@ -47,15 +47,17 @@ func (s *Service) callTool(name string) sdk.ToolHandler {
 		if decode(req.Params.Arguments, &input) != nil || validate.Struct(input) != nil {
 			return s.toolResult(nil, ErrInvalidReference), nil
 		}
-		h, err := s.resolve(ctx, g, input, name)
-		if err != nil {
+		if err := resolve(g, input, name); err != nil {
 			return s.toolResult(nil, err), nil
 		}
-		var result any
+		var (
+			result any
+			err    error
+		)
 		if name == ReadRole {
-			result, err = s.role(ctx, h.Role)
+			result, err = s.role(ctx, g.Role)
 		} else {
-			result, err = s.window(ctx, h)
+			result, err = s.window(ctx, g.Window.View)
 		}
 		return s.toolResult(result, err), nil
 	}

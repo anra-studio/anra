@@ -135,7 +135,7 @@ func (v scopedGrants) VerifyGrant(ctx context.Context, credential string) (*anra
 	if err != nil {
 		return nil, err
 	}
-	if !g.ExpiresAt.After(v.now()) || g.RoleID != v.source.AgentId || !proto.Equal(g.Window.View.Source, v.source) {
+	if !g.ExpiresAt.After(v.now()) || g.Role.ID != v.source.AgentId || !proto.Equal(g.Window.View.Source, v.source) {
 		return nil, anramcp.ErrPermissionDenied
 	}
 	return g, nil

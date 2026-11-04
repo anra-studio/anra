@@ -8,12 +8,9 @@ import (
 
 	"buf.build/go/protovalidate"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
-	"github.com/anra-studio/anra/pkg/model/anchor"
-	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	"google.golang.org/protobuf/proto"
 )
 
 const DefaultMaxResponseBytes = 1024 * 1024
@@ -77,55 +74,13 @@ func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error
 	return r, nil
 }
 
-func (s *Service) validateHandoff(h Handoff) error {
-	if validate.Struct(h) != nil || protovalidate.Validate(h.Context.View) != nil || h.Role.ID != s.config.Source.AgentId || !proto.Equal(h.Context.View.Source, s.config.Source) {
-		return ErrInvalidReference
+func resolve(g *Grant, input toolInput, permission string) error {
+	if input.AnchorSeq != g.AnchorSeq || !slices.Contains(g.Permissions, permission) {
+		return ErrPermissionDenied
 	}
 	return nil
 }
 
 func (s *Service) tapeContext(ctx context.Context) context.Context {
 	return owner.WithOwnerId(ctx, s.config.Owner)
-}
-
-func (s *Service) handoff(ctx context.Context, seq string) (*Handoff, error) {
-	// resolve supplies the sequence from validated tool input and grant.
-	n := te.MustParseSeq(seq)
-	entries, err := s.config.Tape.Range(s.tapeContext(ctx), tv.EntryRange{SeqS: n, SeqE: n.Next()})
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	if len(entries.Raw) != 1 || entries.Raw[0].GetKind() != anchor.Kind {
-		return nil, ErrInvalidReference
-	}
-	raw := entries.Raw[0]
-	if len(raw.GetSummary()) > s.config.MaxResponseBytes {
-		return nil, ErrFailedPrecondition
-	}
-	var h Handoff
-	if decode([]byte(raw.GetSummary()), &h) != nil || s.validateHandoff(h) != nil {
-		return nil, ErrInvalidReference
-	}
-	if raw.GetOwner() != s.config.Owner || te.MustParseSeq(h.Context.View.SnapshotHead).Cmp(n) >= 0 {
-		return nil, ErrInvalidReference
-	}
-	return &h, nil
-}
-
-func matches(g Grant, h *Handoff) bool {
-	return g.RoleID == h.Role.ID && g.BindingID == h.Target.BindingID && proto.Equal(g.Window.View, h.Context.View)
-}
-
-func (s *Service) resolve(ctx context.Context, g *Grant, input toolInput, permission string) (*Handoff, error) {
-	if input.AnchorSeq != g.AnchorSeq || !slices.Contains(g.Permissions, permission) {
-		return nil, ErrPermissionDenied
-	}
-	h, err := s.handoff(ctx, input.AnchorSeq)
-	if err != nil {
-		return nil, err
-	}
-	if !matches(*g, h) {
-		return nil, ErrPermissionDenied
-	}
-	return h, nil
 }

@@ -45,7 +45,7 @@ type mcpScenario struct {
 	client      *sdk.ClientSession
 	tools       *sdk.ListToolsResult
 	role        anramcp.RoleDefinition
-	handoff     anramcp.Handoff
+	handoff     mcpHandoff
 	grant       anramcp.Grant
 	token       string
 	clock       atomic.Int64
@@ -108,7 +108,6 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return m.rawCall(anramcp.ReadContextWindow, "", args, headers)
 	})
-	sc.Step(`^使用绑定不匹配的凭证读取交接$`, m.readMismatchedBinding)
 	sc.Step(`^凭证验证服务暂时不可用$`, func() {
 		m.providers.mu.Lock()
 		defer m.providers.mu.Unlock()
@@ -239,16 +238,16 @@ func (m *mcpScenario) setup(kind string) error {
 	}
 	m.role = anramcp.RoleDefinition{RoleRef: anramcp.RoleRef{ID: "vesta", Version: "revision-42"}, Definition: json.RawMessage(`{"instructions":"Help maintain Anra","tools":["read_files"]}`)}
 	m.providers.setRole(m.role)
-	m.handoff = anramcp.Handoff{
-		Schema: anramcp.HandoffSchema, Type: "integration.handoff", Role: m.role.RoleRef,
-		Target: anramcp.Target{Name: "lody", BindingID: "vesta-lody-private"}, Task: "implement MCP",
+	m.handoff = mcpHandoff{
+		Schema: "anra.dev/anchor/intr/v1", Type: "integration.handoff", Role: m.role.RoleRef,
+		Target: mcpTarget{Name: "lody", BindingID: "vesta-lody-private"}, Task: "implement MCP",
 		Context: anramcp.WindowRef{View: ref}, Origin: &anramcp.Origin{Name: "raft", BindingID: "vesta-raft", SessionID: "origin-session", EventID: "origin-event"},
 	}
 	seq, err := m.commitHandoff(m.handoff)
 	if err != nil {
 		return err
 	}
-	m.grant = anramcp.Grant{RoleID: "vesta", BindingID: m.handoff.Target.BindingID, AnchorSeq: seq, Window: anramcp.WindowRef{View: proto.Clone(ref).(*pb.TapeView)}, Permissions: []string{anramcp.ReadRole, anramcp.ReadContextWindow}, ExpiresAt: time.Unix(0, m.clock.Load()).Add(time.Hour)}
+	m.grant = anramcp.Grant{Role: m.role.RoleRef, AnchorSeq: seq, Window: anramcp.WindowRef{View: proto.Clone(ref).(*pb.TapeView)}, Permissions: []string{anramcp.ReadRole, anramcp.ReadContextWindow}, ExpiresAt: time.Unix(0, m.clock.Load()).Add(time.Hour)}
 	m.token = m.authorize(m.grant)
 	m.serve()
 	return nil
@@ -522,12 +521,6 @@ func (m *mcpScenario) commitTapeOnly() error {
 	return nil
 }
 
-func (m *mcpScenario) readMismatchedBinding() error {
-	g := m.grant
-	g.BindingID = "vesta-other-binding"
-	return m.call(anramcp.ReadContextWindow, m.authorize(g), g.AnchorSeq, nil)
-}
-
 func (m *mcpScenario) readOtherRole() (err error) {
 	tape, err := m.s.openTape("mcp-diablo", "diablo")
 	if err != nil {
@@ -764,7 +757,7 @@ func (m *mcpScenario) readOnly() error {
 
 // The embedding controller writes Tape and issues credentials. These fixture
 // helpers are deliberately outside pkg/mcp and own only in-memory authorization.
-func (m *mcpScenario) commitHandoff(h anramcp.Handoff) (string, error) {
+func (m *mcpScenario) commitHandoff(h mcpHandoff) (string, error) {
 	data, err := json.Marshal(h)
 	if err != nil {
 		return "", err
@@ -847,4 +840,21 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 		}
 	}
 	return nil
+}
+
+// mcpHandoff is the controller's third-party handoff payload stored in an
+// anchor. The MCP service never parses it; the verifier fixture binds grants to it.
+type mcpHandoff struct {
+	Schema  string            `json:"schema"`
+	Type    string            `json:"type"`
+	Role    anramcp.RoleRef   `json:"role"`
+	Target  mcpTarget         `json:"target"`
+	Task    string            `json:"task"`
+	Context anramcp.WindowRef `json:"context"`
+	Origin  *anramcp.Origin   `json:"origin,omitempty"`
+}
+
+type mcpTarget struct {
+	Name      string `json:"name"`
+	BindingID string `json:"bindingId"`
 }
