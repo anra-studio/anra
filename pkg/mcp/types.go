@@ -12,7 +12,6 @@ import (
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/go-playground/validator/v10"
-	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -51,9 +50,11 @@ type RoleRef struct {
 
 // RoleDefinition is the complete, reproducible definition, not a live lookup by
 // display name. The caller chooses a version and cannot overwrite that version.
+// The provider must supply a valid JSON object; the tags check only presence
+// and JSON syntax, not the top-level JSON type.
 type RoleDefinition struct {
 	RoleRef
-	Definition json.RawMessage `json:"definition" validate:"required,jsonobject"`
+	Definition json.RawMessage `json:"definition" validate:"required,json"`
 }
 
 type Target struct {
@@ -107,32 +108,17 @@ type Handoff struct {
 type Grant struct {
 	RoleID      string    `json:"roleId" validate:"required,max=256"`
 	BindingID   string    `json:"bindingId" validate:"required,max=256"`
-	AnchorSeq   string    `json:"anchorSeq" validate:"required,seq"`
+	AnchorSeq   string    `json:"anchorSeq" validate:"required,number,startsnotwith=0"`
 	Window      WindowRef `json:"window"`
 	Permissions []string  `json:"permissions" validate:"min=1,max=2,unique,dive,oneof=read_role read_context_window"`
 	ExpiresAt   time.Time `json:"expiresAt" validate:"required"`
 }
 
 type toolInput struct {
-	AnchorSeq string `json:"anchorSeq" validate:"required,seq"`
+	AnchorSeq string `json:"anchorSeq" validate:"required,number,startsnotwith=0"`
 }
 
-var validate = func() *validator.Validate {
-	v := validator.New(validator.WithRequiredStructEnabled())
-	if err := v.RegisterValidation("seq", func(f validator.FieldLevel) bool {
-		s, err := te.ParseSeq(f.Field().String())
-		return err == nil && !s.IsZero()
-	}); err != nil {
-		panic(err)
-	}
-	if err := v.RegisterValidation("jsonobject", func(f validator.FieldLevel) bool {
-		data := bytes.TrimSpace(f.Field().Bytes())
-		return len(data) >= 2 && data[0] == '{' && data[len(data)-1] == '}' && json.Valid(f.Field().Bytes())
-	}); err != nil {
-		panic(err)
-	}
-	return v
-}()
+var validate = validator.New(validator.WithRequiredStructEnabled())
 
 func decode(data []byte, value any) error {
 	d := json.NewDecoder(bytes.NewReader(data))

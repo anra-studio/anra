@@ -22,6 +22,7 @@ import (
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/cucumber/godog"
+	"github.com/go-playground/validator/v10"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/scbizu/tape-go/pkg/runner"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
@@ -75,6 +76,16 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^已提交一份普通 MCP 交接并签发凭证$`, func() error { return m.setup("normal") })
 	sc.Step(`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("complete stream") })
 	sc.Step(`^已提交包含未结束工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("unfinished stream") })
+	sc.Step(`^控制器使用默认 validator 验证角色定义和授权$`, func() error {
+		v := validator.New(validator.WithRequiredStructEnabled())
+		if err := v.Struct(m.role); err != nil {
+			return fmt.Errorf("validate published role: %w", err)
+		}
+		if err := v.Struct(m.grant); err != nil {
+			return fmt.Errorf("validate issued grant: %w", err)
+		}
+		return nil
+	})
 	sc.Step(`^官方 MCP 客户端使用交接凭证连接$`, m.connect)
 	sc.Step(`^客户端仅发现两个只读上下文工具$`, m.discover)
 	sc.Step(`^两个工具返回交接绑定的角色版本和完整窗口$`, m.checkBoth)

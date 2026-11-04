@@ -70,7 +70,10 @@ Two required read-only interfaces supply the remaining data:
 
 - `Config.Roles` accepts `RoleProvider.GetRole(ctx, RoleRef)`. The provider returns
   the complete JSON object for exactly `(id, version)`, with stable contents for
-  that revision. The provider owns definition validation. It returns `(nil, nil)`
+  that revision. The provider owns JSON object validation. `RoleDefinition` uses
+  only built-in validator tags: `required,json` checks presence and JSON syntax,
+  not whether the top-level value is an object. MCP does not revalidate provider
+  definitions. The provider returns `(nil, nil)`
   for a missing revision, which MCP reports as `invalid_reference`; provider
   errors become `unavailable`. Definitions exceeding `MaxResponseBytes` fail
   with `failed_precondition`.
@@ -81,6 +84,12 @@ Two required read-only interfaces supply the remaining data:
   Verification runs on every HTTP request, including discovery. MCP additionally
   validates expiry, permissions, Role ID and Source, then checks the exact
   handoff sequence, target binding and TapeView on tool invocation.
+
+`Grant.AnchorSeq` and tool input use `required,number,startsnotwith=0`: a nonzero
+ASCII decimal string without leading zeros, with no integer-width limit. The
+handler validates tool input explicitly; the SDK's low-level `AddTool` does not
+enforce its advertised input schema. Independent validators need no private MCP
+rule registrations for the exported types.
 
 Both providers must support concurrent calls and return values that remain
 immutable for the duration of the request. MCP does not cache Role revisions or

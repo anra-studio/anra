@@ -2,11 +2,11 @@ package mcp
 
 import "context"
 
-// RoleProvider reads complete definitions by immutable revision. Implementations
-// must support concurrent calls and keep each revision stable. Return (nil, nil)
-// for an absent revision, or an error when the provider is unavailable. Returned
-// definitions must match the requested revision and remain valid and immutable
-// for the duration of the request.
+// RoleProvider reads complete, valid JSON objects by immutable revision.
+// Implementations must support concurrent calls and keep each revision stable.
+// Return (nil, nil) for an absent revision, or an error when the provider is
+// unavailable. Returned definitions must match the requested revision and
+// remain valid and immutable for the duration of the request.
 type RoleProvider interface {
 	GetRole(context.Context, RoleRef) (*RoleDefinition, error)
 }
