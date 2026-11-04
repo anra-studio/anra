@@ -189,8 +189,7 @@ func (m *mcpScenario) open() error {
 		return err
 	}
 	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers,
-		Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),
 	})
 	return err
 }
@@ -540,7 +539,7 @@ func (m *mcpScenario) readOtherRole() (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, a.Shutdown(m.s.ctx)) }()
-	service, err := anramcp.NewService(anramcp.Config{Source: a.Source(), Owner: "diablo", Tape: tape, Roles: m.providers, Grants: m.providers})
+	service, err := anramcp.NewService(anramcp.Config{Source: a.Source(), Owner: "diablo", Tape: tape, Roles: m.providers, Grants: m.grantsFor(a.Source())})
 	if err != nil {
 		return err
 	}
@@ -640,8 +639,7 @@ func (m *mcpScenario) removeWindowEntry() (err error) {
 		return err
 	}
 	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.grant.Window.View.Source, Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers,
-		Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+		Source: m.grant.Window.View.Source, Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.grantsFor(m.grant.Window.View.Source),
 	})
 	if err != nil {
 		return err
@@ -708,8 +706,8 @@ func (m *mcpScenario) configureTrustedOrigins(origins []string) error {
 	m.server.Close()
 	var err error
 	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers,
-		TrustedOrigins: origins, Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),
+		TrustedOrigins: origins,
 	})
 	if err != nil {
 		return err

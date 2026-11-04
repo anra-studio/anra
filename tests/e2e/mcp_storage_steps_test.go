@@ -6,10 +6,12 @@ import (
 	"sync"
 	"time"
 
+	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
+	"google.golang.org/protobuf/proto"
 )
 
 // The embedding runtime owns these fixtures across MCP service lifetimes.
@@ -29,7 +31,7 @@ func (p *mcpProviders) GetRole(ctx context.Context, ref anramcp.RoleRef) (*anram
 	defer p.mu.RUnlock()
 	r, ok := p.roles[ref]
 	if !ok {
-		return nil, nil
+		return nil, anramcp.ErrInvalidReference
 	}
 	return &r, nil
 }
@@ -45,7 +47,7 @@ func (p *mcpProviders) VerifyGrant(ctx context.Context, credential string) (*anr
 	}
 	g, ok := p.grants[credential]
 	if !ok {
-		return nil, nil
+		return nil, anramcp.ErrPermissionDenied
 	}
 	return &g, nil
 }
@@ -88,8 +90,7 @@ func (m *mcpScenario) useJSONLTape() error {
 	m.server = nil
 	m.handoffTape = tape
 	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: tape, Roles: m.providers, Grants: m.providers,
-		Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+		Source: m.agent.Source(), Owner: "vesta", Tape: tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),
 	})
 	if err != nil {
 		return err
@@ -109,12 +110,33 @@ func (m *mcpScenario) restartService() error {
 	m.server = nil
 	var err error
 	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.providers,
-		Now: func() time.Time { return time.Unix(0, m.clock.Load()) },
+		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),
 	})
 	if err != nil {
 		return err
 	}
 	m.serve()
 	return nil
+}
+
+// scopedGrants enforces what a GrantVerifier owes the service it is wired to.
+type scopedGrants struct {
+	*mcpProviders
+	source *pb.Source
+	now    func() time.Time
+}
+
+func (m *mcpScenario) grantsFor(source *pb.Source) anramcp.GrantVerifier {
+	return scopedGrants{mcpProviders: m.providers, source: source, now: func() time.Time { return time.Unix(0, m.clock.Load()) }}
+}
+
+func (v scopedGrants) VerifyGrant(ctx context.Context, credential string) (*anramcp.Grant, error) {
+	g, err := v.mcpProviders.VerifyGrant(ctx, credential)
+	if err != nil {
+		return nil, err
+	}
+	if !g.ExpiresAt.After(v.now()) || g.RoleID != v.source.AgentId || !proto.Equal(g.Window.View.Source, v.source) {
+		return nil, anramcp.ErrPermissionDenied
+	}
+	return g, nil
 }

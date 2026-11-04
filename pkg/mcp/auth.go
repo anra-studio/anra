@@ -25,6 +25,20 @@ func bearerToken(header http.Header) string {
 	return strings.TrimSpace(value)
 }
 
+func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error) {
+	if token == "" {
+		return nil, ErrPermissionDenied
+	}
+	g, err := s.config.Grants.VerifyGrant(ctx, token)
+	if errors.Is(err, ErrPermissionDenied) {
+		return nil, ErrPermissionDenied
+	}
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	return g, nil
+}
+
 func (s *Service) authenticateRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header)

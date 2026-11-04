@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	"buf.build/go/protovalidate"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
@@ -42,8 +41,7 @@ type Config struct {
 	// window entries, so an oversized window fails atomically instead of being
 	// truncated. A tool result repeats that projection as both text and
 	// structured content, so its serialized size is not checked.
-	MaxResponseBytes int              `validate:"omitempty,min=1024,max=16777216"`
-	Now              func() time.Time `validate:"-"`
+	MaxResponseBytes int `validate:"omitempty,min=1024,max=16777216"`
 }
 
 // Service reads caller-owned Tape, role definitions, and authorization.
@@ -59,11 +57,6 @@ func NewService(c Config) (*Service, error) {
 	if err := protovalidate.Validate(c.Source); err != nil {
 		return nil, fmt.Errorf("mcp source: %w", err)
 	}
-	c.Source = proto.Clone(c.Source).(*pb.Source)
-	c.TrustedOrigins = slices.Clone(c.TrustedOrigins)
-	if c.Now == nil {
-		c.Now = time.Now
-	}
 	if c.MaxResponseBytes == 0 {
 		c.MaxResponseBytes = DefaultMaxResponseBytes
 	}
@@ -72,11 +65,11 @@ func NewService(c Config) (*Service, error) {
 
 func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error) {
 	r, err := s.config.Roles.GetRole(ctx, ref)
+	if errors.Is(err, ErrInvalidReference) {
+		return nil, ErrInvalidReference
+	}
 	if err != nil {
 		return nil, ErrUnavailable
-	}
-	if r == nil {
-		return nil, ErrInvalidReference
 	}
 	if len(r.Definition) > s.config.MaxResponseBytes {
 		return nil, ErrFailedPrecondition
@@ -102,7 +95,7 @@ func (s *Service) handoff(ctx context.Context, seq string) (*Handoff, error) {
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	if len(entries.Raw) != 1 || entries.Raw[0].GetID() != n || entries.Raw[0].GetKind() != anchor.Kind {
+	if len(entries.Raw) != 1 || entries.Raw[0].GetKind() != anchor.Kind {
 		return nil, ErrInvalidReference
 	}
 	raw := entries.Raw[0]
@@ -123,28 +116,8 @@ func matches(g Grant, h *Handoff) bool {
 	return g.RoleID == h.Role.ID && g.BindingID == h.Target.BindingID && proto.Equal(g.Window.View, h.Context.View)
 }
 
-func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error) {
-	if token == "" {
-		return nil, ErrPermissionDenied
-	}
-	g, err := s.config.Grants.VerifyGrant(ctx, token)
-	if errors.Is(err, ErrPermissionDenied) {
-		return nil, ErrPermissionDenied
-	}
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	if validate.Struct(g) != nil || protovalidate.Validate(g.Window.View) != nil {
-		return nil, ErrPermissionDenied
-	}
-	if g.ExpiresAt.Compare(s.config.Now()) <= 0 || g.RoleID != s.config.Source.AgentId || !proto.Equal(g.Window.View.Source, s.config.Source) {
-		return nil, ErrPermissionDenied
-	}
-	return g, nil
-}
-
 func (s *Service) resolve(ctx context.Context, g *Grant, input toolInput, permission string) (*Handoff, error) {
-	if g == nil || input.AnchorSeq != g.AnchorSeq || !slices.Contains(g.Permissions, permission) {
+	if input.AnchorSeq != g.AnchorSeq || !slices.Contains(g.Permissions, permission) {
 		return nil, ErrPermissionDenied
 	}
 	h, err := s.handoff(ctx, input.AnchorSeq)
