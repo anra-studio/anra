@@ -23,16 +23,6 @@ type ViewEntry struct {
 	Content   any       `json:"content,omitempty"`
 }
 
-// Boundary is the public part of an Anra execution record. It omits private
-// execution ownership metadata.
-type Boundary struct {
-	Schema   string `json:"schema"`
-	Type     string `json:"type"`
-	TurnID   string `json:"turnId,omitempty"`
-	StartSeq string `json:"startSeq,omitempty"`
-	Outcome  string `json:"outcome,omitempty"`
-}
-
 type TapeViewResult struct {
 	View    json.RawMessage `json:"view"`
 	Entries []ViewEntry     `json:"entries"`
@@ -72,7 +62,9 @@ func project(raw te.EntryLike) (*ViewEntry, error) {
 			e.Content = raw.GetSummary()
 			return e, nil
 		}
-		e.Content = Boundary{Schema: r.Schema, Type: string(r.Type), TurnID: r.TurnID, StartSeq: r.StartSeq, Outcome: r.Outcome}
+		// The execution owner epoch is private runtime state.
+		r.OwnerEpoch = ""
+		e.Content = r
 		return e, nil
 	}
 	projected, err := projection.Project(raw)

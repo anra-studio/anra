@@ -144,15 +144,15 @@ configuration:
 
 `read_tape_view` returns `{"view": …, "entries": […]}`: the granted view in
 protojson form and the entries in its range. Entries contain `seq`, `kind`,
-`timestamp`, and either `content` or `boundary`. Plain text content is a JSON
+`timestamp`, and and `content`. Plain text content is a JSON
 string; supported ADK content is a JSON object retaining structured function
 calls and responses. `pkg/model/projection` projects Tape entries into public
 model events, shared with A2A. Execution metadata, owners, extensions and
 private thought parts are excluded; thought-only entries are skipped.
 
 Anchors are part of the view because they record decision and interruption
-points. Native Anra anchors become a `boundary` (schema, transition type, turn
-ID, start sequence, outcome). Other anchors, including integration handoffs,
+points. Native Anra anchors are exported as their `anchor.Record` (schema, type,
+turn ID, base view, start sequence, outcome) without the private owner epoch. Other anchors, including integration handoffs,
 are exported with their summary verbatim as `content`, so handoff payloads must
 not contain information the grantee may not read. Unsupported entry kinds fail
 with `failed_precondition`.
