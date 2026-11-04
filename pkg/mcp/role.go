@@ -61,8 +61,5 @@ func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	if validate.Struct(d) != nil {
-		return nil, ErrFailedPrecondition
-	}
 	return d, nil
 }
