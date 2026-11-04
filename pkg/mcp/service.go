@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -34,10 +33,9 @@ type Config struct {
 	// Entries are compared byte-for-byte without normalization. Configure the
 	// serialized scheme, host, and port sent by the browser.
 	TrustedOrigins []string `validate:"dive,http_url,excludes=*"`
-	// Zero uses 1 MiB. Bounds role definitions, committed handoffs, and projected
-	// window entries, so an oversized window fails atomically instead of being
-	// truncated. A tool result repeats that projection as both text and
-	// structured content, so its serialized size is not checked.
+	// Zero uses 1 MiB. Bounds the encoded role and tape view
+	// results, so an oversized view fails atomically instead of being truncated.
+	// A tool result repeats its encoding as both text and structured content.
 	MaxResponseBytes int `validate:"omitempty,min=1024,max=16777216"`
 }
 
@@ -58,20 +56,6 @@ func NewService(c Config) (*Service, error) {
 		c.MaxResponseBytes = DefaultMaxResponseBytes
 	}
 	return &Service{config: c}, nil
-}
-
-func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error) {
-	r, err := s.config.Roles.GetRole(ctx, ref)
-	if errors.Is(err, ErrInvalidReference) {
-		return nil, ErrInvalidReference
-	}
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	if len(r.Definition) > s.config.MaxResponseBytes {
-		return nil, ErrFailedPrecondition
-	}
-	return r, nil
 }
 
 func resolve(g *Grant, input toolInput, permission string) error {

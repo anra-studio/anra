@@ -64,26 +64,26 @@ its Tape. No MCP state is recovered or copied when constructing a new service.
 `storage.EntryStorage`. Both bbolt and JSONL Tape implementations satisfy it.
 MCP cannot call `Store` through this interface. The caller supplies the matching
 Source and owner. Tape is the sole source of truth for handoff anchors and their
-fixed windows; the initialization anchor need not be the first entry.
+fixed views; the initialization anchor need not be the first entry.
 
 Two required read-only interfaces supply the remaining data:
 
 - `Config.Roles` accepts `RoleProvider.GetRole(ctx, RoleRef)`. The provider returns
-  the complete JSON object for exactly `(id, version)`, with stable contents for
-  that revision. The provider owns JSON object validation. `RoleDefinition` uses
-  only built-in validator tags: `required,json` checks presence and JSON syntax,
-  not whether the top-level value is an object. MCP does not revalidate provider
-  definitions. The provider returns `(nil, nil)`
-  for a missing revision, which MCP reports as `invalid_reference`; provider
-  errors become `unavailable`. Definitions exceeding `MaxResponseBytes` fail
-  with `failed_precondition`.
+  the `RoleDefinition` for exactly `(id, version)`, with stable contents for that
+  revision. A `Profile` holds the role's purpose, instructions and the tools it is
+  proficient with, each with its required permissions; `Profile.String()` renders
+  them into the instructions. MCP validates the definition with its validator tags
+  and reports an invalid one as `failed_precondition`. The provider returns
+  `ErrInvalidReference` for a missing revision, which MCP reports as
+  `invalid_reference`; other provider errors become `unavailable`. Encoded
+  results exceeding `MaxResponseBytes` fail with `failed_precondition`.
 - `Config.Grants` accepts `GrantVerifier.VerifyGrant(ctx, credential)`. The
   embedding runtime verifies credentials using its own authorization component,
   existing journal, or an in-memory map. Unknown or revoked credentials return
   `(nil, nil)` or `ErrPermissionDenied`; other errors become `unavailable`.
-  Verification runs on every HTTP request, including discovery. MCP additionally
-  validates expiry, permissions, Role ID and Source, then checks the exact
-  handoff sequence, target binding and TapeView on tool invocation.
+  Verification runs on every HTTP request, including discovery. `GrantVerifier`
+  owns expiry, revocation, Role and Source checks; MCP checks the exact
+  anchor sequence and tool permission on tool invocation.
 
 `Grant.AnchorSeq` and tool input use `required,number,startsnotwith=0`: a nonzero
 ASCII decimal string without leading zeros, with no integer-width limit. The
@@ -111,27 +111,22 @@ mux.Handle("/mcp", service.Handler())
 ```
 
 Before dispatching external work, the controller publishes the Role revision
-through its existing Role owner, appends an `anra.dev/anchor/intr/v1`
-`integration.handoff` anchor through Tape, and arranges the matching credential
-with its authorization component. A grant binds Role ID, handoff sequence,
-target RoleBinding, Source, snapshot head, scope, explicit permissions
-(`read_role`, `read_context_window`), and expiration. Credential delivery belongs
-to the integration. Never put credentials in prompts, Tape entries, artifacts,
-or logs. MCP provides no publication, commit, issuance or revocation methods.
+through its existing Role owner, appends a handoff anchor (for example
+`anra.dev/anchor/intr/v1`, which adds role and binding) through Tape, and
+arranges the matching credential with its authorization component. A grant is
+`{role, anchorSeq, view, permissions, expiresAt}`: the view is the Tape range
+`seqS → seqE` the handoff committed. The `GrantVerifier` guarantees these
+values are exactly those the anchor committed; MCP never parses the anchor
+summary. Credential delivery belongs to the integration. Never put credentials
+in prompts, Tape entries, artifacts, or logs. MCP provides no publication,
+commit, issuance or revocation methods.
 
-On each tool read MCP loads the handoff directly from Tape and verifies it
-against the grant. It returns the selected Role revision or projects the fixed
-window. Every sequence in `[seqS, seqE)` and the excluded
-`snapshotHead == seqE` boundary must already be persisted. Missing ranges,
-unsupported entries and incomplete tool calls fail reconstruction atomically.
-A persisted handoff requires no secondary commit record and can receive a grant
-later without another Tape write.
-
-An explicitly selected persisted prefix can be read during an active turn.
-Reads never acquire reasoning Admission or select the current Tape head. Later
-model output and observations cannot expand the window. Tape's append-only
-contract owns immutability; MCP maintains no duplicate handoff records,
-private buckets, or hashes of anchors, windows or Role definitions.
+On each tool read MCP checks that the request's `anchorSeq` equals the grant's
+and that the grant carries the tool's permission. It returns the granted Role
+revision or reads the granted view, like a borrow: the caller receives the
+range and reads the entries itself. Tape integrity and immutability belong to
+Tape and the grant issuer, not MCP. Reads never acquire reasoning Admission or
+select the current Tape head, so later entries cannot expand the view.
 
 ## Tool contract
 
@@ -144,52 +139,28 @@ in MCP `structuredContent` and the text `content` item.
 configuration:
 
 ```json
-{"id":"vesta","version":"role-revision-42","definition":{"instructions":"Help maintain Anra"}}
+{"id":"vesta","version":"role-revision-42","profile":{"purpose":"Maintain Anra","instructions":"Help maintain Anra","tools":[{"name":"read_files","permissions":["read"]}]}}
 ```
 
-`read_context_window` returns the original `view`, projected `entries`, and
-`isComplete: true`. Entries contain `seq`, `kind`, `timestamp`, and either
-`content` or `boundary`. Plain text content is a JSON string; supported ADK
-content is a JSON object retaining structured function calls and responses.
-The shared domain package `pkg/model/projection` projects Tape entries directly
-into public model events, independently of A2A and MCP. A2A serializes those
-events into its existing `ExportedEntry` payload; MCP checks tool call completion
-in the typed parts before serializing its response, without a payload
-decode round trip or a dependency on `pkg/a2a`. The `anra.context.v1` projection
-uses explicit protocol structures and recursively rejects unknown visible
-fields, including nested function response parts and media fields. Tool `args`
-and `response` objects are opaque
-JSON: unknown business keys, empty objects, large integers, decimal precision,
-and exponent notation are retained without a float64 conversion. Execution
-metadata outside `content` and private thought parts remain excluded.
+`read_tape_view` returns `{"view": …, "entries": […]}`: the granted view in
+protojson form and the entries in its range. Entries contain `seq`, `kind`,
+`timestamp`, and either `content` or `boundary`. Plain text content is a JSON
+string; supported ADK content is a JSON object retaining structured function
+calls and responses. `pkg/model/projection` projects Tape entries into public
+model events, shared with A2A. Execution metadata, owners, extensions and
+private thought parts are excluded; thought-only entries are skipped.
 
-Native boundaries retain schema, transition type, turn ID, start sequence, and
-outcome. Integration boundaries retain explicit origin application, binding,
-session, and event references. Storage owners, execution epochs, state deltas,
-arbitrary extensions, delegated task prompts, and private thoughts are excluded.
+Anchors are part of the view because they record decision and interruption
+points. Native Anra anchors become a `boundary` (schema, transition type, turn
+ID, start sequence, outcome). Other anchors, including integration handoffs,
+are exported with their summary verbatim as `content`, so handoff payloads must
+not contain information the grantee may not read. Unsupported entry kinds fail
+with `failed_precondition`.
 
-The initial projection supports plain user/assistant text, supported ADK content,
-native v1 boundaries, and integration v1 boundaries. Unknown kinds/schemas,
-legacy runner codecs, malformed events, or unsupported visible parts (including
-top-level images and executable code) fail explicitly. Known inline/file media
-inside function responses are preserved; unknown protocol structures fail.
-Incremental function-call arguments (`partialArgs`/`willContinue` on a call)
-are outside v1 and fail explicitly. Function results must match an
-earlier call by ID and name, or an unambiguous name when IDs are absent. Calls
-cannot cross boundaries or remain unresolved. Responses with `willContinue: true`
-retain the open call; only a response with false or absent `willContinue`
-closes it. Every chunk is preserved in order, and an unfinished stream fails
-atomically with `failed_precondition`. No partial window is returned.
-Thought-only windows yield `entries: []` and `isComplete: true`, distinct
-from nonexistent handoffs or missing ranges.
-
-`MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and bounds
-role definitions, the committed handoff, and the projected window entries. Each
-tool result repeats its content as text and structured JSON; its serialized size
-is not checked. Requests are capped at 16 KiB. The committed window is read with
-Tape's native range operation; only serialized projected entries consume the
-window budget. Private metadata and thought-only entries do not consume it.
-Limits fail atomically, with no truncation. Responses enforce `Cache-Control: no-store`.
+`MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and
+bounds the encoded role and view results. Each result repeats its encoding as
+text and structured JSON. Requests are capped at 16 KiB. Limits fail
+atomically, with no truncation. Responses enforce `Cache-Control: no-store`.
 
 ## Errors
 
@@ -200,9 +171,9 @@ diagnostics.
 
 | Code | Meaning |
 | --- | --- |
-| `permission_denied` | Wrong anchor/binding/Role/scope, missing tool permission, or missing/expired/revoked credential |
-| `invalid_reference` | Malformed arguments, missing/non-handoff anchor, or missing Role revision |
-| `failed_precondition` | Missing window entries or excluded boundary, unsupported/incomplete projection, or exceeded limits |
+| `permission_denied` | Wrong anchor, missing tool permission, or missing/expired/revoked credential |
+| `invalid_reference` | Malformed arguments or missing Role revision |
+| `failed_precondition` | Unsupported entry or exceeded limits |
 | `unavailable` | Tape read failure (including undecodable stored entries) or provider failure |
 
 Authentication failures return HTTP 401 with the generic `permission_denied`

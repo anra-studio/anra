@@ -2,7 +2,7 @@ package mcp
 
 import "context"
 
-// RoleProvider reads complete, valid JSON objects by immutable revision.
+// RoleProvider reads complete role definitions by immutable revision.
 // Implementations must support concurrent calls and keep each revision stable.
 // Return ErrInvalidReference for an absent revision; other errors indicate
 // the provider is unavailable. A nil error requires a non-nil definition. Returned definitions must match the requested revision and
@@ -15,7 +15,7 @@ type RoleProvider interface {
 // Implementations must support concurrent calls and check revocation on every
 // call. Return ErrPermissionDenied for unknown, revoked or expired credentials;
 // other errors indicate unavailability. A nil error requires a Grant that is
-// valid and immutable for the request and whose Role, AnchorSeq and Window
+// valid and immutable for the request and whose Role, AnchorSeq and View
 // (a valid TapeView of this service's Source) are exactly those committed by
 // the handoff anchor at AnchorSeq. MCP only checks AnchorSeq and permission;
 // it never issues credentials or reads the handoff.

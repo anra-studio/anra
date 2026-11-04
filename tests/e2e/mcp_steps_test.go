@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -30,7 +31,6 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	bolt "go.etcd.io/bbolt"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -75,7 +75,6 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^已提交一份普通 MCP 交接并签发凭证$`, func() error { return m.setup("normal") })
 	sc.Step(`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("complete stream") })
-	sc.Step(`^已提交包含未结束工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("unfinished stream") })
 	sc.Step(`^控制器使用默认 validator 验证角色定义和授权$`, func() error {
 		v := validator.New(validator.WithRequiredStructEnabled())
 		if err := v.Struct(m.role); err != nil {
@@ -88,14 +87,14 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^官方 MCP 客户端使用交接凭证连接$`, m.connect)
 	sc.Step(`^客户端仅发现两个只读上下文工具$`, m.discover)
-	sc.Step(`^两个工具返回交接绑定的角色版本和完整窗口$`, m.checkBoth)
+	sc.Step(`^两个工具返回交接绑定的角色版本和 Tape 视图$`, m.checkBoth)
 	sc.Step(`^MCP 服务重建和重复读取均不新增文件或改变 Tape$`, m.readOnly)
-	sc.Step(`^运行时将交接和窗口存入 JSONL Tape$`, m.useJSONLTape)
+	sc.Step(`^运行时将交接和视图存入 JSONL Tape$`, m.useJSONLTape)
 	sc.Step(`^控制器向 Tape 提交另一份交接$`, m.commitTapeOnly)
 	sc.Step(`^使用原凭证读取新交接$`, m.readWindow)
 	sc.Step(`^控制器为新交接签发凭证$`, func() { m.token = m.authorize(m.grant) })
 	sc.Step(`^未携带凭证读取上下文$`, func() error {
-		return m.call(anramcp.ReadContextWindow, "", m.grant.AnchorSeq, nil)
+		return m.call(anramcp.ReadTapeView, "", m.grant.AnchorSeq, nil)
 	})
 	sc.Step(`^携带以下 Authorization 请求头读取上下文$`, func(table *godog.Table) error {
 		headers := make(http.Header)
@@ -106,7 +105,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		if err != nil {
 			return err
 		}
-		return m.rawCall(anramcp.ReadContextWindow, "", args, headers)
+		return m.rawCall(anramcp.ReadTapeView, "", args, headers)
 	})
 	sc.Step(`^凭证验证服务暂时不可用$`, func() {
 		m.providers.mu.Lock()
@@ -115,7 +114,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^使用当前凭证访问另一角色的服务$`, m.readOtherRole)
 	sc.Step(`^连接仅获准读取角色$`, m.roleOnly)
-	sc.Step(`^角色工具成功且窗口工具返回 permission_denied$`, m.checkRoleOnly)
+	sc.Step(`^角色工具成功且视图工具返回 permission_denied$`, m.checkRoleOnly)
 	sc.Step(`^控制器撤销当前凭证$`, func() { m.providers.revoke(m.token) })
 	sc.Step(`^Tape 和 MCP 服务重启$`, m.restart)
 	sc.Step(`^记录两个工具的原始结果$`, m.remember)
@@ -123,13 +122,12 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^两个工具的结果逐字节保持不变$`, m.unchanged)
 	sc.Step(`^当前推理正常结束$`, m.finish)
 	sc.Step(`^角色版本更新并继续写入 Tape$`, m.grow)
-	sc.Step(`^读取 MCP 上下文窗口$`, m.readWindow)
+	sc.Step(`^读取 MCP Tape 视图$`, m.readWindow)
 	sc.Step(`^读取 MCP 角色$`, func() error {
 		return m.call(anramcp.ReadRole, m.token, m.grant.AnchorSeq, nil)
 	})
-	sc.Step(`^窗口完整且保留工具标识和所有有序响应分块$`, m.checkStream)
+	sc.Step(`^视图保留工具标识和所有有序响应分块$`, m.checkStream)
 	sc.Step(`^A2A 与 MCP 返回相同的公开条目及存储标识$`, m.checkA2AProjection)
-	sc.Step(`^离线删除交接窗口中的一条持久化记录并重启服务$`, m.removeWindowEntry)
 	sc.Step(`^MCP 返回 "([^"]+)" 且不泄露上下文或私有信息$`, m.rejected)
 	sc.Step(`^MCP 返回 HTTP (401|403) 且不泄露上下文或私有信息$`, func(status int) error {
 		if m.lastStatus != status {
@@ -145,16 +143,16 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^携带凭证从 Origin "([^"]+)" 读取上下文$`, m.originRequest)
 	sc.Step(`^从 Origin "([^"]+)" 不带凭证读取上下文$`, func(origin string) error {
-		return m.call(anramcp.ReadContextWindow, "", m.grant.AnchorSeq, map[string]string{"Origin": origin})
+		return m.call(anramcp.ReadTapeView, "", m.grant.AnchorSeq, map[string]string{"Origin": origin})
 	})
 	sc.Step(`^运行时仅信任 Origin "([^"]+)"$`, func(origin string) error {
 		return m.configureTrustedOrigins([]string{origin})
 	})
-	sc.Step(`^MCP 响应包含交接绑定的完整窗口$`, m.checkWindowResponse)
+	sc.Step(`^MCP 响应包含交接绑定的 Tape 视图$`, m.checkWindowResponse)
 }
 
 func (m *mcpScenario) readWindow() error {
-	return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil)
+	return m.call(anramcp.ReadTapeView, m.token, m.grant.AnchorSeq, nil)
 }
 
 func (m *mcpScenario) tapePath() string             { return filepath.Join(m.s.root, "mcp-tape.db") }
@@ -231,23 +229,23 @@ func (m *mcpScenario) setup(kind string) error {
 		return err
 	}
 	if kind != "normal" {
-		ref, err = m.streamWindow(kind == "complete stream")
+		ref, err = m.streamWindow()
 		if err != nil {
 			return err
 		}
 	}
-	m.role = anramcp.RoleDefinition{RoleRef: anramcp.RoleRef{ID: "vesta", Version: "revision-42"}, Definition: json.RawMessage(`{"instructions":"Help maintain Anra","tools":["read_files"]}`)}
+	m.role = anramcp.RoleDefinition{RoleRef: anramcp.RoleRef{ID: "vesta", Version: "revision-42"}, Profile: anramcp.Profile{Purpose: "Maintain Anra", Instructions: "Help maintain Anra", Tools: []anramcp.Tool{{Name: "read_files", Permissions: []string{"read"}}}}}
 	m.providers.setRole(m.role)
 	m.handoff = mcpHandoff{
 		Schema: "anra.dev/anchor/intr/v1", Type: "integration.handoff", Role: m.role.RoleRef,
 		Target: mcpTarget{Name: "lody", BindingID: "vesta-lody-private"}, Task: "implement MCP",
-		Context: anramcp.WindowRef{View: ref}, Origin: &anramcp.Origin{Name: "raft", BindingID: "vesta-raft", SessionID: "origin-session", EventID: "origin-event"},
+		Context: mcpWindowRef{View: ref}, Origin: &mcpOrigin{Name: "raft", BindingID: "vesta-raft", SessionID: "origin-session", EventID: "origin-event"},
 	}
 	seq, err := m.commitHandoff(m.handoff)
 	if err != nil {
 		return err
 	}
-	m.grant = anramcp.Grant{Role: m.role.RoleRef, AnchorSeq: seq, Window: anramcp.WindowRef{View: proto.Clone(ref).(*pb.TapeView)}, Permissions: []string{anramcp.ReadRole, anramcp.ReadContextWindow}, ExpiresAt: time.Unix(0, m.clock.Load()).Add(time.Hour)}
+	m.grant = anramcp.Grant{Role: m.role.RoleRef, AnchorSeq: seq, View: proto.Clone(ref).(*pb.TapeView), Permissions: []string{anramcp.ReadRole, anramcp.ReadTapeView}, ExpiresAt: time.Unix(0, m.clock.Load()).Add(time.Hour)}
 	m.token = m.authorize(m.grant)
 	m.serve()
 	return nil
@@ -267,7 +265,7 @@ func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
 
 // A single call with continuing chunks exercises persistence and transport;
 // protocol field filtering and number lexemes are tested in projection.
-func (m *mcpScenario) streamWindow(complete bool) (*pb.TapeView, error) {
+func (m *mcpScenario) streamWindow() (*pb.TapeView, error) {
 	state, err := m.tape.Get(m.tapeContext())
 	if err != nil {
 		return nil, err
@@ -277,11 +275,8 @@ func (m *mcpScenario) streamWindow(complete bool) (*pb.TapeView, error) {
 		return nil, err
 	}
 	chunks := []string{"first", "middle", "last"}
-	if !complete {
-		chunks = chunks[:1]
-	}
 	for i, chunk := range chunks {
-		continuing := !complete || i < len(chunks)-1
+		continuing := i < len(chunks)-1
 		content := fmt.Sprintf(`{"role":"user","parts":[{"functionResponse":{"id":"tool-42","name":"lookup","willContinue":%t,"response":{"chunk":%q}}}]}`, continuing, chunk)
 		if err := m.rawEvent(te.EntryToolResult, content); err != nil {
 			return nil, err
@@ -318,14 +313,14 @@ func (m *mcpScenario) discover() error {
 	if len(m.tools.Tools) != 2 {
 		return fmt.Errorf("tools count: %d", len(m.tools.Tools))
 	}
-	names := map[string]bool{anramcp.ReadRole: false, anramcp.ReadContextWindow: false}
+	names := map[string]bool{anramcp.ReadRole: false, anramcp.ReadTapeView: false}
 	for _, tool := range m.tools.Tools {
 		if _, ok := names[tool.Name]; !ok || tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 			return fmt.Errorf("unexpected tool: %v", tool)
 		}
 		names[tool.Name] = true
 	}
-	if !names[anramcp.ReadRole] || !names[anramcp.ReadContextWindow] {
+	if !names[anramcp.ReadRole] || !names[anramcp.ReadTapeView] {
 		return errors.New("missing context tool")
 	}
 	return nil
@@ -420,15 +415,15 @@ func (m *mcpScenario) checkBoth() error {
 		return err
 	}
 	var role anramcp.RoleDefinition
-	if json.Unmarshal(r, &role) != nil || role.RoleRef != m.role.RoleRef || !jsonEqual(role.Definition, m.role.Definition) {
+	if json.Unmarshal(r, &role) != nil || role.RoleRef != m.role.RoleRef || !reflect.DeepEqual(role.Profile, m.role.Profile) {
 		return fmt.Errorf("wrong role: %s", r)
 	}
-	w, err := m.success(anramcp.ReadContextWindow)
+	w, err := m.success(anramcp.ReadTapeView)
 	if err != nil {
 		return err
 	}
-	var window anramcp.WindowResult
-	if json.Unmarshal(w, &window) != nil || !window.IsComplete || len(window.Entries) == 0 || !jsonEqual(window.View, anchor.ProtoJSON(m.handoff.Context.View)) {
+	var window mcpWindow
+	if json.Unmarshal(w, &window) != nil || len(window.Entries) == 0 || !jsonEqual(window.View, anchor.ProtoJSON(m.handoff.Context.View)) {
 		return fmt.Errorf("wrong window: %s", w)
 	}
 	return nil
@@ -445,7 +440,7 @@ func jsonEqual(a, b []byte) bool {
 }
 
 func (m *mcpScenario) remember() error {
-	for _, tool := range []string{anramcp.ReadRole, anramcp.ReadContextWindow} {
+	for _, tool := range []string{anramcp.ReadRole, anramcp.ReadTapeView} {
 		r, err := m.success(tool)
 		if err != nil {
 			return err
@@ -456,7 +451,7 @@ func (m *mcpScenario) remember() error {
 }
 
 func (m *mcpScenario) unchanged() error {
-	for _, tool := range []string{anramcp.ReadRole, anramcp.ReadContextWindow} {
+	for _, tool := range []string{anramcp.ReadRole, anramcp.ReadTapeView} {
 		r, err := m.success(tool)
 		if err != nil {
 			return err
@@ -471,7 +466,7 @@ func (m *mcpScenario) unchanged() error {
 func (m *mcpScenario) grow() error {
 	r := m.role
 	r.Version = "revision-43"
-	r.Definition = json.RawMessage(`{"instructions":"New behavior"}`)
+	r.Profile.Instructions = "New behavior"
 	m.providers.setRole(r)
 	_, err := m.agent.Run(m.s.ctx, "new request after handoff")
 	return err
@@ -485,7 +480,7 @@ func (m *mcpScenario) restart() error {
 		return err
 	}
 	m.serve()
-	return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil)
+	return m.call(anramcp.ReadTapeView, m.token, m.grant.AnchorSeq, nil)
 }
 
 func (m *mcpScenario) hold() error {
@@ -590,60 +585,15 @@ func (m *mcpScenario) checkRoleOnly() error {
 	if _, err := m.success(anramcp.ReadRole); err != nil {
 		return err
 	}
-	if err := m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, nil); err != nil {
+	if err := m.call(anramcp.ReadTapeView, m.token, m.grant.AnchorSeq, nil); err != nil {
 		return err
 	}
 	return m.rejected("permission_denied")
 }
 
-// Stop all storage users before deleting a committed entry on disk. MCP must
-// reject the damaged persisted range even though the role provider is available.
-func (m *mcpScenario) removeWindowEntry() (err error) {
-	if err := m.close(); err != nil {
-		return err
-	}
-	db, err := bolt.Open(m.tapePath(), 0o600, nil)
-	if err != nil {
-		return err
-	}
-	err = db.Update(func(tx *bolt.Tx) error {
-		entries := tx.Bucket([]byte("entries")).Bucket([]byte("vesta")).Bucket([]byte("mcp-session"))
-		cursor := entries.Cursor()
-		for key, data := cursor.First(); key != nil; key, data = cursor.Next() {
-			var value struct{ Seq string }
-			if err := json.Unmarshal(data, &value); err != nil {
-				return err
-			}
-			if value.Seq == m.grant.Window.View.Scope.SeqS {
-				return entries.Delete(key)
-			}
-		}
-		return errors.New("physical tape entry not found")
-	})
-	if err = errors.Join(err, db.Close()); err != nil {
-		return err
-	}
-	// Reopen only MCP: agent recovery must not repair the fixture before reading.
-	m.tape, err = bbolt.NewBboltStorage("mcp-session", m.tapePath())
-	if err != nil {
-		return err
-	}
-	if err := m.tape.Init(m.tapeContext()); err != nil {
-		return err
-	}
-	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.grant.Window.View.Source, Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.grantsFor(m.grant.Window.View.Source),
-	})
-	if err != nil {
-		return err
-	}
-	m.serve()
-	return m.readWindow()
-}
-
 func (m *mcpScenario) checkWindowResponse() error {
-	var window anramcp.WindowResult
-	if m.lastStatus != http.StatusOK || json.Unmarshal(m.lastResult, &window) != nil || !window.IsComplete || len(window.Entries) == 0 || !jsonEqual(window.View, anchor.ProtoJSON(m.handoff.Context.View)) {
+	var window mcpWindow
+	if m.lastStatus != http.StatusOK || json.Unmarshal(m.lastResult, &window) != nil || len(window.Entries) == 0 || !jsonEqual(window.View, anchor.ProtoJSON(m.handoff.Context.View)) {
 		return fmt.Errorf("wrong window response: HTTP %d %s", m.lastStatus, m.lastBody)
 	}
 	return nil
@@ -653,7 +603,7 @@ func (m *mcpScenario) checkStream() error {
 	if err := m.checkWindowResponse(); err != nil {
 		return err
 	}
-	var window anramcp.WindowResult
+	var window mcpWindow
 	if err := json.Unmarshal(m.lastResult, &window); err != nil {
 		return err
 	}
@@ -710,7 +660,7 @@ func (m *mcpScenario) configureTrustedOrigins(origins []string) error {
 }
 
 func (m *mcpScenario) originRequest(origin string) error {
-	return m.call(anramcp.ReadContextWindow, m.token, m.grant.AnchorSeq, map[string]string{
+	return m.call(anramcp.ReadTapeView, m.token, m.grant.AnchorSeq, map[string]string{
 		"Origin": origin, "X-Forwarded-Host": "trusted.example", "X-Forwarded-Proto": "https", "Forwarded": "host=trusted.example;proto=https",
 	})
 }
@@ -775,7 +725,7 @@ func (m *mcpScenario) commitHandoff(h mcpHandoff) (string, error) {
 
 func (m *mcpScenario) authorize(g anramcp.Grant) string {
 	token := rand.Text()
-	g.Window.View = proto.Clone(g.Window.View).(*pb.TapeView)
+	g.View = proto.Clone(g.View).(*pb.TapeView)
 	g.Permissions = append([]string(nil), g.Permissions...)
 	m.providers.mu.Lock()
 	m.providers.grants[token] = g
@@ -788,7 +738,7 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 	if err := m.checkWindowResponse(); err != nil {
 		return err
 	}
-	var window anramcp.WindowResult
+	var window mcpWindow
 	if err := json.Unmarshal(m.lastResult, &window); err != nil {
 		return err
 	}
@@ -845,16 +795,42 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 // mcpHandoff is the controller's third-party handoff payload stored in an
 // anchor. The MCP service never parses it; the verifier fixture binds grants to it.
 type mcpHandoff struct {
-	Schema  string            `json:"schema"`
-	Type    string            `json:"type"`
-	Role    anramcp.RoleRef   `json:"role"`
-	Target  mcpTarget         `json:"target"`
-	Task    string            `json:"task"`
-	Context anramcp.WindowRef `json:"context"`
-	Origin  *anramcp.Origin   `json:"origin,omitempty"`
+	Schema  string          `json:"schema"`
+	Type    string          `json:"type"`
+	Role    anramcp.RoleRef `json:"role"`
+	Target  mcpTarget       `json:"target"`
+	Task    string          `json:"task"`
+	Context mcpWindowRef    `json:"context"`
+	Origin  *mcpOrigin `json:"origin,omitempty"`
+}
+
+type mcpOrigin struct {
+	Name      string `json:"name"`
+	BindingID string `json:"bindingId,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
+	EventID   string `json:"eventId,omitempty"`
 }
 
 type mcpTarget struct {
 	Name      string `json:"name"`
 	BindingID string `json:"bindingId"`
+}
+
+// mcpWindow decodes the public window response, keeping content bytes intact.
+type mcpWindow struct {
+	View    json.RawMessage `json:"view"`
+	Entries []struct {
+		Seq       string          `json:"seq"`
+		Kind      string          `json:"kind"`
+		Timestamp time.Time       `json:"timestamp"`
+		Content   json.RawMessage `json:"content"`
+	} `json:"entries"`
+}
+
+type mcpWindowRef struct{ View *pb.TapeView }
+
+func (w mcpWindowRef) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		View json.RawMessage `json:"view"`
+	}{anchor.ProtoJSON(w.View)})
 }

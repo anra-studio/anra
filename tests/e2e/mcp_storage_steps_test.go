@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -55,7 +56,7 @@ func (p *mcpProviders) VerifyGrant(ctx context.Context, credential string) (*anr
 func (p *mcpProviders) setRole(r anramcp.RoleDefinition) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	r.Definition = append([]byte(nil), r.Definition...)
+	r.Profile.Tools = slices.Clone(r.Profile.Tools)
 	p.roles[r.RoleRef] = r
 }
 
@@ -135,7 +136,7 @@ func (v scopedGrants) VerifyGrant(ctx context.Context, credential string) (*anra
 	if err != nil {
 		return nil, err
 	}
-	if !g.ExpiresAt.After(v.now()) || g.Role.ID != v.source.AgentId || !proto.Equal(g.Window.View.Source, v.source) {
+	if !g.ExpiresAt.After(v.now()) || g.Role.ID != v.source.AgentId || !proto.Equal(g.View.Source, v.source) {
 		return nil, anramcp.ErrPermissionDenied
 	}
 	return g, nil

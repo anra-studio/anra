@@ -10,8 +10,8 @@ import (
 )
 
 var toolDescriptions = map[string]string{
-	ReadRole:          "Read the immutable role identity and definition revision bound to the authorized handoff.",
-	ReadContextWindow: "Read the fixed TapeView and complete projected context bound to the authorized handoff.",
+	ReadRole:     "Read the immutable role identity and definition revision bound to the authorized handoff.",
+	ReadTapeView: "Read the entries of the fixed TapeView bound to the authorized handoff.",
 }
 
 // Handler exposes exactly two read-only tools using the official SDK's
@@ -26,7 +26,7 @@ func (s *Service) Handler() http.Handler {
 
 func (s *Service) newServer() *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "anra-context", Version: "1.0.0"}, nil)
-	for _, name := range []string{ReadRole, ReadContextWindow} {
+	for _, name := range []string{ReadRole, ReadTapeView} {
 		server.AddTool(&sdk.Tool{
 			Name:        name,
 			Description: toolDescriptions[name],
@@ -45,21 +45,17 @@ func (s *Service) callTool(name string) sdk.ToolHandler {
 		g, _ := ctx.Value(grantContextKey{}).(*Grant)
 		var input toolInput
 		if decode(req.Params.Arguments, &input) != nil || validate.Struct(input) != nil {
-			return s.toolResult(nil, ErrInvalidReference), nil
+			return s.toolResult(nil, ErrInvalidReference, 0), nil
 		}
 		if err := resolve(g, input, name); err != nil {
-			return s.toolResult(nil, err), nil
+			return s.toolResult(nil, err, 0), nil
 		}
-		var (
-			result any
-			err    error
-		)
 		if name == ReadRole {
-			result, err = s.role(ctx, g.Role)
-		} else {
-			result, err = s.window(ctx, g.Window.View)
+			result, err := s.role(ctx, g.Role)
+			return s.toolResult(result, err, s.config.MaxResponseBytes), nil
 		}
-		return s.toolResult(result, err), nil
+		result, err := s.readTapeView(ctx, g.View)
+		return s.toolResult(result, err, s.config.MaxResponseBytes), nil
 	}
 }
 
@@ -78,13 +74,15 @@ func errorEnvelope(err error) ErrorResponse {
 	return ErrorResponse{Error: public}
 }
 
-func (s *Service) toolResult(value any, err error) *sdk.CallToolResult {
+// toolResult encodes value once and shares it as text and structured content.
+// A positive limit bounds the encoded result; an oversized result fails whole.
+func (s *Service) toolResult(value any, err error, limit int) *sdk.CallToolResult {
 	if err != nil {
 		value = errorEnvelope(err)
 	}
 	data, marshalErr := json.Marshal(value)
-	if marshalErr != nil {
-		return s.toolResult(nil, ErrFailedPrecondition)
+	if marshalErr != nil || (limit > 0 && len(data) > limit) {
+		return s.toolResult(nil, ErrFailedPrecondition, 0)
 	}
 	return &sdk.CallToolResult{
 		Content:           []sdk.Content{&sdk.TextContent{Text: string(data)}},

@@ -10,14 +10,12 @@ import (
 	"time"
 
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
-	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/go-playground/validator/v10"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
-	ReadRole          = "read_role"
-	ReadContextWindow = "read_context_window"
+	ReadRole     = "read_role"
+	ReadTapeView = "read_tape_view"
 )
 
 // Error contains only public, non-identifying diagnostics. Storage errors and
@@ -41,58 +39,14 @@ var (
 	ErrUnavailable        = &Error{"unavailable", "context service temporarily unavailable"}
 )
 
-type RoleRef struct {
-	ID      string `json:"id" validate:"required,max=256"`
-	Version string `json:"version" validate:"required,max=256"`
-}
-
-// RoleDefinition is the complete, reproducible definition, not a live lookup by
-// display name. The caller chooses a version and cannot overwrite that version.
-// The provider must supply a valid JSON object; the tags check only presence
-// and JSON syntax, not the top-level JSON type.
-type RoleDefinition struct {
-	RoleRef
-	Definition json.RawMessage `json:"definition" validate:"required,json"`
-}
-
-type Origin struct {
-	Name      string `json:"name" validate:"required,max=256"`
-	BindingID string `json:"bindingId,omitempty" validate:"max=256"`
-	SessionID string `json:"sessionId,omitempty" validate:"max=256"`
-	EventID   string `json:"eventId,omitempty" validate:"max=256"`
-}
-
-// WindowRef uses the existing protobuf TapeView constraints. Its scope is
-// half-open and its excluded head is a persisted boundary entry.
-type WindowRef struct {
-	View *pb.TapeView `json:"view" validate:"required,structonly"`
-}
-
-func (w WindowRef) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		View json.RawMessage `json:"view"`
-	}{anchor.ProtoJSON(w.View)})
-}
-
-func (w *WindowRef) UnmarshalJSON(data []byte) error {
-	var v struct {
-		View json.RawMessage `json:"view"`
-	}
-	if err := decode(data, &v); err != nil {
-		return err
-	}
-	w.View = new(pb.TapeView)
-	return protojson.Unmarshal(v.View, w.View)
-}
-
 // Grant is supplied by a trusted controller. It authorizes reading the role
-// revision and the Tape window (SeqS to SeqE) that the handoff anchored at
+// revision and the Tape view (SeqS to SeqE) that the handoff anchored at
 // AnchorSeq committed. Tool arguments cannot establish any of these identities.
 type Grant struct {
-	Role        RoleRef   `json:"role"`
-	AnchorSeq   string    `json:"anchorSeq" validate:"required,number,startsnotwith=0"`
-	Window      WindowRef `json:"window"`
-	Permissions []string  `json:"permissions" validate:"min=1,max=2,unique,dive,oneof=read_role read_context_window"`
+	Role        RoleRef `json:"role"`
+	AnchorSeq   string  `json:"anchorSeq" validate:"required,number,startsnotwith=0"`
+	View        *pb.TapeView
+	Permissions []string  `json:"permissions" validate:"min=1,max=2,unique,dive,oneof=read_role read_tape_view"`
 	ExpiresAt   time.Time `json:"expiresAt" validate:"required"`
 }
 
