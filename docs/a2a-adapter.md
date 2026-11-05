@@ -399,9 +399,11 @@ provider thought signatures, event metadata, arbitrary extensions, and state
 deltas are excluded. View authorization includes its recorded thought content;
 it remains borrowed reference under the same provenance and does not gain
 instruction authority. Tool content is never executed merely by reading it.
-The shared `projection.Content` uses SDK tool-response media and scheduling
-types; its tool arguments and response objects retain raw JSON to avoid numeric
-coercion. It contains the public message body, excluding ADK session actions.
+The shared `projection.Content` wraps SDK content and parts, preserving media,
+files, code/results and streaming fields in order. It excludes part metadata,
+provider signatures and ADK session actions. Function and server-tool arguments
+and response objects retain raw JSON to avoid numeric coercion. Content is not
+restricted to text and function parts; historical code is reference data.
 Closing a turn does not copy its answer into a separate publication.
 Failure, cancellation, and abandonment preserve the preceding successful window.
 Grant expiry, release, revocation, idempotence, and recovery remain enforced by

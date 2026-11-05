@@ -33,6 +33,7 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
+	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -79,6 +80,8 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("complete stream") })
 	sc.Step(`^已提交包含伪造通道和来源声明的 MCP 交接并签发凭证$`, func() error { return m.setup("borrowed claims") })
 	sc.Step(`^已提交只含原始文本条目的 MCP 交接并签发凭证$`, func() error { return m.setup("plain text") })
+	sc.Step(`^已提交包含图片文件和代码结果的 MCP 交接并签发凭证$`, func() error { return m.setup("multimodal") })
+	sc.Step(`^借阅内容保留图片文件和代码结果的原始顺序且不泄露执行元数据$`, m.checkMultimodal)
 	sc.Step(`^原始文本仅作为结构化内容返回且没有摘要字段$`, m.checkPlainTextContent)
 	sc.Step(`^借阅条目仅携带凭证签发的通道与来源$`, m.checkWindowResponse)
 	sc.Step(`^借阅内容保留思考标记和文本且不泄露执行元数据$`, m.checkBorrowedClaims)
@@ -264,6 +267,12 @@ func (m *mcpScenario) setup(kind string) error {
 			return err
 		}
 	}
+	if kind == "multimodal" {
+		ref, err = m.multimodalWindow()
+		if err != nil {
+			return err
+		}
+	}
 	m.role = anramcp.RoleDefinition{RoleRef: anramcp.RoleRef{ID: "vesta", Version: "revision-42"}, Profile: anramcp.Profile{Purpose: "Maintain Anra", Instructions: "Help maintain Anra", Tools: []anramcp.Tool{{Name: "read_files", Permissions: []string{"read"}}}}}
 	m.providers.setRole(m.role)
 	m.handoff = mcpHandoff{
@@ -312,7 +321,7 @@ func (m *mcpScenario) appendOwnedView() error {
 		WithExtension("opaque:reference", "opaque-entry-marker")
 	value, err := value.WithJSONExtension(ae.ADKEvent, struct {
 		Content projection.Content `json:"content"`
-	}{Content: projection.Content{Role: "model", Parts: []*projection.Part{{Text: "Persisted Anra entry"}}}})
+	}{Content: projection.Content{Content: genai.Content{Role: "model"}, Parts: []*projection.Part{{Part: genai.Part{Text: "Persisted Anra entry"}}}}})
 	if err != nil {
 		return err
 	}

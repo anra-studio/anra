@@ -6,34 +6,63 @@ import (
 	"google.golang.org/genai"
 )
 
-// Content is public model content projected from stored ADK content. Its role
-// records history, not execution authority; the enclosing channel owns that.
-// The content and tool structures select public fields and keep business JSON
-// opaque, including number lexemes and keys that resemble protocol fields.
-// Function-response media uses the SDK's public media types directly.
+// Content wraps SDK model content, preserving its parts and historical role.
+// Channel and provenance determine authority, independently of that role.
 type Content struct {
-	Role  string  `json:"role,omitempty"`
+	genai.Content
 	Parts []*Part `json:"parts,omitempty"`
 }
 
+// Part preserves SDK content, including media and code, while excluding provider
+// signatures and execution metadata from its JSON representation. Tool payloads
+// override the SDK's maps to preserve opaque business JSON and number lexemes.
 type Part struct {
-	Text             string            `json:"text,omitempty"`
-	Thought          bool              `json:"thought,omitempty"`
+	genai.Part
 	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
+	ToolCall         *ToolCall         `json:"toolCall,omitempty"`
+	ToolResponse     *ToolResponse     `json:"toolResponse,omitempty"`
+}
+
+// partFields omits Part's codec methods. The shallower fields in partJSON shadow
+// SDK metadata during decoding and remain absent when encoding public content.
+type partFields Part
+
+type partJSON struct {
+	partFields
+	ThoughtSignature json.RawMessage `json:"thoughtSignature,omitempty"`
+	PartMetadata     json.RawMessage `json:"partMetadata,omitempty"`
+}
+
+func (p *Part) UnmarshalJSON(data []byte) error {
+	var decoded partJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*p = Part(decoded.partFields)
+	return nil
+}
+
+func (p *Part) MarshalJSON() ([]byte, error) {
+	return json.Marshal(partJSON{partFields: partFields(*p)})
 }
 
 type FunctionCall struct {
-	ID   string          `json:"id,omitempty"`
-	Name string          `json:"name,omitempty"`
+	genai.FunctionCall
 	Args json.RawMessage `json:"args,omitempty"`
 }
 
 type FunctionResponse struct {
-	ID           string                           `json:"id,omitempty"`
-	Name         string                           `json:"name,omitempty"`
-	Response     json.RawMessage                  `json:"response,omitempty"`
-	WillContinue *bool                            `json:"willContinue,omitempty"`
-	Scheduling   genai.FunctionResponseScheduling `json:"scheduling,omitempty"`
-	Parts        []*genai.FunctionResponsePart    `json:"parts,omitempty"`
+	genai.FunctionResponse
+	Response json.RawMessage `json:"response,omitempty"`
+}
+
+type ToolCall struct {
+	genai.ToolCall
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+type ToolResponse struct {
+	genai.ToolResponse
+	Response json.RawMessage `json:"response,omitempty"`
 }

@@ -174,12 +174,16 @@ the structured content rather than being flattened into ordinary text.
 Execution metadata, owners, arbitrary extensions and provider thought signatures
 are excluded. The issuer must select a view whose content the borrower may read.
 
-`projection.Content` describes the public message body, rather than an ADK
-session event. Its content and tool fields define the exported subset, with
-opaque JSON arguments/responses to preserve business number representations.
-Tool-response media and scheduling reuse `genai.FunctionResponsePart` (including
-its blob/file types) and `genai.FunctionResponseScheduling`. SDK upgrades must
-review those reused types for changes to the exported fields.
+`projection.Content` wraps `genai.Content` and its parts, rather than exporting
+an entire ADK session event. SDK media, file references, code/results, streaming
+fields and part order are preserved; projection does not discard a part for
+lacking text or a function call. Part JSON excludes `thoughtSignature` and
+`partMetadata`. Event-level execution data is never decoded into public content.
+Function-call/response and server-tool payloads override SDK maps with opaque
+JSON to preserve business number representations, including empty objects and
+business keys that happen to match metadata field names. SDK upgrades must
+review changes to the wrapped content types and exported fields. Exporting a
+historical code or tool part does not execute it.
 
 Projection routes native session messages to `primary`, native tool records to
 `observation`, and content with trusted grant provenance to `borrowed`. An

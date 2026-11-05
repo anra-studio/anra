@@ -7,6 +7,7 @@ import (
 
 	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
+	"google.golang.org/genai"
 )
 
 // ErrUnsupported means an entry cannot be faithfully projected by this version.
@@ -26,7 +27,8 @@ type Entry struct {
 // content, including thought text and markers. A non-nil provenance routes the
 // entry to Borrowed; nil is for native session content. Business args/response
 // JSON remains opaque.
-// Unknown stored fields are ignored rather than exported or revalidated.
+// SDK content is preserved; only execution metadata is excluded. Unknown stored
+// fields are ignored rather than exported or revalidated.
 func Project(raw entry.Entry, provenance *Provenance) (*Entry, error) {
 	result := &Entry{Channel: Primary, Provenance: provenance}
 	switch raw.GetKind() {
@@ -51,17 +53,16 @@ func Project(raw entry.Entry, provenance *Provenance) (*Entry, error) {
 			if raw.GetKind() == te.EntryAssistant {
 				role = "model"
 			}
-			result.Content = &Content{Role: role, Parts: []*Part{{Text: raw.Content()}}}
+			result.Content = &Content{Content: genai.Content{Role: role}, Parts: []*Part{{Part: genai.Part{Text: raw.Content()}}}}
 			return result, nil
 		default:
 			return nil, ErrUnsupported
 		}
 	}
-	content, err := projectContent(stored.Content)
-	if err != nil {
-		return nil, err
+	if stored.Content == nil {
+		return nil, ErrUnsupported
 	}
-	result.Content = content
+	result.Content = stored.Content
 	return result, nil
 }
 
@@ -69,21 +70,4 @@ func Project(raw entry.Entry, provenance *Provenance) (*Entry, error) {
 // and ignored.
 type storedEvent struct {
 	Content *Content `json:"content"`
-}
-
-func projectContent(content *Content) (*Content, error) {
-	if content == nil {
-		return nil, ErrUnsupported
-	}
-	projected := &Content{Role: content.Role}
-	for _, part := range content.Parts {
-		if part == nil {
-			continue
-		}
-		if part.Text == "" && part.FunctionCall == nil && part.FunctionResponse == nil {
-			continue
-		}
-		projected.Parts = append(projected.Parts, part)
-	}
-	return projected, nil
 }

@@ -25,6 +25,10 @@ func TestStoredExtraFieldsDoNotExpandPublicDisclosure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// SDK-backed parts may also be assembled in memory. Encoding must exclude
+	// metadata even when it did not pass through the storage decoder.
+	got.Content.Parts[0].ThoughtSignature = []byte("PRIVATE-SIGNATURE")
+	got.Content.Parts[0].PartMetadata = map[string]any{"private": "PRIVATE-METADATA"}
 	data, err := json.Marshal(got.Content)
 	if err != nil {
 		t.Fatal(err)
@@ -81,10 +85,10 @@ func TestUnreadableEventCannotBeProjected(t *testing.T) {
 
 func TestBusinessJSONSurvivesProjectionAndEncoding(t *testing.T) {
 	for _, business := range []string{
-		`{"id":9007199254740993,"fraction":0.12345678901234567890123456789,"tiny":1e-1000,"futureVisiblePart":{"text":"business data","id":9007199254740993}}`,
+		`{"id":9007199254740993,"fraction":0.12345678901234567890123456789,"tiny":1e-1000,"futureVisiblePart":{"text":"business data","id":9007199254740993},"thoughtSignature":"business data","partMetadata":{"value":"business data"}}`,
 		`{}`,
 	} {
-		raw := eventEntry(`{"parts":[{"functionCall":{"name":"lookup","args":` + business + `}},{"functionResponse":{"name":"lookup","response":` + business + `}}]}`)
+		raw := eventEntry(`{"parts":[{"functionCall":{"name":"lookup","args":` + business + `}},{"functionResponse":{"name":"lookup","response":` + business + `}},{"toolCall":{"id":"search-1","toolType":"GOOGLE_SEARCH_WEB","args":` + business + `}},{"toolResponse":{"id":"search-1","toolType":"GOOGLE_SEARCH_WEB","response":` + business + `}}]}`)
 		got, err := projection.Project(raw, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -97,10 +101,10 @@ func TestBusinessJSONSurvivesProjectionAndEncoding(t *testing.T) {
 		if err := json.Unmarshal(encoded, &roundTrip); err != nil {
 			t.Fatal(err)
 		}
-		if len(roundTrip.Parts) != 2 || roundTrip.Parts[0].FunctionCall == nil || roundTrip.Parts[1].FunctionResponse == nil {
+		if len(roundTrip.Parts) != 4 || roundTrip.Parts[0].FunctionCall == nil || roundTrip.Parts[1].FunctionResponse == nil || roundTrip.Parts[2].ToolCall == nil || roundTrip.Parts[3].ToolResponse == nil {
 			t.Fatalf("lost tool content: %s", encoded)
 		}
-		for _, data := range []json.RawMessage{roundTrip.Parts[0].FunctionCall.Args, roundTrip.Parts[1].FunctionResponse.Response} {
+		for _, data := range []json.RawMessage{roundTrip.Parts[0].FunctionCall.Args, roundTrip.Parts[1].FunctionResponse.Response, roundTrip.Parts[2].ToolCall.Args, roundTrip.Parts[3].ToolResponse.Response} {
 			if string(data) != business {
 				t.Fatalf("business JSON changed: got %s, want %s", data, business)
 			}
