@@ -7,6 +7,7 @@ import (
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/proto"
@@ -22,14 +23,16 @@ type Views interface {
 type ContextExporter struct{}
 
 const ContextMediaType = "application/vnd.anra.context-entry+json;version=1"
+const AnchorMediaType = "application/vnd.anra.anchor+json;version=1"
 
-// Export whitelists model content, excluding execution metadata, state deltas,
-// thought signatures, and arbitrary custom extensions. Thought content and tool
-// calls/results retain their structure within the lender-selected window.
+// Export returns model content or caller-selected custom anchors. Model content
+// excludes execution metadata, state deltas, thought signatures, and arbitrary
+// custom extensions. Native anchors omit ownership epochs; other schemas keep
+// their original body as text. No generic redaction is applied to foreign bodies.
 // This source-side export contains no borrower authority; the borrowing tool
 // binds the validated grant to a borrowed_context envelope before model use.
 func (ContextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
-	content, err := entry.FromTape(e).Content()
+	content, err := contextContent(e)
 	if err != nil {
 		return nil, ErrUnsupported
 	}
@@ -37,8 +40,20 @@ func (ContextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: ContextMediaType, JsonData: data}}, nil
+	mediaType := ContextMediaType
+	if e.GetKind() == anchor.Kind {
+		mediaType = AnchorMediaType
+	}
+	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: mediaType, JsonData: data}}, nil
 }
+
+func contextContent(e te.EntryLike) (any, error) {
+	if e.GetKind() == anchor.Kind {
+		return anchor.Export(e)
+	}
+	return entry.FromTape(e).Content()
+}
+
 func AdvertiseViews(card *sdk.AgentCard, endpoint string) error {
 	if err := Advertise(card, endpoint); err != nil {
 		return err
@@ -47,7 +62,7 @@ func AdvertiseViews(card *sdk.AgentCard, endpoint string) error {
 		ext := &card.Capabilities.Extensions[i]
 		if ext.URI == ExtensionURI {
 			ext.Params["viewBorrowVersion"] = 1
-			ext.Params["entryMediaTypes"] = []string{TextMediaType, ContextMediaType}
+			ext.Params["entryMediaTypes"] = []string{TextMediaType, ContextMediaType, AnchorMediaType}
 		}
 	}
 	return nil

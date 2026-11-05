@@ -63,17 +63,11 @@ func (s *Service) readTapeView(ctx context.Context, grant *Grant) (*TapeViewResu
 func exportEntry(raw entry.Entry, provenance *entry.Provenance) (*ViewEntry, error) {
 	e := &ViewEntry{Channel: entry.Borrowed, Provenance: provenance, Seq: raw.GetID().String(), Kind: string(raw.GetKind()), Timestamp: raw.GetTimestamp()}
 	if raw.GetKind() == anchor.Kind {
-		r, err := anchor.Decode(raw)
+		content, err := anchor.Export(raw)
 		if err != nil {
 			return nil, errUnsupportedEntry
 		}
-		if r == nil {
-			e.Content = raw.Body()
-			return e, nil
-		}
-		// The execution owner epoch is private runtime state.
-		r.OwnerEpoch = ""
-		e.Content = r
+		e.Content = content
 		return e, nil
 	}
 	content, err := raw.Content()

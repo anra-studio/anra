@@ -22,7 +22,7 @@ func NewViewHandler(s *Service, auth Authenticate) (http.Handler, error) {
 	}
 	server := connect.NewServer(viewAccess, validate.NewServerInterceptor())
 	tapev1connect.RegisterTapeViewServiceHandler(server, &connectViews{service: s})
-	handler, err := httpserver.NewHandler(server, MaxBodyBytes)
+	handler, err := httpserver.NewHandler(server, MaxBodyBytes, 0)
 	if err != nil {
 		return nil, err
 	}

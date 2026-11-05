@@ -18,8 +18,9 @@ const ExtensionURI = "urn:anra:a2a:tape-view:v1"
 const ExtensionHeader = "A2A-Extensions"
 const TextMediaType = "text/plain"
 const MaxPageSize = 100
+
+// MaxBodyBytes limits requests, not borrowed content returned in responses.
 const MaxBodyBytes = 1 << 20
-const MaxEntryBytes = 8 << 10
 
 const (
 	Granted = pb.DecisionStatus_DECISION_STATUS_GRANTED

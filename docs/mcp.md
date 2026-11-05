@@ -176,6 +176,11 @@ the structured content rather than being flattened into ordinary text.
 Execution metadata, owners, arbitrary extensions and provider thought signatures
 are excluded. The issuer must select a view whose content the borrower may read.
 
+Custom anchors use the same `anchor.Export` representation as peer borrowing:
+native Anra records omit `OwnerEpoch`, while foreign schema bodies remain text
+without generic redaction. Peer content responses have no fixed size cap; MCP's
+configured `MaxResponseBytes` still applies to its complete encoded tool result.
+
 `entry.Content` wraps `genai.Content` and its parts, rather than exporting
 an entire ADK session event. SDK media, file references, code/results, streaming
 fields and part order are preserved; the content codec does not discard a part for

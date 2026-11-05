@@ -289,14 +289,6 @@ func (s *Service) entries(ctx context.Context, v *pb.View) ([]*pb.ExportedEntry,
 			if x == nil || validateEntry(x) != nil || x.Seq != e.GetID().String() || x.Kind != string(e.GetKind()) || !x.Timestamp.AsTime().Equal(e.GetTimestamp()) {
 				return nil, ErrUnsupported
 			}
-			stored, err := storeEntry(x)
-			if err != nil {
-				return nil, err
-			}
-			encoded, err := json.Marshal(stored)
-			if err != nil || len(encoded) > MaxEntryBytes {
-				return nil, ErrUnsupported
-			}
 			out = append(out, x)
 			expected = expected.Next()
 		}

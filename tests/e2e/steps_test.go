@@ -154,6 +154,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 		return nil
 	})
 	initializeMCP(sc, s)
+	initializePeerContent(sc, s)
 }
 
 // Called after closing the databases so the saved files can be reopened safely.

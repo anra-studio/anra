@@ -14,5 +14,5 @@ import (
 func NewHandler(registry *Registry) (http.Handler, error) {
 	server := connect.NewServer(validate.NewServerInterceptor())
 	registryv1connect.RegisterRegistryServiceHandler(server, registry)
-	return httpserver.NewHandler(server, MaxMessageBytes)
+	return httpserver.NewHandler(server, MaxMessageBytes, MaxMessageBytes)
 }

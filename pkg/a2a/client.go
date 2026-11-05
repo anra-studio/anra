@@ -120,7 +120,7 @@ func NewClient(h *http.Client, card *sdk.AgentCard) (*Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		transport := connecthttp.NewTransport(h, base, connecthttp.WithReadMaxBytes(MaxBodyBytes), connecthttp.WithSendMaxBytes(MaxBodyBytes))
+		transport := connecthttp.NewTransport(h, base, connecthttp.WithReadMaxBytes(0), connecthttp.WithSendMaxBytes(MaxBodyBytes))
 		version, _ := json.Marshal(ext.Params["viewBorrowVersion"])
 		return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)), viewVersion: string(version) == "1"}, nil
 	}

@@ -243,15 +243,16 @@ page within an independently authorized grant, never expand its range.
 | --- | --- |
 | Default / maximum page size | 32 / 100 entries |
 | View size | Complete range selected by the lender's turn/anchor policy; no independent entry-count cap |
-| Maximum encoded entry | 8 KiB |
-| Request / response body | 1 MiB |
+| Maximum encoded entry | No fixed size cap |
+| Request body | 1 MiB |
+| Borrowed response body | No fixed size cap |
 | Maximum grant TTL | 24 hours |
 | Request ID | 256 bytes |
 | Purpose / query | 8 KiB each |
 
 The default `TextExporter` exports original user/assistant text as typed
 `text/plain` JSON strings and never copies arbitrary custom extensions. Tool,
-anchor, lifecycle and other custom entries require an explicit deterministic
+anchor, lifecycle and other custom entries require a suitable deterministic
 `Exporter`; unsupported entry kinds fail the whole grant. If using another
 exporter, update the advertised `entryMediaTypes` to its actual supported types.
 The exporter is service configuration, not part of a grant; reads project the
@@ -264,6 +265,16 @@ contains conversion from Tape's concrete entries; the runtime converts back
 with `Tape()` only at the ADK boundary because the current TapeAdapter recognizes
 its own `CustomEntry`. This preserves ADK state, legacy read adaptation and the
 existing on-disk representation without exposing extension maps to consumers.
+
+`ContextExporter` also supports selected `anchor:custom` entries using
+`application/vnd.anra.anchor+json;version=1`. It shares the anchor representation
+with MCP: native Anra records omit `OwnerEpoch`, while third-party schemas retain
+their original Body as a JSON string. This is not generic redaction of foreign
+schemas. The lender decides which complete contents belong to the granted range.
+Pagination splits entries across responses without splitting an individual
+multimodal body or limiting the total granted view. Both peer client entry
+points explicitly disable Connect's default response cap; request limits and
+the registry's separate message limits remain in place.
 
 | Connect code | Meaning |
 | --- | --- |
@@ -395,8 +406,9 @@ clients reject substitutions before reading.
 
 The window contains the completed user/model/tool conversation. Its exporter
 returns structured content as `application/vnd.anra.context-entry+json;version=1`,
-retaining recorded thought content with its `thought` marker. Execution anchors,
-provider thought signatures, event metadata, arbitrary extensions, and state
+retaining recorded thought content with its `thought` marker. The native turn
+range excludes its opening/closing control anchors. Provider thought signatures,
+event metadata, arbitrary extensions, and state
 deltas are excluded. View authorization includes its recorded thought content;
 it remains borrowed reference under the same provenance and does not gain
 instruction authority. Tool content is never executed merely by reading it.
