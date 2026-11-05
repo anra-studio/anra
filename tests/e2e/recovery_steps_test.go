@@ -128,7 +128,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 		if err != nil {
 			return err
 		}
-		if len(pages) != 1 || len(pages[0].Entries) != 2 || pages[0].Entries[0].Summary != "publish before crash" || pages[0].Entries[1].Summary != "alice: publish before crash" {
+		if len(pages) != 1 || len(pages[0].Entries) != 2 || !exportedTextIs(pages[0].Entries[0], "publish before crash") || !exportedTextIs(pages[0].Entries[1], "alice: publish before crash") {
 			return errors.New("precrash view changed")
 		}
 		return nil

@@ -36,7 +36,8 @@ type storedPayload struct {
 // storedEntry is the JSON representation that bounds an exported entry's size.
 // It contains no owner identity or CustomEntry extensions.
 type storedEntry struct {
-	tv.ProjectedEntry
+	Seq       te.Seq         `json:"seq"`
+	Kind      te.EntryKind   `json:"kind"`
 	Timestamp time.Time      `json:"timestamp"`
 	Payload   *storedPayload `json:"payload,omitempty"`
 }
@@ -49,7 +50,7 @@ func storeEntry(e *pb.ExportedEntry) (storedEntry, error) {
 	if e.GetTimestamp() == nil || e.Timestamp.CheckValid() != nil {
 		return storedEntry{}, ErrInvalidParams
 	}
-	out := storedEntry{ProjectedEntry: tv.ProjectedEntry{Seq: seq, Kind: te.EntryKind(e.Kind), Summary: e.Summary}, Timestamp: e.Timestamp.AsTime()}
+	out := storedEntry{Seq: seq, Kind: te.EntryKind(e.Kind), Timestamp: e.Timestamp.AsTime()}
 	if e.Payload != nil {
 		out.Payload = &storedPayload{MediaType: e.Payload.MediaType, Data: e.Payload.JsonData}
 	}

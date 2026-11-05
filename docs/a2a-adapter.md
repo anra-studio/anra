@@ -86,11 +86,7 @@ views, err := a2a.NewService(a2a.Config{
     Owner:   "researcher-local",
     Tape:    researcherTape,
     Journal: grantJournal,
-    Policy: a2a.BestRangePolicy{
-        Eligible: permittedAnchorCandidates,
-        Ranker:   decisionProvider,
-        TTL:      time.Hour,
-    },
+    Policy: contextPolicy, // application-owned a2a.Policy selecting authorized ranges
 })
 // Check err after each constructor/configuration call.
 executor, err := a2a.NewExecutor(researcherAnra)
@@ -126,14 +122,11 @@ subsequent read remains bound to the requester identity. For deployments that
 need credential verification, the handler callback can instead verify credentials
 and return a stable identity; the card must advertise that deployment's scheme.
 
-`Eligible` returns only permitted, exportable candidate anchor summaries and
-source ranges inside the request's `Bounds`. `Ranker` receives those summaries and the query and returns the indexes worth
-considering, best first; it owns ordering and any cut-off (top-N or threshold).
-The grant covers the first. An empty result denies; provider errors propagate
-without selecting fallback private context. A decision API that returns scores
-can be wrapped in `ScoreRanker{Scorer, Limit, MinScore}`: highest score, then
-highest confidence, then original candidate order. This local adapter seam can wrap tape-go's decision classifier; A2A permission
-policy remains in Anra.
+`Policy` selects an authorized range directly. Peer relevance ordering remains
+in `Ranker`, which receives candidate descriptions and returns their indexes,
+best first, with its own cut-off. `ScoreRanker{Scorer, Limit, MinScore}` adapts a
+scoring provider: highest score, then confidence, then original candidate order.
+Relevance ordering does not itself grant permission.
 
 ## Borrowing: borrower setup and model consumption
 
@@ -221,11 +214,16 @@ arbitrary precision. v1 supports at most one half-open range `[seq_s, seq_e)`,
 plus an empty approved range list. Status uses `DecisionStatus`; times use
 protobuf Timestamp. Exported entries contain only public projections and
 allowed payload metadata, never local owner IDs or CustomEntry extensions.
-`Payload.json_data` preserves raw JSON bytes and is base64 in ProtoJSON. The borrowing tool also uses ProtoJSON for decisions and pages. Journal JSON
-retains its independent storage format.
+`Payload.json_data` preserves raw JSON bytes and is base64 on the ProtoJSON
+transport. `ExportedEntry` has no separate text copy; retired field number 3 and
+its former name are reserved. Journal JSON retains its independent storage format.
 
 The built-in borrowing tool returns `decision` and a `borrowed_context` envelope
-containing `channel: "borrowed"`, `provenance`, and the ProtoJSON `pages`.
+containing `channel: "borrowed"`, `provenance`, and readable JSON `pages`.
+Each model-facing entry includes `seq`, `kind`, `timestamp`, `mediaType` and
+`content`; the latter is the original JSON text, preserving its number lexemes
+and part structure through ADK's map conversion without requiring base64 decoding. Decisions keep
+their ProtoJSON representation.
 Provenance binds the public grant/view ID, Source, snapshot head and approved
 scope. This envelope stays inside the model's tool result, including after Tape
 recovery; historical entry roles are not promoted into native session messages.
@@ -251,7 +249,7 @@ page within an independently authorized grant, never expand its range.
 | Request ID | 256 bytes |
 | Purpose / query | 8 KiB each |
 
-The default `TextExporter` exports user/assistant readable summaries as typed
+The default `TextExporter` exports original user/assistant text as typed
 `text/plain` JSON strings and never copies arbitrary custom extensions. Tool,
 anchor, lifecycle and other custom entries require an explicit deterministic
 `Exporter`; unsupported entry kinds fail the whole grant. If using another

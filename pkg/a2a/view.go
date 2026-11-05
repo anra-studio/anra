@@ -33,17 +33,11 @@ func (ContextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
 	if err != nil {
 		return nil, ErrUnsupported
 	}
-	var content any = projected.Summary
-	mediaType := TextMediaType
-	if projected.Event != nil {
-		content = projected.Event
-		mediaType = ContextMediaType
-	}
-	data, err := json.Marshal(content)
+	data, err := json.Marshal(projected.Content)
 	if err != nil {
 		return nil, err
 	}
-	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Summary: projected.Summary, Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: mediaType, JsonData: data}}, nil
+	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: ContextMediaType, JsonData: data}}, nil
 }
 func AdvertiseViews(card *sdk.AgentCard, endpoint string) error {
 	if err := Advertise(card, endpoint); err != nil {

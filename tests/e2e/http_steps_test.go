@@ -12,13 +12,13 @@ import (
 	"strings"
 
 	"connectrpc.com/connect/v2"
-	"github.com/cucumber/godog"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/registry"
+	"github.com/cucumber/godog"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -184,7 +184,7 @@ func initializeHTTP(sc *godog.ScenarioContext, a *applicationScenario) {
 				return err
 			}
 			page := response.Page
-			if page == nil || page.ViewId != grant.View.ViewId || page.SnapshotHead != grant.View.SnapshotHead || !proto.Equal(page.Source, grant.View.Source) || len(page.Entries) != 1 || page.Entries[0].Summary != expected || !proto.Equal(page.Entries[0], pages[0].Entries[i]) {
+			if page == nil || page.ViewId != grant.View.ViewId || page.SnapshotHead != grant.View.SnapshotHead || !proto.Equal(page.Source, grant.View.Source) || len(page.Entries) != 1 || !exportedTextIs(page.Entries[0], expected) || !proto.Equal(page.Entries[0], pages[0].Entries[i]) {
 				return fmt.Errorf("REST pagination disagrees with granted context: %v", page)
 			}
 			cursor = page.NextCursor

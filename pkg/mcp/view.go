@@ -80,13 +80,10 @@ func project(raw te.EntryLike, provenance *projection.Provenance) (*ViewEntry, e
 	if err != nil {
 		return nil, errUnsupportedEntry
 	}
-	e.Content = projected.Summary
 	e.Channel = projected.Channel
-	if event := projected.Event; event != nil {
-		if len(event.Parts) == 0 {
-			return nil, nil // no projected model content remains
-		}
-		e.Content = event
+	if len(projected.Content.Parts) == 0 {
+		return nil, nil // no projected model content remains
 	}
+	e.Content = projected.Content
 	return e, nil
 }

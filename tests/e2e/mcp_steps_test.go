@@ -77,6 +77,8 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^已提交一份普通 MCP 交接并签发凭证$`, func() error { return m.setup("normal") })
 	sc.Step(`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("complete stream") })
 	sc.Step(`^已提交包含伪造通道和来源声明的 MCP 交接并签发凭证$`, func() error { return m.setup("borrowed claims") })
+	sc.Step(`^已提交只含原始文本条目的 MCP 交接并签发凭证$`, func() error { return m.setup("plain text") })
+	sc.Step(`^原始文本仅作为结构化内容返回且没有摘要字段$`, m.checkPlainTextContent)
 	sc.Step(`^借阅条目仅携带凭证签发的通道与来源$`, m.checkWindowResponse)
 	sc.Step(`^借阅内容保留思考标记和文本且不泄露执行元数据$`, m.checkBorrowedClaims)
 	sc.Step(`^控制器为同一视图签发另一调用方的凭证$`, func() {
@@ -252,6 +254,12 @@ func (m *mcpScenario) setup(kind string) error {
 			return err
 		}
 	}
+	if kind == "plain text" {
+		ref, err = m.plainTextWindow()
+		if err != nil {
+			return err
+		}
+	}
 	m.role = anramcp.RoleDefinition{RoleRef: anramcp.RoleRef{ID: "vesta", Version: "revision-42"}, Profile: anramcp.Profile{Purpose: "Maintain Anra", Instructions: "Help maintain Anra", Tools: []anramcp.Tool{{Name: "read_files", Permissions: []string{"read"}}}}}
 	m.providers.setRole(m.role)
 	m.handoff = mcpHandoff{
@@ -279,6 +287,44 @@ func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
 		Extensions: map[string]any{"adk:event": `{"content":` + content + `,"stateDelta":{"private":"PRIVATE-STATE"}}`},
 	})
 	return err
+}
+
+func (m *mcpScenario) plainTextWindow() (*pb.TapeView, error) {
+	first, err := m.append(te.EntryUser, "Original user content")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := m.append(te.EntryAssistant, "Original model content"); err != nil {
+		return nil, err
+	}
+	head, err := m.append(te.EntryAssistant, "excluded committed boundary")
+	if err != nil {
+		return nil, err
+	}
+	return &pb.TapeView{Source: m.agent.Source(), SnapshotHead: head.GetID().String(), Scope: &pb.EntryRange{SeqS: first.GetID().String(), SeqE: head.GetID().String()}}, nil
+}
+
+func (m *mcpScenario) checkPlainTextContent() error {
+	if err := m.checkWindowResponse(); err != nil {
+		return err
+	}
+	var window mcpWindow
+	if err := json.Unmarshal(m.lastResult, &window); err != nil {
+		return err
+	}
+	if len(window.Entries) != 2 || bytes.Contains(m.lastResult, []byte(`"summary":`)) {
+		return errors.New("view duplicated or lost its original content")
+	}
+	for i, want := range []struct{ role, text string }{{"user", "Original user content"}, {"model", "Original model content"}} {
+		var content projection.Event
+		if err := json.Unmarshal(window.Entries[i].Content, &content); err != nil {
+			return err
+		}
+		if content.Role != want.role || len(content.Parts) != 1 || content.Parts[0].Text != want.text || content.Parts[0].Thought {
+			return fmt.Errorf("entry %d changed its original text or role", i)
+		}
+	}
+	return nil
 }
 
 func (m *mcpScenario) claimedWindow() (*pb.TapeView, error) {
@@ -870,7 +916,7 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 		if exported.Seq != entry.Seq || exported.Kind != entry.Kind || !exported.Timestamp.AsTime().Equal(entry.Timestamp) || exported.Payload == nil || !bytes.Equal(exported.Payload.JsonData, entry.Content) {
 			return fmt.Errorf("A2A and MCP entry %d differ: %v / %s", i, exported, entry.Content)
 		}
-		if bytes.Contains(exported.Payload.JsonData, []byte("PRIVATE-")) || strings.Contains(exported.Summary, "PRIVATE-") {
+		if bytes.Contains(exported.Payload.JsonData, []byte("PRIVATE-")) {
 			return fmt.Errorf("A2A entry %d leaked private data", i)
 		}
 	}

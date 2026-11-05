@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
@@ -21,6 +22,24 @@ type borrowArgs struct {
 	RequestID string `json:"requestId"`
 	Purpose   string `json:"purpose"`
 	Query     string `json:"query"`
+}
+
+// Context pages presented to the model carry the original JSON text. Keeping it
+// as a string preserves number lexemes through ADK's map[string]any conversion.
+type contextPage struct {
+	ViewID       string         `json:"viewId"`
+	Source       *pb.Source     `json:"source"`
+	SnapshotHead string         `json:"snapshotHead"`
+	Entries      []contextEntry `json:"entries"`
+	NextCursor   string         `json:"nextCursor,omitempty"`
+}
+
+type contextEntry struct {
+	Seq       string    `json:"seq"`
+	Kind      string    `json:"kind"`
+	Timestamp time.Time `json:"timestamp"`
+	MediaType string    `json:"mediaType,omitempty"`
+	Content   string    `json:"content,omitempty"`
 }
 
 // NewBorrowTool binds the built-in borrowing tool to an already resolved client.
@@ -92,11 +111,14 @@ func borrowContext(ctx context.Context, client *a2a.Client, req *pb.BorrowReques
 	}
 	result := map[string]any{"decision": value}
 	if len(pages) > 0 {
-		contextPages := make([]map[string]any, 0, len(pages))
+		contextPages := make([]contextPage, 0, len(pages))
 		for _, page := range pages {
-			value, err := messageObject(page)
-			if err != nil {
-				return nil, nil, err
+			value := contextPage{ViewID: page.ViewId, Source: page.Source, SnapshotHead: page.SnapshotHead, NextCursor: page.NextCursor, Entries: make([]contextEntry, 0, len(page.Entries))}
+			for _, entry := range page.Entries {
+				value.Entries = append(value.Entries, contextEntry{
+					Seq: entry.Seq, Kind: entry.Kind, Timestamp: entry.Timestamp.AsTime(),
+					MediaType: entry.Payload.GetMediaType(), Content: string(entry.Payload.GetJsonData()),
+				})
 			}
 			contextPages = append(contextPages, value)
 		}
@@ -117,8 +139,7 @@ func borrowContext(ctx context.Context, client *a2a.Client, req *pb.BorrowReques
 	return result, decision, nil
 }
 
-// messageObject keeps canonical ProtoJSON field names and encoded payload bytes
-// in ADK tool results, rather than encoding generated Go struct fields directly.
+// messageObject keeps the decision's canonical ProtoJSON representation.
 func messageObject(message proto.Message) (map[string]any, error) {
 	encoded, err := protojson.Marshal(message)
 	if err != nil {

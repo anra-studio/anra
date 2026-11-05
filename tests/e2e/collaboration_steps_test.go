@@ -690,7 +690,7 @@ func (c *collaborationScenario) checkView(client *a2a.Client, v *pb.View) error 
 	}
 	for i, expected := range []struct{ kind, text string }{{"user", "publish"}, {"assistant", "published finding"}} {
 		e := pages[0].Entries[i]
-		if e.Kind != expected.kind || e.Summary != expected.text || e.Payload.MediaType != a2a.ContextMediaType {
+		if e.Kind != expected.kind || !exportedTextIs(e, expected.text) || e.Payload.MediaType != a2a.ContextMediaType {
 			return fmt.Errorf("wrong context entry: %v", e)
 		}
 	}
@@ -1262,7 +1262,7 @@ func (c *collaborationScenario) toolWindow() error {
 			return fmt.Errorf("incorrect context entry %d: %v", i, e)
 		}
 	}
-	if pages[0].Entries[0].Summary != "research with tools" || pages[0].Entries[3].Summary != "shared-reasoning-marker"+answer {
+	if !exportedTextIs(pages[0].Entries[0], "research with tools") {
 		return errors.New("view lost its prompt, authorized reasoning or long answer")
 	}
 	exported, _ := json.Marshal(pages[0])
@@ -1283,6 +1283,14 @@ func (c *collaborationScenario) toolWindow() error {
 			return errors.New("view lost the original thought text, marker or part order")
 		}
 	}
+	var finalContent projection.Event
+	if err := json.Unmarshal(pages[0].Entries[3].Payload.JsonData, &finalContent); err != nil {
+		return err
+	}
+	if len(finalContent.Parts) != 2 || finalContent.Parts[1].Thought || finalContent.Parts[1].Text != answer {
+		return errors.New("view lost its complete final answer")
+	}
+
 	for _, index := range []int{1, 2} {
 		if !strings.Contains(string(pages[0].Entries[index].Payload.JsonData), "context-tool-finding") {
 			return fmt.Errorf("structured tool content missing: %v", pages[0].Entries[index])

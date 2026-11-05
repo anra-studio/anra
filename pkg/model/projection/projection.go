@@ -5,7 +5,6 @@ package projection
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 )
@@ -13,17 +12,14 @@ import (
 // ErrUnsupported means an entry cannot be faithfully projected by this version.
 var ErrUnsupported = errors.New("unsupported entry projection")
 
-// Entry is an entry's public model input. Event holds structured model content;
-// when absent, Summary is the plain user/assistant text. For structured events,
-// Summary concatenates the authorized text parts, including thoughts, and never
-// uses the stored summary. Event retains each part's thought marker.
+// Entry is an entry's public model input. Content preserves structured parts,
+// including thought markers. Plain text entries become a single text part.
 // Provenance overrides native routing for borrowed content, including tool
 // observations; historical roles cannot promote its authority.
 type Entry struct {
 	Channel    Channel     `json:"channel"`
 	Provenance *Provenance `json:"provenance,omitempty"`
-	Summary    string      `json:"summary"`
-	Event      *Event      `json:"event,omitempty"`
+	Content    *Event      `json:"content"`
 }
 
 // Project removes private execution metadata while preserving authorized model
@@ -48,7 +44,11 @@ func Project(raw te.EntryLike, provenance *Provenance) (*Entry, error) {
 	if !exists {
 		switch raw.GetKind() {
 		case te.EntryUser, te.EntryAssistant:
-			entry.Summary = raw.GetSummary()
+			role := "user"
+			if raw.GetKind() == te.EntryAssistant {
+				role = "model"
+			}
+			entry.Content = &Event{Role: role, Parts: []*Part{{Text: raw.GetSummary()}}}
 			return entry, nil
 		default:
 			return nil, ErrUnsupported
@@ -58,11 +58,11 @@ func Project(raw te.EntryLike, provenance *Provenance) (*Entry, error) {
 	if !ok {
 		return nil, ErrUnsupported
 	}
-	event, summary, err := projectEvent(payload)
+	event, err := projectEvent(payload)
 	if err != nil {
 		return nil, err
 	}
-	entry.Summary, entry.Event = summary, event
+	entry.Content = event
 	return entry, nil
 }
 
@@ -88,13 +88,12 @@ type storedContent struct {
 	Parts []*Part `json:"parts"`
 }
 
-func projectEvent(payload string) (*Event, string, error) {
+func projectEvent(payload string) (*Event, error) {
 	var stored storedEvent
 	if json.Unmarshal([]byte(payload), &stored) != nil || stored.Content == nil {
-		return nil, "", ErrUnsupported
+		return nil, ErrUnsupported
 	}
 	projected := &Event{Role: stored.Content.Role}
-	var summary strings.Builder
 	for _, part := range stored.Content.Parts {
 		if part == nil {
 			continue
@@ -103,7 +102,6 @@ func projectEvent(payload string) (*Event, string, error) {
 			continue
 		}
 		projected.Parts = append(projected.Parts, part)
-		summary.WriteString(part.Text)
 	}
-	return projected, summary.String(), nil
+	return projected, nil
 }

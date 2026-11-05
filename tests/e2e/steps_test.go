@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -446,13 +447,36 @@ func (s *scenario) decisionIs(want string) error {
 	}
 	return nil
 }
+
+// exportedTextIs checks the complete text payload; structured events must
+// retain a single ordinary text part rather than a flattened derivative.
+func exportedTextIs(e *pb.ExportedEntry, want string) bool {
+	if e == nil || e.Payload == nil {
+		return false
+	}
+	switch e.Payload.MediaType {
+	case a2a.TextMediaType:
+		var text string
+		return json.Unmarshal(e.Payload.JsonData, &text) == nil && text == want
+	case a2a.ContextMediaType:
+		var content projection.Event
+		if json.Unmarshal(e.Payload.JsonData, &content) != nil || len(content.Parts) != 1 || content.Parts[0] == nil {
+			return false
+		}
+		part := content.Parts[0]
+		return !part.Thought && part.Text == want && part.FunctionCall == nil && part.FunctionResponse == nil
+	default:
+		return false
+	}
+}
+
 func (s *scenario) readFirst() error {
 	var err error
 	s.firstPage, err = s.client.Read(s.ctx, &pb.ReadRequest{ViewId: s.decision.View.ViewId, PageSize: 1})
 	if err != nil {
 		return err
 	}
-	if len(s.firstPage.Entries) != 1 || s.firstPage.Entries[0].Summary != "bbolt requires a single writer" || s.firstPage.NextCursor == "" {
+	if len(s.firstPage.Entries) != 1 || !exportedTextIs(s.firstPage.Entries[0], "bbolt requires a single writer") || s.firstPage.NextCursor == "" {
 		return fmt.Errorf("unexpected first page: %v", s.firstPage)
 	}
 	return nil
@@ -472,7 +496,7 @@ func (s *scenario) finishSnapshot() error {
 	if err != nil {
 		return err
 	}
-	if len(page.Entries) != 1 || page.Entries[0].Summary != "concurrent updates need version checks" || page.Entries[0].Seq != "2" || page.NextCursor != "" || page.SnapshotHead != s.firstPage.SnapshotHead || !proto.Equal(page.Source, s.firstPage.Source) {
+	if len(page.Entries) != 1 || !exportedTextIs(page.Entries[0], "concurrent updates need version checks") || page.Entries[0].Seq != "2" || page.NextCursor != "" || page.SnapshotHead != s.firstPage.SnapshotHead || !proto.Equal(page.Source, s.firstPage.Source) {
 		return fmt.Errorf("original snapshot was not preserved: %v", page)
 	}
 	return nil
@@ -672,15 +696,35 @@ func (s *scenario) checkBorrowedContext() error {
 			if envelope.Borrowed.Channel != projection.Borrowed || p.GrantID != decision.View.ViewId || !proto.Equal(p.Source, decision.View.Source) || p.SnapshotHead != decision.View.SnapshotHead || !proto.Equal(p.Scope, decision.View.Ranges[0]) {
 				return errors.New("model tool result lost its borrowed channel or authorized provenance")
 			}
-			var page pb.Page
-			if err := protojson.Unmarshal(envelope.Borrowed.Pages[0], &page); err != nil {
+			var page struct {
+				ViewID       string     `json:"viewId"`
+				Source       *pb.Source `json:"source"`
+				SnapshotHead string     `json:"snapshotHead"`
+				Entries      []struct {
+					Seq       string `json:"seq"`
+					MediaType string `json:"mediaType"`
+					Content   string `json:"content"`
+				} `json:"entries"`
+			}
+			if err := json.Unmarshal(envelope.Borrowed.Pages[0], &page); err != nil {
 				return err
 			}
-			if page.Source.GetAgentId() != "researcher" || page.Source.GetTapeId() != "researcher-incarnation" || page.ViewId != decision.View.ViewId || page.SnapshotHead != "2" || len(page.Entries) != 2 {
+			var fields struct {
+				Entries []map[string]json.RawMessage `json:"entries"`
+			}
+			if err := json.Unmarshal(envelope.Borrowed.Pages[0], &fields); err != nil {
+				return err
+			}
+			for _, entry := range fields.Entries {
+				if _, exists := entry["summary"]; exists {
+					return errors.New("borrowed tool result contains a separate flattened copy")
+				}
+			}
+			if page.Source.GetAgentId() != "researcher" || page.Source.GetTapeId() != "researcher-incarnation" || page.ViewID != decision.View.ViewId || page.SnapshotHead != "2" || len(page.Entries) != 2 {
 				return fmt.Errorf("borrowed context lost provenance: %v", &page)
 			}
 			for i, text := range []string{"bbolt requires a single writer", "concurrent updates need version checks"} {
-				if page.Entries[i].Seq != fmt.Sprint(i+1) || page.Entries[i].Summary != text {
+				if page.Entries[i].Seq != fmt.Sprint(i+1) || page.Entries[i].MediaType != a2a.TextMediaType || page.Entries[i].Content != strconv.Quote(text) {
 					return fmt.Errorf("unexpected borrowed finding: %v", page.Entries[i])
 				}
 			}

@@ -144,7 +144,8 @@ message Payload {
 message ExportedEntry {
   string seq = 1 [(buf.validate.field).string.pattern = "^(0|[1-9][0-9]*)$"];
   string kind = 2;
-  string summary = 3;
+  reserved 3;
+  reserved "summary";
   google.protobuf.Timestamp timestamp = 4 [(buf.validate.field).required = true];
   Payload payload = 5;
 }

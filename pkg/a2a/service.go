@@ -55,7 +55,7 @@ func (TextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Summary: e.GetSummary(), Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: TextMediaType, JsonData: data}}, nil
+	return &pb.ExportedEntry{Seq: e.GetID().String(), Kind: string(e.GetKind()), Timestamp: timestamppb.New(e.GetTimestamp()), Payload: &pb.Payload{MediaType: TextMediaType, JsonData: data}}, nil
 }
 
 // Journal is the durable grant store a Service publishes to. *journal.Store is

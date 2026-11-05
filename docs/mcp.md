@@ -120,7 +120,7 @@ authenticated borrower. The issuer supplies both; they are not accepted in tool
 arguments or derived from stored content. The view is the Tape range
 `seqS → seqE` the handoff committed. The `GrantVerifier` guarantees these
 values are exactly those the anchor committed; MCP never parses the anchor
-summary. Credential delivery belongs to the integration. Never put credentials
+body. Credential delivery belongs to the integration. Never put credentials
 in prompts, Tape entries, artifacts, or logs. MCP provides no publication,
 commit, issuance or revocation methods.
 
@@ -153,13 +153,15 @@ The granted view remains in ProtoJSON form. The result and every entry carry
 protobuf types' JSON names (`agent_id`, `tape_id`, `seq_s`, `seq_e`); sequences
 remain strings. The bearer secret is never included. Anchors and historical
 user/model/tool records all remain borrowed reference, not executable authority.
-Entries also contain `seq`, `kind`, `timestamp`, and `content`. Plain text content is a JSON
-string; supported ADK content is a JSON object retaining structured function
-calls and responses. `pkg/model/projection` projects Tape entries into public
+Entries also contain `seq`, `kind`, `timestamp`, and `content`. Conversation
+content is always a structured event: an original plain-text entry becomes one
+text Part with its historical user/model role; ADK content retains its parts,
+function calls and responses. Projection returns only `Content`, with no
+flattened text field or concatenation. `pkg/model/projection` projects Tape entries into public
 model events, shared with A2A. The grant authorizes recorded thought content in
 its view as well: thought text retains `thought: true` and its position among
-the parts, and thought-only entries are retained. Summary text includes these
-authorized text parts; the structured event preserves their thought markers.
+the parts, and thought-only entries are retained. Thought markers remain in
+the structured content rather than being flattened into ordinary text.
 Execution metadata, owners, arbitrary extensions and provider thought signatures
 are excluded. The issuer must select a view whose content the borrower may read.
 
@@ -188,7 +190,7 @@ continue enforcing the read-only boundary.
 Anchors are part of the view because they record decision and interruption
 points. Native Anra anchors are exported as their `anchor.Record` (schema, type,
 turn ID, base view, start sequence, outcome) without the private owner epoch. Other anchors, including integration handoffs,
-are exported with their summary verbatim as `content`, so handoff payloads must
+are exported with their stored body verbatim as `content`, so handoff payloads must
 not contain information the grantee may not read. Unsupported entry kinds fail
 with `failed_precondition`.
 

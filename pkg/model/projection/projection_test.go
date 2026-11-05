@@ -27,14 +27,14 @@ func TestStoredExtraFieldsDoNotExpandPublicDisclosure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(got.Event)
+	data, err := json.Marshal(got.Content)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Summary != "public" || got.Channel != projection.Borrowed || got.Provenance != provenance || bytes.Contains(data, []byte("PRIVATE-")) {
+	if got.Channel != projection.Borrowed || got.Provenance != provenance || bytes.Contains(data, []byte("PRIVATE-")) {
 		t.Fatalf("stored fields changed disclosure or authority: %s", data)
 	}
-	if len(got.Event.Parts) != 3 || got.Event.Parts[1].FunctionCall.Name != "lookup" || string(got.Event.Parts[2].FunctionResponse.Parts[0].InlineData.Data) != "image" {
+	if len(got.Content.Parts) != 3 || got.Content.Parts[1].FunctionCall.Name != "lookup" || string(got.Content.Parts[2].FunctionResponse.Parts[0].InlineData.Data) != "image" {
 		t.Fatalf("public content lost during filtering: %s", data)
 	}
 }
@@ -82,7 +82,7 @@ func TestBusinessJSONSurvivesProjectionAndEncoding(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		encoded, err := json.Marshal(got.Event)
+		encoded, err := json.Marshal(got.Content)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,10 +103,10 @@ func TestBusinessJSONSurvivesProjectionAndEncoding(t *testing.T) {
 
 func TestThoughtContentRetainsMarkersAndOmitsExecutionMetadata(t *testing.T) {
 	for _, tc := range []struct {
-		name, parts, summary, encoded string
+		name, parts, encoded string
 	}{
-		{"mixed", `[{"text":"Shared reasoning","thought":true,"futurePrivate":true},{"text":"public","thoughtSignature":"PRIVATE-SIGNATURE"}]`, "Shared reasoningpublic", `{"role":"model","parts":[{"text":"Shared reasoning","thought":true},{"text":"public"}]}`},
-		{"thought only", `[{"text":"Shared reasoning","thought":true,"thoughtSignature":"PRIVATE-SIGNATURE"}]`, "Shared reasoning", `{"role":"model","parts":[{"text":"Shared reasoning","thought":true}]}`},
+		{"mixed", `[{"text":"Shared reasoning","thought":true,"futurePrivate":true},{"text":"public","thoughtSignature":"PRIVATE-SIGNATURE"}]`, `{"role":"model","parts":[{"text":"Shared reasoning","thought":true},{"text":"public"}]}`},
+		{"thought only", `[{"text":"Shared reasoning","thought":true,"thoughtSignature":"PRIVATE-SIGNATURE"}]`, `{"role":"model","parts":[{"text":"Shared reasoning","thought":true}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			provenance := &projection.Provenance{GrantID: "trusted-grant"}
@@ -114,12 +114,12 @@ func TestThoughtContentRetainsMarkersAndOmitsExecutionMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			encoded, err := json.Marshal(got.Event)
+			encoded, err := json.Marshal(got.Content)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Summary != tc.summary || string(encoded) != tc.encoded || got.Channel != projection.Borrowed || got.Provenance != provenance {
-				t.Fatalf("unexpected public projection: summary %q, event %s", got.Summary, encoded)
+			if string(encoded) != tc.encoded || got.Channel != projection.Borrowed || got.Provenance != provenance {
+				t.Fatalf("unexpected public projection: %s", encoded)
 			}
 		})
 	}

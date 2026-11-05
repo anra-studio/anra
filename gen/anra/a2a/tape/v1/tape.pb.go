@@ -711,7 +711,6 @@ type ExportedEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Seq           string                 `protobuf:"bytes,1,opt,name=seq,proto3" json:"seq,omitempty"`
 	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	Summary       string                 `protobuf:"bytes,3,opt,name=summary,proto3" json:"summary,omitempty"`
 	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Payload       *Payload               `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -758,13 +757,6 @@ func (x *ExportedEntry) GetSeq() string {
 func (x *ExportedEntry) GetKind() string {
 	if x != nil {
 		return x.Kind
-	}
-	return ""
-}
-
-func (x *ExportedEntry) GetSummary() string {
-	if x != nil {
-		return x.Summary
 	}
 	return ""
 }
@@ -1050,13 +1042,12 @@ const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\aPayload\x12&\n" +
 	"\n" +
 	"media_type\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\tmediaType\x12$\n" +
-	"\tjson_data\x18\x02 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\bjsonData\"\xe0\x01\n" +
+	"\tjson_data\x18\x02 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\bjsonData\"\xd5\x01\n" +
 	"\rExportedEntry\x12*\n" +
 	"\x03seq\x18\x01 \x01(\tB\x18\xbaH\x15r\x132\x11^(0|[1-9][0-9]*)$R\x03seq\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x18\n" +
-	"\asummary\x18\x03 \x01(\tR\asummary\x12@\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12@\n" +
 	"\ttimestamp\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\ttimestamp\x123\n" +
-	"\apayload\x18\x05 \x01(\v2\x19.anra.a2a.tape.v1.PayloadR\apayload\"\xfd\x01\n" +
+	"\apayload\x18\x05 \x01(\v2\x19.anra.a2a.tape.v1.PayloadR\apayloadJ\x04\b\x03\x10\x04R\asummary\"\xfd\x01\n" +
 	"\x04Page\x12 \n" +
 	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\x128\n" +
 	"\x06source\x18\x02 \x01(\v2\x18.anra.a2a.tape.v1.SourceB\x06\xbaH\x03\xc8\x01\x01R\x06source\x12=\n" +

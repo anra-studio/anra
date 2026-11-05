@@ -126,10 +126,10 @@ and `errors.As` for `protovalidate.ValidationError` or configuration
 HTTP transport limits encoded/decompressed RPC messages to 1 MiB. Borrowed pages
 retain source, view, snapshot, and sequence provenance checks in `Client.ReadView`.
 `Client.BorrowContext` reuses those checks, while `pkg/agent/tools` formats the
-generated results as model-facing ProtoJSON objects.
+decisions as ProtoJSON and pages as readable JSON content, without duplicate text fields.
 The lender's selected turn/anchor range defines the complete view size. There
 is no separate maximum-entry cap or truncation of that range; pagination only
-splits its transport. `Eligible`/`Policy` supplies the turn boundaries.
+splits its transport. `Policy` supplies the turn boundaries.
 
 ## Collaboration metadata
 
