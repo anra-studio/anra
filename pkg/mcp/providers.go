@@ -20,6 +20,9 @@ type RoleProvider interface {
 // (a valid TapeView of this service's Source) are exactly those committed by
 // the handoff anchor at AnchorSeq. MCP only checks AnchorSeq and permission;
 // it never issues credentials or reads the handoff.
+// ID is a public grant reference, distinct from the secret bearer token. Caller
+// identifies the authenticated borrower. Both are issuer-owned provenance and
+// must remain stable across repeated reads, not be taken from tool arguments.
 type GrantVerifier interface {
 	VerifyGrant(ctx context.Context, credential string) (*Grant, error)
 }

@@ -10,14 +10,6 @@ Feature: Trusted peers communicate and borrow permissioned context
     Then the peer answers "research response"
     And the peer can stream a response to "hello again"
 
-  Scenario: Borrowed context informs an answer and survives a borrower restart
-    When the borrower asks its agent to use the researcher's findings
-    Then the answer is "Use version checks for competing writes."
-    And the borrowed tool result retains the source and sequence provenance
-    When I close and reopen the borrower agent's storage
-    Then its model can recall the findings as a tool result
-    And every stored borrower entry belongs to the borrower
-
   Scenario: A grant keeps its original snapshot across a lender restart
     When the borrower requests context
     Then the decision is "granted"

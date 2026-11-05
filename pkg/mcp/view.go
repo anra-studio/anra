@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"time"
 
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
@@ -17,20 +16,29 @@ var errUnsupportedEntry = &Error{"failed_precondition", "committed view contains
 // ViewEntry exposes only whitelisted model input, or an anchor. It never
 // serializes the storage owner, arbitrary extensions, state deltas, or thoughts.
 type ViewEntry struct {
-	Seq       string    `json:"seq"`
-	Kind      string    `json:"kind"`
-	Timestamp time.Time `json:"timestamp"`
-	Content   any       `json:"content,omitempty"`
+	Channel    projection.Channel     `json:"channel"`
+	Provenance *projection.Provenance `json:"provenance"`
+	Seq        string                 `json:"seq"`
+	Kind       string                 `json:"kind"`
+	Timestamp  time.Time              `json:"timestamp"`
+	Content    any                    `json:"content,omitempty"`
 }
 
 type TapeViewResult struct {
-	View    json.RawMessage `json:"view"`
-	Entries []ViewEntry     `json:"entries"`
+	Channel    projection.Channel    `json:"channel"`
+	Provenance projection.Provenance `json:"provenance"`
+	View       json.RawMessage       `json:"view"`
+	Entries    []ViewEntry           `json:"entries"`
 }
 
 // readTapeView returns the entries of the granted view. Persisted range
 // integrity is the Tape owner's concern, not this service's.
-func (s *Service) readTapeView(ctx context.Context, view *pb.TapeView) (*TapeViewResult, error) {
+func (s *Service) readTapeView(ctx context.Context, grant *Grant) (*TapeViewResult, error) {
+	view := grant.View
+	provenance := projection.Provenance{
+		Caller: grant.Caller, GrantID: grant.ID, Source: view.Source,
+		SnapshotHead: view.SnapshotHead, Scope: view.Scope,
+	}
 	batch, err := s.config.Tape.Range(s.tapeContext(ctx), tv.EntryRange{
 		SeqS: te.MustParseSeq(view.Scope.SeqS),
 		SeqE: te.MustParseSeq(view.Scope.SeqE),
@@ -38,9 +46,9 @@ func (s *Service) readTapeView(ctx context.Context, view *pb.TapeView) (*TapeVie
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	result := &TapeViewResult{View: anchor.ProtoJSON(view), Entries: make([]ViewEntry, 0, len(batch.Raw))}
+	result := &TapeViewResult{Channel: projection.Borrowed, Provenance: provenance, View: anchor.ProtoJSON(view), Entries: make([]ViewEntry, 0, len(batch.Raw))}
 	for _, raw := range batch.Raw {
-		e, err := project(raw)
+		e, err := project(raw, &provenance)
 		if err != nil {
 			return nil, err
 		}
@@ -51,8 +59,8 @@ func (s *Service) readTapeView(ctx context.Context, view *pb.TapeView) (*TapeVie
 	return result, nil
 }
 
-func project(raw te.EntryLike) (*ViewEntry, error) {
-	e := &ViewEntry{Seq: raw.GetID().String(), Kind: string(raw.GetKind()), Timestamp: raw.GetTimestamp()}
+func project(raw te.EntryLike, provenance *projection.Provenance) (*ViewEntry, error) {
+	e := &ViewEntry{Channel: projection.Borrowed, Provenance: provenance, Seq: raw.GetID().String(), Kind: string(raw.GetKind()), Timestamp: raw.GetTimestamp()}
 	if raw.GetKind() == anchor.Kind {
 		r, err := anchor.Decode(raw)
 		if err != nil {
@@ -67,11 +75,12 @@ func project(raw te.EntryLike) (*ViewEntry, error) {
 		e.Content = r
 		return e, nil
 	}
-	projected, err := projection.Project(raw)
+	projected, err := projection.Project(raw, provenance)
 	if err != nil {
 		return nil, errUnsupportedEntry
 	}
 	e.Content = projected.Summary
+	e.Channel = projected.Channel
 	if event := projected.Event; event != nil {
 		if len(event.Parts) == 0 {
 			return nil, nil // thought-only input has no public model content

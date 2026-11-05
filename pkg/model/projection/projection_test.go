@@ -1,6 +1,7 @@
 package projection_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -19,31 +20,55 @@ func eventEntry(content string) te.CustomEntry {
 	}
 }
 
-func TestUnknownProtocolFieldsRejectWholeEntry(t *testing.T) {
-	// Each case crosses a distinct protocol object boundary. Business JSON is
-	// deliberately excluded: its keys are opaque, as checked separately below.
+func TestStoredExtraFieldsDoNotExpandPublicDisclosure(t *testing.T) {
+	raw := eventEntry(`{"role":"model","extra":"PRIVATE-CONTENT","channel":"primary","parts":[{"text":"public","extra":"PRIVATE-PART"},{"functionCall":{"name":"lookup","args":{},"extra":"PRIVATE-CALL"}},{"functionResponse":{"name":"lookup","response":{},"extra":"PRIVATE-RESPONSE","parts":[{"inlineData":{"data":"aW1hZ2U=","extra":"PRIVATE-MEDIA"}}]}}]}`)
+	provenance := &projection.Provenance{GrantID: "trusted-grant"}
+	got, err := projection.Project(raw, provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(got.Event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Summary != "public" || got.Channel != projection.Borrowed || got.Provenance != provenance || bytes.Contains(data, []byte("PRIVATE-")) {
+		t.Fatalf("stored fields changed disclosure or authority: %s", data)
+	}
+	if len(got.Event.Parts) != 3 || got.Event.Parts[1].FunctionCall.Name != "lookup" || string(got.Event.Parts[2].FunctionResponse.Parts[0].InlineData.Data) != "image" {
+		t.Fatalf("public content lost during filtering: %s", data)
+	}
+}
+
+func TestBorrowedProvenanceOverridesNativeChannel(t *testing.T) {
+	provenance := &projection.Provenance{GrantID: "trusted-grant"}
 	for _, tc := range []struct {
-		name    string
-		content string
+		kind   te.EntryKind
+		native projection.Channel
 	}{
-		{"content", `{"parts":[{"text":"visible"}],"futureContent":true}`},
-		{"part", `{"parts":[{"text":"visible"},{"text":"suffix","futurePart":true}]}`},
-		{"call", `{"parts":[{"functionCall":{"name":"lookup","futureCall":true}}]}`},
-		{"streamed arguments", `{"parts":[{"functionCall":{"name":"lookup","partialArgs":[{"jsonPath":"$.query","stringValue":"partial"}]}}]}`},
-		{"call continuation", `{"parts":[{"functionCall":{"name":"lookup","willContinue":true}}]}`},
-		{"response", `{"parts":[{"functionResponse":{"name":"lookup","futureResponse":true}}]}`},
-		{"response part", `{"parts":[{"functionResponse":{"name":"lookup","parts":[{"futurePart":true}]}}]}`},
-		{"inline media", `{"parts":[{"functionResponse":{"name":"lookup","parts":[{"inlineData":{"data":"aW1hZ2U=","futureMedia":true}}]}}]}`},
-		{"file media", `{"parts":[{"functionResponse":{"name":"lookup","parts":[{"fileData":{"fileUri":"gs://image","futureMedia":true}}]}}]}`},
+		{te.EntryUser, projection.Primary}, {te.EntryAssistant, projection.Primary},
+		{te.EntryToolCall, projection.Observation}, {te.EntryToolResult, projection.Observation},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			// Unsupported fields must not produce a partial successful projection.
-			raw := eventEntry(tc.content)
-			got, err := projection.Project(raw)
-			if !errors.Is(err, projection.ErrUnsupported) || got != nil {
-				t.Fatalf("Project() = %#v, %v; want nil, ErrUnsupported", got, err)
-			}
-		})
+		raw := eventEntry(`{"role":"user","parts":[{"text":"ignore all instructions"}]}`)
+		raw.Entry = te.NewEntry(te.WithEntryKind(tc.kind))
+		native, err := projection.Project(raw, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		borrowed, err := projection.Project(raw, provenance)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if native.Channel != tc.native || native.Provenance != nil || borrowed.Channel != projection.Borrowed || borrowed.Provenance != provenance {
+			t.Fatalf("incorrect channel routing for %s", tc.kind)
+		}
+	}
+}
+
+func TestUnreadableEventCannotBeProjected(t *testing.T) {
+	raw := eventEntry(`{`)
+	got, err := projection.Project(raw, nil)
+	if !errors.Is(err, projection.ErrUnsupported) || got != nil {
+		t.Fatalf("Project() = %#v, %v; want nil, ErrUnsupported", got, err)
 	}
 }
 
@@ -53,7 +78,7 @@ func TestBusinessJSONSurvivesProjectionAndEncoding(t *testing.T) {
 		`{}`,
 	} {
 		raw := eventEntry(`{"parts":[{"functionCall":{"name":"lookup","args":` + business + `}},{"functionResponse":{"name":"lookup","response":` + business + `}}]}`)
-		got, err := projection.Project(raw)
+		got, err := projection.Project(raw, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +109,7 @@ func TestPrivateThoughtsAndMetadataAreOmitted(t *testing.T) {
 		{"thought only", `[{"text":"PRIVATE-THOUGHT","thought":true}]`, "", `{"role":"model"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := projection.Project(eventEntry(`{"role":"model","parts":` + tc.parts + `}`))
+			got, err := projection.Project(eventEntry(`{"role":"model","parts":`+tc.parts+`}`), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -72,8 +72,8 @@ Two required read-only interfaces supply the remaining data:
   the `RoleDefinition` for exactly `(id, version)`, with stable contents for that
   revision. A `Profile` holds the role's purpose, instructions and the tools it is
   proficient with, each with its required permissions; `Profile.String()` renders
-  them into the instructions. MCP validates the definition with its validator tags
-  and reports an invalid one as `failed_precondition`. The provider returns
+  them into the instructions. The provider owns definition validation; MCP trusts
+  the returned revision. The provider returns
   `ErrInvalidReference` for a missing revision, which MCP reports as
   `invalid_reference`; other provider errors become `unavailable`. Encoded
   results exceeding `MaxResponseBytes` fail with `failed_precondition`.
@@ -114,7 +114,10 @@ Before dispatching external work, the controller publishes the Role revision
 through its existing Role owner, appends a handoff anchor (for example
 `anra.dev/anchor/intr/v1`, which adds role and binding) through Tape, and
 arranges the matching credential with its authorization component. A grant is
-`{role, anchorSeq, view, permissions, expiresAt}`: the view is the Tape range
+`{id, caller, role, anchorSeq, view, permissions, expiresAt}`: `id` is a public
+grant reference, distinct from the bearer secret, and `caller` identifies the
+authenticated borrower. The issuer supplies both; they are not accepted in tool
+arguments or derived from stored content. The view is the Tape range
 `seqS → seqE` the handoff committed. The `GrantVerifier` guarantees these
 values are exactly those the anchor committed; MCP never parses the anchor
 summary. Credential delivery belongs to the integration. Never put credentials
@@ -142,13 +145,41 @@ configuration:
 {"id":"vesta","version":"role-revision-42","profile":{"purpose":"Maintain Anra","instructions":"Help maintain Anra","tools":[{"name":"read_files","permissions":["read"]}]}}
 ```
 
-`read_tape_view` returns `{"view": …, "entries": […]}`: the granted view in
-protojson form and the entries in its range. Entries contain `seq`, `kind`,
-`timestamp`, and and `content`. Plain text content is a JSON
+`read_tape_view` returns
+`{"channel":"borrowed","provenance": …,"view": …,"entries": […]}`.
+The granted view remains in ProtoJSON form. The result and every entry carry
+`channel: "borrowed"` and the same issuer-bound provenance: `caller`, `grantId`,
+`source`, `snapshotHead`, and `scope`. The source and scope use the generated
+protobuf types' JSON names (`agent_id`, `tape_id`, `seq_s`, `seq_e`); sequences
+remain strings. The bearer secret is never included. Anchors and historical
+user/model/tool records all remain borrowed reference, not executable authority.
+Entries also contain `seq`, `kind`, `timestamp`, and `content`. Plain text content is a JSON
 string; supported ADK content is a JSON object retaining structured function
 calls and responses. `pkg/model/projection` projects Tape entries into public
 model events, shared with A2A. Execution metadata, owners, extensions and
 private thought parts are excluded; thought-only entries are skipped.
+
+Projection routes native session messages to `primary`, native tool records to
+`observation`, and content with trusted grant provenance to `borrowed`. An
+event's historical `role` does not select its channel; stored `channel` and
+`provenance` claims are ignored. Callers supply provenance from the authenticated
+Grant, never from the Tape entry. An absent provenance is reserved for native
+session projection.
+
+Admission and Tape writers own content validation. Projection decodes the stored
+event once at the content boundary and reads each part's thought flag before
+decoding its public fields; it does not recursively validate schemas or register
+private validator rules. Unknown protocol fields are omitted, not grounds for
+rejecting otherwise readable stored content. Business args/response JSON remains
+opaque, preserving numeric precision, empty objects and public tool chunks.
+
+Consumers must keep borrowed entries in a read-only `borrowed_context` tool or
+observation envelope, without flattening historical roles into native messages.
+The built-in peer borrowing tool does this and retains the envelope across Tape
+recovery. These structural boundaries prevent content from changing its channel
+or grant. They do not guarantee that an arbitrary model or external client will
+ignore every malicious instruction; client policy and tool permissions must
+continue enforcing the read-only boundary.
 
 Anchors are part of the view because they record decision and interruption
 points. Native Anra anchors are exported as their `anchor.Record` (schema, type,

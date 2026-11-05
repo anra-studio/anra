@@ -1,9 +1,8 @@
-// Package projection defines the public model representation of Tape entries.
-// It owns supported protocol fields and privacy rules, independently of transport.
+// Package projection routes committed Tape content into semantic channels and
+// removes private execution data. Admission and storage own format validation.
 package projection
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -17,26 +16,38 @@ var ErrUnsupported = errors.New("unsupported entry projection")
 // Entry is an entry's public model input. Event holds structured model content;
 // when absent, Summary is the plain user/assistant text. For structured events,
 // Summary concatenates public text parts and never uses the stored summary.
-// Storage identity and transport envelopes remain the caller's responsibility.
+// Provenance overrides native routing for borrowed content, including tool
+// observations; historical roles cannot promote its authority.
 type Entry struct {
-	Summary string
-	Event   *Event
+	Channel    Channel     `json:"channel"`
+	Provenance *Provenance `json:"provenance,omitempty"`
+	Summary    string      `json:"summary"`
+	Event      *Event      `json:"event,omitempty"`
 }
 
 // Project removes private execution metadata and thoughts while preserving
-// supported model content. Unknown visible protocol fields fail explicitly. Business args/response JSON remains opaque.
-func Project(raw te.EntryLike) (*Entry, error) {
+// public model content. A non-nil provenance routes the entry to Borrowed;
+// nil is for native session content. Business args/response JSON remains opaque.
+// Unknown stored fields are ignored rather than exported or revalidated.
+func Project(raw te.EntryLike, provenance *Provenance) (*Entry, error) {
+	entry := &Entry{Channel: Primary, Provenance: provenance}
 	switch raw.GetKind() {
-	case te.EntryUser, te.EntryAssistant, te.EntryToolCall, te.EntryToolResult:
+	case te.EntryUser, te.EntryAssistant:
+	case te.EntryToolCall, te.EntryToolResult:
+		entry.Channel = Observation
 	default:
 		return nil, ErrUnsupported
+	}
+	if provenance != nil {
+		entry.Channel = Borrowed
 	}
 	extensions := extensionsOf(raw)
 	value, exists := extensions["adk:event"]
 	if !exists {
 		switch raw.GetKind() {
 		case te.EntryUser, te.EntryAssistant:
-			return &Entry{Summary: raw.GetSummary()}, nil
+			entry.Summary = raw.GetSummary()
+			return entry, nil
 		default:
 			return nil, ErrUnsupported
 		}
@@ -49,7 +60,8 @@ func Project(raw te.EntryLike) (*Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Entry{Summary: summary, Event: event}, nil
+	entry.Summary, entry.Event = summary, event
+	return entry, nil
 }
 
 func extensionsOf(e te.EntryLike) map[string]any {
@@ -63,42 +75,52 @@ func extensionsOf(e te.EntryLike) map[string]any {
 	}
 }
 
+// storedEvent reads only content; execution metadata outside it is private
+// and ignored.
+type storedEvent struct {
+	Content *storedContent `json:"content"`
+}
+
+type storedContent struct {
+	Role  string        `json:"role"`
+	Parts []*storedPart `json:"parts"`
+}
+
+// storedPart is a visible part, or a private thought whose body is never read.
+type storedPart struct {
+	Part
+	Thought bool `json:"thought"`
+}
+
+func (p *storedPart) UnmarshalJSON(data []byte) error {
+	var visibility struct {
+		Thought bool `json:"thought"`
+	}
+	if err := json.Unmarshal(data, &visibility); err != nil {
+		return err
+	}
+	if visibility.Thought {
+		p.Thought = true
+		return nil
+	}
+	return json.Unmarshal(data, (*plainPart)(p))
+}
+
+type plainPart storedPart
+
 func projectEvent(payload string) (*Event, string, error) {
-	// Execution metadata outside content is intentionally private and ignored.
-	var event struct {
-		Content json.RawMessage `json:"content" validate:"required,jsonobject"`
-	}
-	if err := json.Unmarshal([]byte(payload), &event); err != nil || validate.Struct(event) != nil {
+	var stored storedEvent
+	if json.Unmarshal([]byte(payload), &stored) != nil || stored.Content == nil {
 		return nil, "", ErrUnsupported
 	}
-	var input struct {
-		Role  string            `json:"role"`
-		Parts []json.RawMessage `json:"parts"`
-	}
-	if strictJSON(event.Content, &input) != nil {
-		return nil, "", ErrUnsupported
-	}
-	projected := &Event{Role: input.Role}
+	projected := &Event{Role: stored.Content.Role}
 	var summary strings.Builder
-	for _, raw := range input.Parts {
-		var visibility struct {
-			Thought bool `json:"thought"`
-		}
-		if bytes.Equal(raw, []byte("null")) || json.Unmarshal(raw, &visibility) != nil {
-			return nil, "", ErrUnsupported
-		}
-		if visibility.Thought {
+	for _, part := range stored.Content.Parts {
+		if part == nil {
 			continue
 		}
-		var part struct {
-			Part
-			Thought          bool            `json:"thought"`
-			ThoughtSignature json.RawMessage `json:"thoughtSignature"`
-		}
-		// DisallowUnknownFields recurses through every protocol object, including
-		// response parts and media. It stops at opaque args/response RawMessages.
-		if strictJSON(raw, &part) != nil || validate.Struct(part.Part) != nil {
-			return nil, "", ErrUnsupported
+		if part.Thought {
+			continue
 		}
 		if part.Text == "" && part.FunctionCall == nil && part.FunctionResponse == nil {
 			continue
@@ -107,12 +129,4 @@ func projectEvent(payload string) (*Event, string, error) {
 		summary.WriteString(part.Text)
 	}
 	return projected, summary.String(), nil
-}
-
-// Input RawMessages have already passed json.Unmarshal, so each contains one
-// complete JSON value. No interface{} or float64 participates in projection.
-func strictJSON(data []byte, value any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	return decoder.Decode(value)
 }

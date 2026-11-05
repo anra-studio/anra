@@ -20,6 +20,7 @@ import (
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	a2a "github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
+	"github.com/anra-studio/anra/pkg/model/projection"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
 	entry "github.com/scbizu/tape-go/pkg/tape/entry"
@@ -117,11 +118,13 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the borrower discovers the researcher and sends "([^"]*)"$`, s.sendMessage)
 	sc.Step(`^the peer answers "([^"]*)"$`, s.answerIs)
 	sc.Step(`^the peer can stream a response to "([^"]*)"$`, s.streamMessage)
-	sc.Step(`^the borrower asks its agent to use the researcher's findings$`, s.borrowWithAgent)
-	sc.Step(`^the borrowed tool result retains the source and sequence provenance$`, s.checkBorrowedContext)
-	sc.Step(`^I close and reopen the borrower agent's storage$`, s.reopenLocalTape)
-	sc.Step(`^its model can recall the findings as a tool result$`, s.recallBorrowedContext)
-	sc.Step(`^every stored borrower entry belongs to the borrower$`, s.checkLocalOwnership)
+	sc.Step(`^研究者节点提供两条发现和持久化授权$`, s.setupPeer)
+	sc.Step(`^本地角色借阅研究者上下文$`, s.borrowWithAgent)
+	sc.Step(`^借阅回答为 "([^"]*)"$`, s.answerIs)
+	sc.Step(`^模型仅在带来源凭据的借阅工具结果中收到上下文$`, s.checkBorrowedContext)
+	sc.Step(`^借阅角色的存储重启$`, s.reopenLocalTape)
+	sc.Step(`^模型仍以借阅工具结果回忆上下文$`, s.recallBorrowedContext)
+	sc.Step(`^所有持久化条目仍归借阅角色所有$`, s.checkLocalOwnership)
 	sc.Step(`^the borrower requests context$`, s.borrow)
 	sc.Step(`^the decision is "([^"]*)"$`, s.decisionIs)
 	sc.Step(`^the borrower reads the first finding$`, s.readFirst)
@@ -638,13 +641,22 @@ func (s *scenario) borrowWithAgent() error {
 }
 func (s *scenario) checkBorrowedContext() error {
 	for _, message := range s.lastRequest.Messages {
+		if message.Role != runner.RoleTool && (strings.Contains(message.Text, "bbolt requires a single writer") || strings.Contains(message.Text, "concurrent updates need version checks")) {
+			return errors.New("borrowed findings were promoted into a native conversation message")
+		}
+	}
+	for _, message := range s.lastRequest.Messages {
 		if message.Role != runner.RoleTool {
 			continue
 		}
 		for _, result := range message.ToolResults {
 			var envelope struct {
-				Decision json.RawMessage   `json:"decision"`
-				Context  []json.RawMessage `json:"context"`
+				Decision json.RawMessage `json:"decision"`
+				Borrowed struct {
+					Channel    projection.Channel    `json:"channel"`
+					Provenance projection.Provenance `json:"provenance"`
+					Pages      []json.RawMessage     `json:"pages"`
+				} `json:"borrowed_context"`
 			}
 			if err := json.Unmarshal(result.Result, &envelope); err != nil {
 				return err
@@ -653,11 +665,15 @@ func (s *scenario) checkBorrowedContext() error {
 			if err := protojson.Unmarshal(envelope.Decision, &decision); err != nil {
 				return err
 			}
-			if decision.Status != a2a.Granted || decision.View == nil || len(envelope.Context) != 1 {
+			if decision.Status != a2a.Granted || decision.View == nil || len(envelope.Borrowed.Pages) != 1 {
 				return fmt.Errorf("borrowed result lacks a grant and context: %s", result.Result)
 			}
+			p := envelope.Borrowed.Provenance
+			if envelope.Borrowed.Channel != projection.Borrowed || p.GrantID != decision.View.ViewId || !proto.Equal(p.Source, decision.View.Source) || p.SnapshotHead != decision.View.SnapshotHead || !proto.Equal(p.Scope, decision.View.Ranges[0]) {
+				return errors.New("model tool result lost its borrowed channel or authorized provenance")
+			}
 			var page pb.Page
-			if err := protojson.Unmarshal(envelope.Context[0], &page); err != nil {
+			if err := protojson.Unmarshal(envelope.Borrowed.Pages[0], &page); err != nil {
 				return err
 			}
 			if page.Source.GetAgentId() != "researcher" || page.Source.GetTapeId() != "researcher-incarnation" || page.ViewId != decision.View.ViewId || page.SnapshotHead != "2" || len(page.Entries) != 2 {

@@ -42,7 +42,10 @@ var (
 // Grant is supplied by a trusted controller. It authorizes reading the role
 // revision and the Tape view (SeqS to SeqE) that the handoff anchored at
 // AnchorSeq committed. Tool arguments cannot establish any of these identities.
+// ID and Caller are public issuer-owned provenance; ID is not the bearer secret.
 type Grant struct {
+	ID          string  `json:"id" validate:"required,max=256"`
+	Caller      string  `json:"caller" validate:"required,max=256"`
 	Role        RoleRef `json:"role"`
 	AnchorSeq   string  `json:"anchorSeq" validate:"required,number,startsnotwith=0"`
 	View        *pb.TapeView

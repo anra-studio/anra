@@ -224,6 +224,15 @@ allowed payload metadata, never local owner IDs or CustomEntry extensions.
 `Payload.json_data` preserves raw JSON bytes and is base64 in ProtoJSON. The borrowing tool also uses ProtoJSON for decisions and pages. Journal JSON
 retains its independent storage format.
 
+The built-in borrowing tool returns `decision` and a `borrowed_context` envelope
+containing `channel: "borrowed"`, `provenance`, and the ProtoJSON `pages`.
+Provenance binds the public grant/view ID, Source, snapshot head and approved
+scope. This envelope stays inside the model's tool result, including after Tape
+recovery; historical entry roles are not promoted into native session messages.
+The tool describes borrowed content as read-only reference. Channel labels are
+not a guarantee against a model following adversarial text; execution permissions
+remain the runtime's responsibility.
+
 Bounds can only narrow selection. A grant references the source identity, the
 snapshot head and the granted range. The tape is append-only, so that reference
 identifies the content: grants carry no session, exporter name or content

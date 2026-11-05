@@ -54,7 +54,7 @@ func (s *Service) callTool(name string) sdk.ToolHandler {
 			result, err := s.role(ctx, g.Role)
 			return s.toolResult(result, err, s.config.MaxResponseBytes), nil
 		}
-		result, err := s.readTapeView(ctx, g.View)
+		result, err := s.readTapeView(ctx, g)
 		return s.toolResult(result, err, s.config.MaxResponseBytes), nil
 	}
 }

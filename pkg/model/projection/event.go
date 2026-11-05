@@ -2,13 +2,13 @@ package projection
 
 import "encoding/json"
 
-// Event is the version 1 public model event projected from stored ADK content.
-// Its protocol structures are explicit: upgrading an SDK must not silently
-// expand the projection's supported fields. Business JSON is opaque,
+// Event is public model content projected from stored ADK content. Its role
+// records history, not execution authority; the enclosing channel owns that.
+// Explicit fields keep SDK upgrades from expanding disclosure. Business JSON is opaque,
 // including number lexemes and keys that resemble protocol fields.
 type Event struct {
 	Role  string  `json:"role,omitempty"`
-	Parts []*Part `json:"parts,omitempty" validate:"dive,required"`
+	Parts []*Part `json:"parts,omitempty"`
 }
 
 type Part struct {
@@ -19,17 +19,17 @@ type Part struct {
 
 type FunctionCall struct {
 	ID   string          `json:"id,omitempty"`
-	Name string          `json:"name,omitempty" validate:"required"`
-	Args json.RawMessage `json:"args,omitempty" validate:"omitempty,jsonobject"`
+	Name string          `json:"name,omitempty"`
+	Args json.RawMessage `json:"args,omitempty"`
 }
 
 type FunctionResponse struct {
 	ID           string          `json:"id,omitempty"`
-	Name         string          `json:"name,omitempty" validate:"required"`
-	Response     json.RawMessage `json:"response,omitempty" validate:"omitempty,jsonobject"`
+	Name         string          `json:"name,omitempty"`
+	Response     json.RawMessage `json:"response,omitempty"`
 	WillContinue *bool           `json:"willContinue,omitempty"`
-	Scheduling   string          `json:"scheduling,omitempty" validate:"omitempty,oneof=SCHEDULING_UNSPECIFIED SILENT WHEN_IDLE INTERRUPT"`
-	Parts        []*ResponsePart `json:"parts,omitempty" validate:"dive,required"`
+	Scheduling   string          `json:"scheduling,omitempty"`
+	Parts        []*ResponsePart `json:"parts,omitempty"`
 }
 
 type ResponsePart struct {
