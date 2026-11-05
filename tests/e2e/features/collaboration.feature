@@ -85,10 +85,6 @@ Feature: Anchor-backed nonblocking peer collaboration
       | revocation  |
       | expiry      |
 
-  Scenario: A TapeView retains the completed tool conversation and long final answer
-    Given a collaboration agent
-    Then Bob borrows Alice's completed tool conversation as a TapeView while she thinks
-
   Scenario: An ancestor callback uses BUSY and borrowed findings to finish
     Given a collaboration agent
     And Alice has completed a shareable answer

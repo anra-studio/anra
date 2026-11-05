@@ -24,8 +24,8 @@ type ContextExporter struct{}
 const ContextMediaType = "application/vnd.anra.context-entry+json;version=1"
 
 // Export whitelists model content, excluding execution metadata, state deltas,
-// thought parts, and arbitrary custom extensions. Tool calls/results retain
-// their structured content within the lender-selected completed window.
+// thought signatures, and arbitrary custom extensions. Thought content and tool
+// calls/results retain their structure within the lender-selected window.
 // This source-side export contains no borrower authority; the borrowing tool
 // binds the validated grant to a borrowed_context envelope before model use.
 func (ContextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {

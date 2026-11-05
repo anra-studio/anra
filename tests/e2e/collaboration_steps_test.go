@@ -23,6 +23,7 @@ import (
 	"github.com/anra-studio/anra/pkg/agent"
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	"github.com/anra-studio/anra/pkg/model/projection"
 	"github.com/anra-studio/anra/pkg/registry"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
@@ -121,6 +122,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		return ctx, err
 	})
 	sc.Step(`^a collaboration agent$`, c.setup)
+	sc.Step(`^已启动协作角色$`, c.setup)
 	sc.Step(`^Alice's tape contains a custom anchor with schema "([^"]+)"$`, func(schema string) error {
 		// Deliberately reuse a native type with fields that are invalid in v1:
 		// the schema, rather than the type or field names, owns interpretation.
@@ -138,7 +140,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^Bob borrows Alice's completed tool conversation as a TapeView while she thinks$`, c.toolWindow)
+	sc.Step(`^Bob 在 Alice 推理期间借阅包含思考和完整工具对话的快照$`, c.toolWindow)
 	sc.Step(`^generated collaboration metadata roundtrips through A2A$`, c.protobufRoundtrip)
 	sc.Step(`^collaboration rejects request metadata with (.+) before reasoning$`, c.rejectRequestMetadata)
 	sc.Step(`^the client rejects response metadata with (.+)$`, c.rejectResponseMetadata)
@@ -1260,12 +1262,26 @@ func (c *collaborationScenario) toolWindow() error {
 			return fmt.Errorf("incorrect context entry %d: %v", i, e)
 		}
 	}
-	if pages[0].Entries[0].Summary != "research with tools" || pages[0].Entries[3].Summary != answer {
-		return errors.New("view lost its prompt or long answer")
+	if pages[0].Entries[0].Summary != "research with tools" || pages[0].Entries[3].Summary != "shared-reasoning-marker"+answer {
+		return errors.New("view lost its prompt, authorized reasoning or long answer")
 	}
 	exported, _ := json.Marshal(pages[0])
-	if strings.Contains(string(exported), "private-thought-marker") || strings.Contains(string(exported), "adk:event") {
-		return errors.New("view leaked thought parts or event metadata")
+	if strings.Contains(string(exported), "adk:event") {
+		return errors.New("view leaked event metadata")
+	}
+	for _, e := range pages[0].Entries {
+		if strings.Contains(string(e.Payload.JsonData), "thoughtSignature") || strings.Contains(string(e.Payload.JsonData), "adk:event") {
+			return errors.New("view leaked provider thought signatures or event metadata")
+		}
+	}
+	for _, index := range []int{1, 3} {
+		var event projection.Event
+		if err := json.Unmarshal(pages[0].Entries[index].Payload.JsonData, &event); err != nil {
+			return err
+		}
+		if len(event.Parts) == 0 || !event.Parts[0].Thought || event.Parts[0].Text != "shared-reasoning-marker" {
+			return errors.New("view lost the original thought text, marker or part order")
+		}
 	}
 	for _, index := range []int{1, 2} {
 		if !strings.Contains(string(pages[0].Entries[index].Payload.JsonData), "context-tool-finding") {
@@ -1297,8 +1313,8 @@ func (c *collaborationScenario) toolWindow() error {
 		return err
 	}
 	stored, _ := json.Marshal(physical)
-	if !strings.Contains(string(stored), "private-thought-marker") {
-		return errors.New("fixture did not persist a thought part to test export filtering")
+	if !strings.Contains(string(stored), "shared-reasoning-marker") || !strings.Contains(string(stored), "thoughtSignature") {
+		return errors.New("fixture did not persist thought content and provider signatures")
 	}
 	for _, e := range physical {
 		if e.GetKind().IsAnchor() && strings.Contains(e.GetSummary(), answer) {
@@ -1332,7 +1348,7 @@ func (m thoughtCollaborationModel) GenerateContent(ctx context.Context, r *model
 	return func(yield func(*model.LLMResponse, error) bool) {
 		for response, err := range m.LLM.GenerateContent(ctx, r, stream) {
 			if response != nil && response.Content != nil {
-				response.Content.Parts = append([]*genai.Part{{Text: "private-thought-marker", Thought: true}}, response.Content.Parts...)
+				response.Content.Parts = append([]*genai.Part{{Text: "shared-reasoning-marker", Thought: true, ThoughtSignature: []byte("private-thought-signature")}}, response.Content.Parts...)
 			}
 			if !yield(response, err) {
 				return

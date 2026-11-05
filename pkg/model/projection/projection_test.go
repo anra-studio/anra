@@ -101,15 +101,16 @@ func TestBusinessJSONSurvivesProjectionAndEncoding(t *testing.T) {
 	}
 }
 
-func TestPrivateThoughtsAndMetadataAreOmitted(t *testing.T) {
+func TestThoughtContentRetainsMarkersAndOmitsExecutionMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name, parts, summary, encoded string
 	}{
-		{"mixed", `[{"text":"PRIVATE-THOUGHT","thought":true,"futurePrivate":true},{"text":"public","thoughtSignature":"PRIVATE-SIGNATURE"}]`, "public", `{"role":"model","parts":[{"text":"public"}]}`},
-		{"thought only", `[{"text":"PRIVATE-THOUGHT","thought":true}]`, "", `{"role":"model"}`},
+		{"mixed", `[{"text":"Shared reasoning","thought":true,"futurePrivate":true},{"text":"public","thoughtSignature":"PRIVATE-SIGNATURE"}]`, "Shared reasoningpublic", `{"role":"model","parts":[{"text":"Shared reasoning","thought":true},{"text":"public"}]}`},
+		{"thought only", `[{"text":"Shared reasoning","thought":true,"thoughtSignature":"PRIVATE-SIGNATURE"}]`, "Shared reasoning", `{"role":"model","parts":[{"text":"Shared reasoning","thought":true}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := projection.Project(eventEntry(`{"role":"model","parts":`+tc.parts+`}`), nil)
+			provenance := &projection.Provenance{GrantID: "trusted-grant"}
+			got, err := projection.Project(eventEntry(`{"role":"model","parts":`+tc.parts+`}`), provenance)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,7 +118,7 @@ func TestPrivateThoughtsAndMetadataAreOmitted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Summary != tc.summary || string(encoded) != tc.encoded {
+			if got.Summary != tc.summary || string(encoded) != tc.encoded || got.Channel != projection.Borrowed || got.Provenance != provenance {
 				t.Fatalf("unexpected public projection: summary %q, event %s", got.Summary, encoded)
 			}
 		})

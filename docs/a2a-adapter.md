@@ -389,8 +389,11 @@ clients reject substitutions before reading.
 
 The window contains the completed user/model/tool conversation. Its exporter
 returns structured content as `application/vnd.anra.context-entry+json;version=1`,
-excluding thought parts, execution anchors, event metadata, arbitrary extensions,
-and state deltas. Tool content is borrowed context and never executed by reading.
+retaining recorded thought content with its `thought` marker. Execution anchors,
+provider thought signatures, event metadata, arbitrary extensions, and state
+deltas are excluded. View authorization includes its recorded thought content;
+it remains borrowed reference under the same provenance and does not gain
+instruction authority. Tool content is never executed merely by reading it.
 Closing a turn does not copy its answer into a separate publication.
 Failure, cancellation, and abandonment preserve the preceding successful window.
 Grant expiry, release, revocation, idempotence, and recovery remain enforced by

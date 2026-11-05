@@ -15,7 +15,8 @@ var ErrUnsupported = errors.New("unsupported entry projection")
 
 // Entry is an entry's public model input. Event holds structured model content;
 // when absent, Summary is the plain user/assistant text. For structured events,
-// Summary concatenates public text parts and never uses the stored summary.
+// Summary concatenates the authorized text parts, including thoughts, and never
+// uses the stored summary. Event retains each part's thought marker.
 // Provenance overrides native routing for borrowed content, including tool
 // observations; historical roles cannot promote its authority.
 type Entry struct {
@@ -25,9 +26,10 @@ type Entry struct {
 	Event      *Event      `json:"event,omitempty"`
 }
 
-// Project removes private execution metadata and thoughts while preserving
-// public model content. A non-nil provenance routes the entry to Borrowed;
-// nil is for native session content. Business args/response JSON remains opaque.
+// Project removes private execution metadata while preserving authorized model
+// content, including thought text and markers. A non-nil provenance routes the
+// entry to Borrowed; nil is for native session content. Business args/response
+// JSON remains opaque.
 // Unknown stored fields are ignored rather than exported or revalidated.
 func Project(raw te.EntryLike, provenance *Provenance) (*Entry, error) {
 	entry := &Entry{Channel: Primary, Provenance: provenance}
@@ -82,31 +84,9 @@ type storedEvent struct {
 }
 
 type storedContent struct {
-	Role  string        `json:"role"`
-	Parts []*storedPart `json:"parts"`
+	Role  string  `json:"role"`
+	Parts []*Part `json:"parts"`
 }
-
-// storedPart is a visible part, or a private thought whose body is never read.
-type storedPart struct {
-	Part
-	Thought bool `json:"thought"`
-}
-
-func (p *storedPart) UnmarshalJSON(data []byte) error {
-	var visibility struct {
-		Thought bool `json:"thought"`
-	}
-	if err := json.Unmarshal(data, &visibility); err != nil {
-		return err
-	}
-	if visibility.Thought {
-		p.Thought = true
-		return nil
-	}
-	return json.Unmarshal(data, (*plainPart)(p))
-}
-
-type plainPart storedPart
 
 func projectEvent(payload string) (*Event, string, error) {
 	var stored storedEvent
@@ -119,13 +99,10 @@ func projectEvent(payload string) (*Event, string, error) {
 		if part == nil {
 			continue
 		}
-		if part.Thought {
-			continue
-		}
 		if part.Text == "" && part.FunctionCall == nil && part.FunctionResponse == nil {
 			continue
 		}
-		projected.Parts = append(projected.Parts, &part.Part)
+		projected.Parts = append(projected.Parts, part)
 		summary.WriteString(part.Text)
 	}
 	return projected, summary.String(), nil

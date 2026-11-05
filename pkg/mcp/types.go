@@ -43,6 +43,8 @@ var (
 // revision and the Tape view (SeqS to SeqE) that the handoff anchored at
 // AnchorSeq committed. Tool arguments cannot establish any of these identities.
 // ID and Caller are public issuer-owned provenance; ID is not the bearer secret.
+// View authorization includes stored thought content, but not private execution
+// metadata or provider thought signatures.
 type Grant struct {
 	ID          string  `json:"id" validate:"required,max=256"`
 	Caller      string  `json:"caller" validate:"required,max=256"`

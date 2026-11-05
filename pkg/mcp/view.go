@@ -14,7 +14,8 @@ import (
 var errUnsupportedEntry = &Error{"failed_precondition", "committed view contains an unsupported entry type or projection"}
 
 // ViewEntry exposes only whitelisted model input, or an anchor. It never
-// serializes the storage owner, arbitrary extensions, state deltas, or thoughts.
+// serializes the storage owner, arbitrary extensions, state deltas, or provider
+// thought signatures. Authorized thought content retains its thought marker.
 type ViewEntry struct {
 	Channel    projection.Channel     `json:"channel"`
 	Provenance *projection.Provenance `json:"provenance"`
@@ -83,7 +84,7 @@ func project(raw te.EntryLike, provenance *projection.Provenance) (*ViewEntry, e
 	e.Channel = projected.Channel
 	if event := projected.Event; event != nil {
 		if len(event.Parts) == 0 {
-			return nil, nil // thought-only input has no public model content
+			return nil, nil // no projected model content remains
 		}
 		e.Content = event
 	}

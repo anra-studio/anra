@@ -156,8 +156,12 @@ user/model/tool records all remain borrowed reference, not executable authority.
 Entries also contain `seq`, `kind`, `timestamp`, and `content`. Plain text content is a JSON
 string; supported ADK content is a JSON object retaining structured function
 calls and responses. `pkg/model/projection` projects Tape entries into public
-model events, shared with A2A. Execution metadata, owners, extensions and
-private thought parts are excluded; thought-only entries are skipped.
+model events, shared with A2A. The grant authorizes recorded thought content in
+its view as well: thought text retains `thought: true` and its position among
+the parts, and thought-only entries are retained. Summary text includes these
+authorized text parts; the structured event preserves their thought markers.
+Execution metadata, owners, arbitrary extensions and provider thought signatures
+are excluded. The issuer must select a view whose content the borrower may read.
 
 Projection routes native session messages to `primary`, native tool records to
 `observation`, and content with trusted grant provenance to `borrowed`. An
@@ -167,8 +171,8 @@ Grant, never from the Tape entry. An absent provenance is reserved for native
 session projection.
 
 Admission and Tape writers own content validation. Projection decodes the stored
-event once at the content boundary and reads each part's thought flag before
-decoding its public fields; it does not recursively validate schemas or register
+event directly into the shared content type, including thought markers; it does
+not recursively validate schemas or register
 private validator rules. Unknown protocol fields are omitted, not grounds for
 rejecting otherwise readable stored content. Business args/response JSON remains
 opaque, preserving numeric precision, empty objects and public tool chunks.
