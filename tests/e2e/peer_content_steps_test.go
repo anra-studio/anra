@@ -41,7 +41,7 @@ func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^节点存有大型多模态条目和两种锚点$`, p.setup)
 	sc.Step(`^调用方为完整内容取得借阅 lease$`, s.borrow)
 	sc.Step(`^Connect、REST 和直接 Peer 客户端读取相同的完整多模态条目$`, p.readTransports)
-	sc.Step(`^其余分页保留原生和第三方锚点的约定表示$`, p.readAnchors)
+	sc.Step(`^其余分页保留原生锚点公开 Body 和第三方锚点原文$`, p.readAnchors)
 	sc.Step(`^其他调用方不能查询读取或释放该 lease$`, s.checkIntruder)
 	sc.Step(`^借出节点的存储和服务重建$`, p.restart)
 	sc.Step(`^原 lease 仍可读取完整多模态条目$`, p.readRecovered)
@@ -184,6 +184,28 @@ func (p *peerContentScenario) readAnchors() error {
 			}
 			if e.Payload.MediaType != a2a.AnchorMediaType || record.Schema != anchor.Schema || record.Type != anchor.TurnStarted || record.TurnID != "context-turn" || bytes.Contains(e.Payload.JsonData, []byte("ownerEpoch")) {
 				return errors.New("native anchor lost public fields or disclosed its ownership epoch")
+			}
+			stored, err := s.peerTape.Range(owner.WithOwnerId(s.ctx, "researcher-local"), tv.EntryRange{SeqS: te.SeqFromUint64(2), SeqE: te.SeqFromUint64(3)})
+			if err != nil {
+				return err
+			}
+			if len(stored.Raw) != 1 {
+				return errors.New("native anchor disappeared from storage")
+			}
+			native, err := anchor.Decode(stored.Raw[0])
+			if err != nil {
+				return err
+			}
+			if native == nil {
+				return errors.New("stored native anchor no longer decodes")
+			}
+			body := native.Body()
+			encoded, err := json.Marshal(body)
+			if err != nil {
+				return err
+			}
+			if body.OwnerEpoch != "" || native.OwnerEpoch != "PRIVATE-EPOCH" || !bytes.Equal(encoded, e.Payload.JsonData) {
+				return errors.New("native Body changed the source record or differs from the peer export")
 			}
 		}
 		if seq == 3 {

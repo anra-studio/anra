@@ -268,7 +268,8 @@ existing on-disk representation without exposing extension maps to consumers.
 
 `ContextExporter` also supports selected `anchor:custom` entries using
 `application/vnd.anra.anchor+json;version=1`. It shares the anchor representation
-with MCP: native Anra records omit `OwnerEpoch`, while third-party schemas retain
+with MCP: native Anra records supply their public value through `Record.Body()`,
+omitting `OwnerEpoch` without mutating the original record, while third-party schemas retain
 their original Body as a JSON string. This is not generic redaction of foreign
 schemas. The lender decides which complete contents belong to the granted range.
 Pagination splits entries across responses without splitting an individual

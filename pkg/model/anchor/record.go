@@ -38,6 +38,15 @@ type Record struct {
 	Outcome    string       `json:"outcome,omitempty" validate:"required_if=Type turn.closed,excluded_unless=Type turn.closed,omitempty,oneof=completed failed cancelled abandoned"`
 }
 
+// Body returns the public record value without the private ownership epoch.
+// It leaves r unchanged. Nested Source and BaseView references are borrowed
+// read-only, as with the record itself; the body is for public encoding.
+func (r *Record) Body() Record {
+	body := *r
+	body.OwnerEpoch = ""
+	return body
+}
+
 var recordValidator = func() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
 	// validator's built-in string max counts runes. Stored identities have a

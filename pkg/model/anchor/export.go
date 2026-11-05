@@ -17,6 +17,5 @@ func Export(e te.EntryLike) (any, error) {
 	if record == nil {
 		return entry.FromTape(e).Body(), nil
 	}
-	record.OwnerEpoch = ""
-	return record, nil
+	return record.Body(), nil
 }
