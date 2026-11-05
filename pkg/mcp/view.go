@@ -7,7 +7,6 @@ import (
 
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/model/entry"
-	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -18,26 +17,26 @@ var errUnsupportedEntry = &Error{"failed_precondition", "committed view contains
 // serializes the storage owner, arbitrary extensions, state deltas, or provider
 // thought signatures. Authorized thought content retains its thought marker.
 type ViewEntry struct {
-	Channel    projection.Channel     `json:"channel"`
-	Provenance *projection.Provenance `json:"provenance"`
-	Seq        string                 `json:"seq"`
-	Kind       string                 `json:"kind"`
-	Timestamp  time.Time              `json:"timestamp"`
-	Content    any                    `json:"content,omitempty"`
+	Channel    entry.Channel     `json:"channel"`
+	Provenance *entry.Provenance `json:"provenance"`
+	Seq        string            `json:"seq"`
+	Kind       string            `json:"kind"`
+	Timestamp  time.Time         `json:"timestamp"`
+	Content    any               `json:"content,omitempty"`
 }
 
 type TapeViewResult struct {
-	Channel    projection.Channel    `json:"channel"`
-	Provenance projection.Provenance `json:"provenance"`
-	View       json.RawMessage       `json:"view"`
-	Entries    []ViewEntry           `json:"entries"`
+	Channel    entry.Channel    `json:"channel"`
+	Provenance entry.Provenance `json:"provenance"`
+	View       json.RawMessage  `json:"view"`
+	Entries    []ViewEntry      `json:"entries"`
 }
 
 // readTapeView returns the entries of the granted view. Persisted range
 // integrity is the Tape owner's concern, not this service's.
 func (s *Service) readTapeView(ctx context.Context, grant *Grant) (*TapeViewResult, error) {
 	view := grant.View
-	provenance := projection.Provenance{
+	provenance := entry.Provenance{
 		Caller: grant.Caller, GrantID: grant.ID, Source: view.Source,
 		SnapshotHead: view.SnapshotHead, Scope: view.Scope,
 	}
@@ -48,9 +47,9 @@ func (s *Service) readTapeView(ctx context.Context, grant *Grant) (*TapeViewResu
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	result := &TapeViewResult{Channel: projection.Borrowed, Provenance: provenance, View: anchor.ProtoJSON(view), Entries: make([]ViewEntry, 0, len(batch.Raw))}
+	result := &TapeViewResult{Channel: entry.Borrowed, Provenance: provenance, View: anchor.ProtoJSON(view), Entries: make([]ViewEntry, 0, len(batch.Raw))}
 	for _, raw := range batch.Raw {
-		e, err := project(entry.FromTape(raw), &provenance)
+		e, err := exportEntry(entry.FromTape(raw), &provenance)
 		if err != nil {
 			return nil, err
 		}
@@ -61,15 +60,15 @@ func (s *Service) readTapeView(ctx context.Context, grant *Grant) (*TapeViewResu
 	return result, nil
 }
 
-func project(raw entry.Entry, provenance *projection.Provenance) (*ViewEntry, error) {
-	e := &ViewEntry{Channel: projection.Borrowed, Provenance: provenance, Seq: raw.GetID().String(), Kind: string(raw.GetKind()), Timestamp: raw.GetTimestamp()}
+func exportEntry(raw entry.Entry, provenance *entry.Provenance) (*ViewEntry, error) {
+	e := &ViewEntry{Channel: entry.Borrowed, Provenance: provenance, Seq: raw.GetID().String(), Kind: string(raw.GetKind()), Timestamp: raw.GetTimestamp()}
 	if raw.GetKind() == anchor.Kind {
 		r, err := anchor.Decode(raw)
 		if err != nil {
 			return nil, errUnsupportedEntry
 		}
 		if r == nil {
-			e.Content = raw.Content()
+			e.Content = raw.Body()
 			return e, nil
 		}
 		// The execution owner epoch is private runtime state.
@@ -77,14 +76,13 @@ func project(raw entry.Entry, provenance *projection.Provenance) (*ViewEntry, er
 		e.Content = r
 		return e, nil
 	}
-	projected, err := projection.Project(raw, provenance)
+	content, err := raw.Content()
 	if err != nil {
 		return nil, errUnsupportedEntry
 	}
-	e.Channel = projected.Channel
-	if len(projected.Content.Parts) == 0 {
+	if len(content.Parts) == 0 {
 		return nil, nil // no projected model content remains
 	}
-	e.Content = projected.Content
+	e.Content = content
 	return e, nil
 }

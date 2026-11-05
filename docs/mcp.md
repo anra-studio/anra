@@ -68,8 +68,10 @@ fixed views; the initialization anchor need not be the first entry.
 
 `pkg/model/entry.Entry` is Anra's concrete entry and implements Tape's
 `EntryLike`. Storage-facing code normalizes foreign entries with `FromTape`;
-Projection receives this owned type and reads `Content`, `Extension` or
-`DecodeExtension`, without inspecting `CustomEntry` or its map. Extension keys
+`Content()` exposes the structured SDK-backed model body, while `Body()` returns
+the original Tape text for anchors and text-export compatibility. Export and
+MCP read content directly from this type. `Extension` and `DecodeExtension`
+encapsulate extension access without exposing `CustomEntry` or its map. Extension keys
 and JSON-string encoding live in the entry package. Updates return values and
 copy extension maps only when changing them. Explicit ID/timestamp methods
 preserve the Anra entry and its extensions during storage metadata assignment.
@@ -165,18 +167,18 @@ user/model/tool records all remain borrowed reference, not executable authority.
 Entries also contain `seq`, `kind`, `timestamp`, and `content`. Conversation
 content is always a structured event: an original plain-text entry becomes one
 text Part with its historical user/model role; ADK content retains its parts,
-function calls and responses. Projection returns `Content *projection.Content`, with no
-flattened text field or concatenation. `pkg/model/projection` projects Tape entries into public
-model events, shared with A2A. The grant authorizes recorded thought content in
+function calls and responses. `Entry.Content()` returns `*entry.Content`, with no
+flattened text field or concatenation. The same content model serves MCP and A2A
+Export; there is no intermediate projection entry. The grant authorizes recorded thought content in
 its view as well: thought text retains `thought: true` and its position among
 the parts, and thought-only entries are retained. Thought markers remain in
 the structured content rather than being flattened into ordinary text.
 Execution metadata, owners, arbitrary extensions and provider thought signatures
 are excluded. The issuer must select a view whose content the borrower may read.
 
-`projection.Content` wraps `genai.Content` and its parts, rather than exporting
+`entry.Content` wraps `genai.Content` and its parts, rather than exporting
 an entire ADK session event. SDK media, file references, code/results, streaming
-fields and part order are preserved; projection does not discard a part for
+fields and part order are preserved; the content codec does not discard a part for
 lacking text or a function call. Part JSON excludes `thoughtSignature` and
 `partMetadata`. Event-level execution data is never decoded into public content.
 Function-call/response and server-tool payloads override SDK maps with opaque
@@ -185,19 +187,23 @@ business keys that happen to match metadata field names. SDK upgrades must
 review changes to the wrapped content types and exported fields. Exporting a
 historical code or tool part does not execute it.
 
-Projection routes native session messages to `primary`, native tool records to
-`observation`, and content with trusted grant provenance to `borrowed`. An
-event's historical `role` does not select its channel; stored `channel` and
-`provenance` claims are ignored. Callers supply provenance from the authenticated
-Grant, never from the Tape entry. An absent provenance is reserved for native
-session projection.
+`entry.Channel` and `entry.Provenance` describe consumption, not persisted
+content. The MCP reader binds `borrowed` and the authenticated Grant's provenance
+to its existing view/entry response; the peer borrowing tool binds them to its
+existing `borrowed_context` envelope. A2A Export encodes content without borrower
+authority. Native `primary`/`observation` classification belongs to the native
+consumer. An event's historical `role` or stored `channel`/`provenance` claims
+cannot select the borrowing consumer's channel. Grants are not written into the
+source Entry.
 
-Admission and Tape writers own content validation. Projection decodes the stored
-event directly into the shared content type, including thought markers; it does
+Admission and Tape writers own content validation. Entry decodes the stored
+event into its shared content type, including thought markers; it does
 not recursively validate schemas or register
 private validator rules. Unknown protocol fields are omitted, not grounds for
 rejecting otherwise readable stored content. Business args/response JSON remains
 opaque, preserving numeric precision, empty objects and public tool chunks.
+Reading public content leaves the original ADK event extension intact, including
+the execution state and signatures needed by the native runtime and recovery.
 
 Consumers must keep borrowed entries in a read-only `borrowed_context` tool or
 observation envelope, without flattening historical roles into native messages.

@@ -23,7 +23,7 @@ import (
 	"github.com/anra-studio/anra/pkg/agent"
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/model/anchor"
-	"github.com/anra-studio/anra/pkg/model/projection"
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/anra-studio/anra/pkg/registry"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
@@ -1275,7 +1275,7 @@ func (c *collaborationScenario) toolWindow() error {
 		}
 	}
 	for _, index := range []int{1, 3} {
-		var event projection.Content
+		var event ae.Content
 		if err := json.Unmarshal(pages[0].Entries[index].Payload.JsonData, &event); err != nil {
 			return err
 		}
@@ -1283,7 +1283,7 @@ func (c *collaborationScenario) toolWindow() error {
 			return errors.New("view lost the original thought text, marker or part order")
 		}
 	}
-	var finalContent projection.Content
+	var finalContent ae.Content
 	if err := json.Unmarshal(pages[0].Entries[3].Payload.JsonData, &finalContent); err != nil {
 		return err
 	}

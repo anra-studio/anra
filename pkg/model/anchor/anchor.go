@@ -24,7 +24,7 @@ func Decode(e te.EntryLike) (*Record, error) {
 	var tag struct {
 		Schema string `json:"schema"`
 	}
-	raw := []byte(entry.FromTape(e).Content())
+	raw := []byte(entry.FromTape(e).Body())
 	if err := json.Unmarshal(raw, &tag); err != nil {
 		if strings.Contains(string(raw), "anra.dev/anchor/") {
 			return nil, errors.New("anchor: malformed record")

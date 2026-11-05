@@ -108,7 +108,7 @@ Do not unit-test configuration forwarding or struct field assignments.
 
 ```sh
 mise run unit
-go test -race ./pkg/model/projection ./pkg/mcp
+go test -race ./pkg/model/entry ./pkg/mcp
 ```
 
 Keep E2E scenarios for core journeys through public APIs, real network
@@ -117,9 +117,9 @@ failure. Do not enumerate large parameter matrices in Scenario Outlines or
 inflate fixtures to increase test counts or coverage. Architecture, clear
 responsibilities, and meaningful assertions determine test quality.
 
-The [MCP feature](../tests/e2e/features/mcp.feature) contains eight such journeys;
-projection field filtering, privacy, business JSON precision, and tool-stream
-state transitions live in package unit tests. Remove disposable investigative
+The [MCP feature](../tests/e2e/features/mcp.feature) contains such journeys;
+content codecs, privacy, business JSON precision, and pure state transitions
+live in package unit tests. Remove disposable investigative
 scaffolding before committing. [AGENTS.md](../AGENTS.md) defines this policy.
 
 ## Adding behavior

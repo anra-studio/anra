@@ -52,7 +52,7 @@ func (TextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
 	default:
 		return nil, ErrUnsupported
 	}
-	data, err := json.Marshal(entry.FromTape(e).Content())
+	data, err := json.Marshal(entry.FromTape(e).Body())
 	if err != nil {
 		return nil, err
 	}

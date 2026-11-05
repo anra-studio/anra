@@ -21,7 +21,7 @@ import (
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	a2a "github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
-	"github.com/anra-studio/anra/pkg/model/projection"
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
 	entry "github.com/scbizu/tape-go/pkg/tape/entry"
@@ -459,7 +459,7 @@ func exportedTextIs(e *pb.ExportedEntry, want string) bool {
 		var text string
 		return json.Unmarshal(e.Payload.JsonData, &text) == nil && text == want
 	case a2a.ContextMediaType:
-		var content projection.Content
+		var content ae.Content
 		if json.Unmarshal(e.Payload.JsonData, &content) != nil || len(content.Parts) != 1 || content.Parts[0] == nil {
 			return false
 		}
@@ -677,9 +677,9 @@ func (s *scenario) checkBorrowedContext() error {
 			var envelope struct {
 				Decision json.RawMessage `json:"decision"`
 				Borrowed struct {
-					Channel    projection.Channel    `json:"channel"`
-					Provenance projection.Provenance `json:"provenance"`
-					Pages      []json.RawMessage     `json:"pages"`
+					Channel    ae.Channel        `json:"channel"`
+					Provenance ae.Provenance     `json:"provenance"`
+					Pages      []json.RawMessage `json:"pages"`
 				} `json:"borrowed_context"`
 			}
 			if err := json.Unmarshal(result.Result, &envelope); err != nil {
@@ -693,7 +693,7 @@ func (s *scenario) checkBorrowedContext() error {
 				return fmt.Errorf("borrowed result lacks a grant and context: %s", result.Result)
 			}
 			p := envelope.Borrowed.Provenance
-			if envelope.Borrowed.Channel != projection.Borrowed || p.GrantID != decision.View.ViewId || !proto.Equal(p.Source, decision.View.Source) || p.SnapshotHead != decision.View.SnapshotHead || !proto.Equal(p.Scope, decision.View.Ranges[0]) {
+			if envelope.Borrowed.Channel != ae.Borrowed || p.GrantID != decision.View.ViewId || !proto.Equal(p.Source, decision.View.Source) || p.SnapshotHead != decision.View.SnapshotHead || !proto.Equal(p.Scope, decision.View.Ranges[0]) {
 				return errors.New("model tool result lost its borrowed channel or authorized provenance")
 			}
 			var page struct {

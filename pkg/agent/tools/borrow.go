@@ -11,7 +11,7 @@ import (
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/model/delegator"
-	"github.com/anra-studio/anra/pkg/model/projection"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -128,8 +128,8 @@ func borrowContext(ctx context.Context, client *a2a.Client, req *pb.BorrowReques
 			scope = view.Ranges[0]
 		}
 		result["borrowed_context"] = map[string]any{
-			"channel": projection.Borrowed,
-			"provenance": projection.Provenance{
+			"channel": entry.Borrowed,
+			"provenance": entry.Provenance{
 				GrantID: view.ViewId, Source: view.Source,
 				SnapshotHead: view.SnapshotHead, Scope: scope,
 			},

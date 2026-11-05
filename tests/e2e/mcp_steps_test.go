@@ -23,7 +23,6 @@ import (
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
-	"github.com/anra-studio/anra/pkg/model/projection"
 	"github.com/cucumber/godog"
 	"github.com/go-playground/validator/v10"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -33,6 +32,8 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
+	adkmodel "google.golang.org/adk/model"
+	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 )
@@ -319,9 +320,10 @@ func (m *mcpScenario) plainTextWindow() (*pb.TapeView, error) {
 func (m *mcpScenario) appendOwnedView() error {
 	value := ae.FromTape(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
 		WithExtension("opaque:reference", "opaque-entry-marker")
-	value, err := value.WithJSONExtension(ae.ADKEvent, struct {
-		Content projection.Content `json:"content"`
-	}{Content: projection.Content{Content: genai.Content{Role: "model"}, Parts: []*projection.Part{{Part: genai.Part{Text: "Persisted Anra entry"}}}}})
+	value, err := value.WithJSONExtension(ae.ADKEvent, session.Event{
+		LLMResponse: adkmodel.LLMResponse{Content: &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "Persisted Anra entry", ThoughtSignature: []byte("PRIVATE-SIGNATURE")}}}},
+		Actions:     session.EventActions{StateDelta: map[string]any{"private": "PRIVATE-STATE"}},
+	})
 	if err != nil {
 		return err
 	}
@@ -354,10 +356,10 @@ func (m *mcpScenario) checkOwnedView() error {
 	if err := json.Unmarshal(m.lastResult, &window); err != nil {
 		return err
 	}
-	if len(window.Entries) != 1 || bytes.Contains(m.lastResult, []byte("PRIVATE-BODY")) || bytes.Contains(m.lastResult, []byte("opaque-entry-marker")) {
+	if len(window.Entries) != 1 || bytes.Contains(m.lastResult, []byte("PRIVATE-")) || bytes.Contains(m.lastResult, []byte("thoughtSignature")) || bytes.Contains(m.lastResult, []byte("opaque-entry-marker")) {
 		return errors.New("owned entry projection lost content or exposed storage fields")
 	}
-	var content projection.Content
+	var content ae.Content
 	if err := json.Unmarshal(window.Entries[0].Content, &content); err != nil {
 		return err
 	}
@@ -372,6 +374,21 @@ func (m *mcpScenario) checkOwnedView() error {
 		return errors.New("owned entry was not retained in storage")
 	}
 	value := ae.FromTape(batch.Raw[0])
+	structured, err := value.Content()
+	if err != nil {
+		return err
+	}
+	if structured.Role != "model" || len(structured.Parts) != 1 || structured.Parts[0].Text != "Persisted Anra entry" || value.Body() != "PRIVATE-BODY" {
+		return errors.New("entry content accessor lost its model body or changed stored text")
+	}
+	var native session.Event
+	exists, err := value.DecodeExtension(ae.ADKEvent, &native)
+	if err != nil {
+		return err
+	}
+	if !exists || native.Content == nil || len(native.Content.Parts) != 1 || string(native.Content.Parts[0].ThoughtSignature) != "PRIVATE-SIGNATURE" || native.Actions.StateDelta["private"] != "PRIVATE-STATE" {
+		return errors.New("public content access changed the native ADK event needed for recovery")
+	}
 	if marker, exists := value.Extension("opaque:reference"); !exists || marker != "opaque-entry-marker" {
 		return errors.New("storage dropped an opaque entry extension")
 	}
@@ -393,7 +410,7 @@ func (m *mcpScenario) checkPlainTextContent() error {
 		return errors.New("view duplicated or lost its original content")
 	}
 	for i, want := range []struct{ role, text string }{{"user", "Original user content"}, {"model", "Original model content"}} {
-		var content projection.Content
+		var content ae.Content
 		if err := json.Unmarshal(window.Entries[i].Content, &content); err != nil {
 			return err
 		}
@@ -442,7 +459,7 @@ func (m *mcpScenario) checkBorrowedClaims() error {
 	if len(window.Entries) != 2 {
 		return errors.New("borrowed view dropped thought-only content")
 	}
-	var mixed, thoughtOnly projection.Content
+	var mixed, thoughtOnly ae.Content
 	if err := json.Unmarshal(window.Entries[0].Content, &mixed); err != nil {
 		return err
 	}
@@ -456,7 +473,7 @@ func (m *mcpScenario) checkBorrowedClaims() error {
 }
 
 // A single call with continuing chunks exercises persistence and transport;
-// protocol field filtering and number lexemes are tested in projection.
+// protocol field filtering and number lexemes are tested in the entry codec.
 func (m *mcpScenario) streamWindow() (*pb.TapeView, error) {
 	state, err := m.tape.Get(m.tapeContext())
 	if err != nil {
@@ -792,15 +809,15 @@ func (m *mcpScenario) checkWindowResponse() error {
 }
 
 func (m *mcpScenario) checkProvenance(window mcpWindow) error {
-	check := func(p *projection.Provenance) bool {
+	check := func(p *ae.Provenance) bool {
 		return p != nil && p.GrantID == m.grant.ID && p.Caller == m.grant.Caller &&
 			proto.Equal(p.Source, m.grant.View.Source) && p.SnapshotHead == m.grant.View.SnapshotHead && proto.Equal(p.Scope, m.grant.View.Scope)
 	}
-	if window.Channel != projection.Borrowed || !check(&window.Provenance) {
+	if window.Channel != ae.Borrowed || !check(&window.Provenance) {
 		return errors.New("view lost its authenticated borrowed provenance")
 	}
 	for _, entry := range window.Entries {
-		if entry.Channel != projection.Borrowed || !check(entry.Provenance) {
+		if entry.Channel != ae.Borrowed || !check(entry.Provenance) {
 			return fmt.Errorf("entry %s lost its authenticated borrowed provenance", entry.Seq)
 		}
 	}
@@ -1023,16 +1040,16 @@ type mcpTarget struct {
 
 // mcpWindow decodes the public window response, keeping content bytes intact.
 type mcpWindow struct {
-	Channel    projection.Channel    `json:"channel"`
-	Provenance projection.Provenance `json:"provenance"`
-	View       json.RawMessage       `json:"view"`
+	Channel    ae.Channel      `json:"channel"`
+	Provenance ae.Provenance   `json:"provenance"`
+	View       json.RawMessage `json:"view"`
 	Entries    []struct {
-		Channel    projection.Channel     `json:"channel"`
-		Provenance *projection.Provenance `json:"provenance"`
-		Seq        string                 `json:"seq"`
-		Kind       string                 `json:"kind"`
-		Timestamp  time.Time              `json:"timestamp"`
-		Content    json.RawMessage        `json:"content"`
+		Channel    ae.Channel      `json:"channel"`
+		Provenance *ae.Provenance  `json:"provenance"`
+		Seq        string          `json:"seq"`
+		Kind       string          `json:"kind"`
+		Timestamp  time.Time       `json:"timestamp"`
+		Content    json.RawMessage `json:"content"`
 	} `json:"entries"`
 }
 

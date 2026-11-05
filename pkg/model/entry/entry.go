@@ -1,5 +1,6 @@
-// Package entry owns Anra's Tape entry and its extension access. Conversion to
-// tape-go's concrete representations belongs at storage and ADK boundaries.
+// Package entry owns Anra's Tape entries, structured model content, and
+// extension access. Conversion to tape-go's concrete representations belongs at
+// storage and ADK boundaries.
 package entry
 
 import (
@@ -52,8 +53,11 @@ func (e Entry) GetID() te.Seq           { return e.base.Seq }
 func (e Entry) GetKind() te.EntryKind   { return e.base.Ek }
 func (e Entry) GetOwner() string        { return e.base.Owner }
 func (e Entry) GetTimestamp() time.Time { return e.base.Timestamp }
-func (e Entry) Content() string         { return e.base.Text }
-func (e Entry) GetSummary() string      { return e.Content() } // tape-go compatibility
+func (e Entry) GetSummary() string      { return e.Body() } // tape-go compatibility
+
+// Body returns the original Tape text, including anchor bodies. Model consumers
+// use Content instead; Body is retained for storage and text-export compatibility.
+func (e Entry) Body() string { return e.base.Text }
 
 // WithID and WithTimestamp preserve Anra's concrete type and extensions when
 // storage assigns metadata. Promoting the embedded tape-go methods would lose them.

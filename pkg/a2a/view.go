@@ -8,7 +8,6 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/pkg/model/entry"
-	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -30,11 +29,11 @@ const ContextMediaType = "application/vnd.anra.context-entry+json;version=1"
 // This source-side export contains no borrower authority; the borrowing tool
 // binds the validated grant to a borrowed_context envelope before model use.
 func (ContextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
-	projected, err := projection.Project(entry.FromTape(e), nil)
+	content, err := entry.FromTape(e).Content()
 	if err != nil {
 		return nil, ErrUnsupported
 	}
-	data, err := json.Marshal(projected.Content)
+	data, err := json.Marshal(content)
 	if err != nil {
 		return nil, err
 	}

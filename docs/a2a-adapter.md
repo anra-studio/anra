@@ -257,8 +257,9 @@ exporter, update the advertised `entryMediaTypes` to its actual supported types.
 The exporter is service configuration, not part of a grant; reads project the
 granted range with the exporter configured at the time.
 
-Anra's runtime and public projection share `pkg/model/entry.Entry`, a concrete
-`EntryLike` with encapsulated extension access and JSON codecs. `FromTape`
+Anra's runtime, Export and MCP share `pkg/model/entry.Entry`, a concrete
+`EntryLike` with structured `Content()` access, original `Body()` text and
+encapsulated extension JSON codecs. `FromTape`
 contains conversion from Tape's concrete entries; the runtime converts back
 with `Tape()` only at the ADK boundary because the current TapeAdapter recognizes
 its own `CustomEntry`. This preserves ADK state, legacy read adaptation and the
@@ -399,11 +400,14 @@ provider thought signatures, event metadata, arbitrary extensions, and state
 deltas are excluded. View authorization includes its recorded thought content;
 it remains borrowed reference under the same provenance and does not gain
 instruction authority. Tool content is never executed merely by reading it.
-The shared `projection.Content` wraps SDK content and parts, preserving media,
+The shared `entry.Content` wraps SDK content and parts, preserving media,
 files, code/results and streaming fields in order. It excludes part metadata,
 provider signatures and ADK session actions. Function and server-tool arguments
 and response objects retain raw JSON to avoid numeric coercion. Content is not
 restricted to text and function parts; historical code is reference data.
+The exporter reads Entry content directly and attaches no borrower channel or
+grant. The receiving tool binds the validated grant to its consumption envelope;
+these channel and provenance values do not become source-entry storage fields.
 Closing a turn does not copy its answer into a separate publication.
 Failure, cancellation, and abandonment preserve the preceding successful window.
 Grant expiry, release, revocation, idempotence, and recovery remain enforced by

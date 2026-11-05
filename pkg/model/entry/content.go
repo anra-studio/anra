@@ -1,10 +1,16 @@
-package projection
+package entry
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 
+	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/genai"
 )
+
+// ErrUnsupported means the entry has no decodable model content.
+var ErrUnsupported = errors.New("unsupported entry content")
 
 // Content wraps SDK model content, preserving its parts and historical role.
 // Channel and provenance determine authority, independently of that role.
@@ -65,4 +71,39 @@ type ToolCall struct {
 type ToolResponse struct {
 	genai.ToolResponse
 	Response json.RawMessage `json:"response,omitempty"`
+}
+
+// Content decodes the structured model body, or represents a plain user/model
+// entry as a text part. It does not validate persisted content or attach consumer
+// authority. The original event extension, including SDK state and signatures,
+// remains untouched for runtime recovery. Content's JSON codec defines the
+// public representation shared by Export and MCP.
+func (e Entry) Content() (*Content, error) {
+	switch e.GetKind() {
+	case te.EntryUser, te.EntryAssistant, te.EntryToolCall, te.EntryToolResult:
+	default:
+		return nil, ErrUnsupported
+	}
+	var event struct {
+		Content *Content `json:"content"`
+	}
+	exists, err := e.DecodeExtension(ADKEvent, &event)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnsupported, err)
+	}
+	if exists {
+		if event.Content == nil {
+			return nil, ErrUnsupported
+		}
+		return event.Content, nil
+	}
+	role := genai.RoleUser
+	switch e.GetKind() {
+	case te.EntryUser:
+	case te.EntryAssistant:
+		role = genai.RoleModel
+	default:
+		return nil, ErrUnsupported
+	}
+	return &Content{Content: genai.Content{Role: role}, Parts: []*Part{{Part: genai.Part{Text: e.Body()}}}}, nil
 }
