@@ -165,7 +165,7 @@ user/model/tool records all remain borrowed reference, not executable authority.
 Entries also contain `seq`, `kind`, `timestamp`, and `content`. Conversation
 content is always a structured event: an original plain-text entry becomes one
 text Part with its historical user/model role; ADK content retains its parts,
-function calls and responses. Projection returns only `Content`, with no
+function calls and responses. Projection returns `Content *projection.Content`, with no
 flattened text field or concatenation. `pkg/model/projection` projects Tape entries into public
 model events, shared with A2A. The grant authorizes recorded thought content in
 its view as well: thought text retains `thought: true` and its position among
@@ -173,6 +173,13 @@ the parts, and thought-only entries are retained. Thought markers remain in
 the structured content rather than being flattened into ordinary text.
 Execution metadata, owners, arbitrary extensions and provider thought signatures
 are excluded. The issuer must select a view whose content the borrower may read.
+
+`projection.Content` describes the public message body, rather than an ADK
+session event. Its content and tool fields define the exported subset, with
+opaque JSON arguments/responses to preserve business number representations.
+Tool-response media and scheduling reuse `genai.FunctionResponsePart` (including
+its blob/file types) and `genai.FunctionResponseScheduling`. SDK upgrades must
+review those reused types for changes to the exported fields.
 
 Projection routes native session messages to `primary`, native tool records to
 `observation`, and content with trusted grant provenance to `borrowed`. An

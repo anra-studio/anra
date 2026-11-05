@@ -19,7 +19,7 @@ var ErrUnsupported = errors.New("unsupported entry projection")
 type Entry struct {
 	Channel    Channel     `json:"channel"`
 	Provenance *Provenance `json:"provenance,omitempty"`
-	Content    *Event      `json:"content"`
+	Content    *Content    `json:"content"`
 }
 
 // Project removes private execution metadata while preserving authorized model
@@ -51,37 +51,32 @@ func Project(raw entry.Entry, provenance *Provenance) (*Entry, error) {
 			if raw.GetKind() == te.EntryAssistant {
 				role = "model"
 			}
-			result.Content = &Event{Role: role, Parts: []*Part{{Text: raw.Content()}}}
+			result.Content = &Content{Role: role, Parts: []*Part{{Text: raw.Content()}}}
 			return result, nil
 		default:
 			return nil, ErrUnsupported
 		}
 	}
-	event, err := projectEvent(stored)
+	content, err := projectContent(stored.Content)
 	if err != nil {
 		return nil, err
 	}
-	result.Content = event
+	result.Content = content
 	return result, nil
 }
 
 // storedEvent reads only content; execution metadata outside it is private
 // and ignored.
 type storedEvent struct {
-	Content *storedContent `json:"content"`
+	Content *Content `json:"content"`
 }
 
-type storedContent struct {
-	Role  string  `json:"role"`
-	Parts []*Part `json:"parts"`
-}
-
-func projectEvent(stored storedEvent) (*Event, error) {
-	if stored.Content == nil {
+func projectContent(content *Content) (*Content, error) {
+	if content == nil {
 		return nil, ErrUnsupported
 	}
-	projected := &Event{Role: stored.Content.Role}
-	for _, part := range stored.Content.Parts {
+	projected := &Content{Role: content.Role}
+	for _, part := range content.Parts {
 		if part == nil {
 			continue
 		}

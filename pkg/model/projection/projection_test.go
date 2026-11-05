@@ -9,6 +9,7 @@ import (
 	"github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
+	"google.golang.org/genai"
 )
 
 func eventEntry(content string) entry.Entry {
@@ -18,7 +19,7 @@ func eventEntry(content string) entry.Entry {
 }
 
 func TestStoredExtraFieldsDoNotExpandPublicDisclosure(t *testing.T) {
-	raw := eventEntry(`{"role":"model","extra":"PRIVATE-CONTENT","channel":"primary","parts":[{"text":"public","extra":"PRIVATE-PART"},{"functionCall":{"name":"lookup","args":{},"extra":"PRIVATE-CALL"}},{"functionResponse":{"name":"lookup","response":{},"extra":"PRIVATE-RESPONSE","parts":[{"inlineData":{"data":"aW1hZ2U=","extra":"PRIVATE-MEDIA"}}]}}]}`)
+	raw := eventEntry(`{"role":"model","extra":"PRIVATE-CONTENT","channel":"primary","parts":[{"text":"public","extra":"PRIVATE-PART"},{"functionCall":{"name":"lookup","args":{},"extra":"PRIVATE-CALL"}},{"functionResponse":{"name":"lookup","response":{},"willContinue":false,"scheduling":"WHEN_IDLE","extra":"PRIVATE-RESPONSE","parts":[{"inlineData":{"data":"aW1hZ2U=","mimeType":"image/png","displayName":"receipt","extra":"PRIVATE-MEDIA"}},{"fileData":{"fileUri":"gs://context/receipt","mimeType":"application/pdf","displayName":"invoice","extra":"PRIVATE-FILE"}}]}}]}`)
 	provenance := &projection.Provenance{GrantID: "trusted-grant"}
 	got, err := projection.Project(raw, provenance)
 	if err != nil {
@@ -31,8 +32,17 @@ func TestStoredExtraFieldsDoNotExpandPublicDisclosure(t *testing.T) {
 	if got.Channel != projection.Borrowed || got.Provenance != provenance || bytes.Contains(data, []byte("PRIVATE-")) {
 		t.Fatalf("stored fields changed disclosure or authority: %s", data)
 	}
-	if len(got.Content.Parts) != 3 || got.Content.Parts[1].FunctionCall.Name != "lookup" || string(got.Content.Parts[2].FunctionResponse.Parts[0].InlineData.Data) != "image" {
+	if len(got.Content.Parts) != 3 || got.Content.Parts[1].FunctionCall.Name != "lookup" {
 		t.Fatalf("public content lost during filtering: %s", data)
+	}
+	response := got.Content.Parts[2].FunctionResponse
+	if len(response.Parts) != 2 || response.WillContinue == nil || *response.WillContinue || response.Scheduling != genai.FunctionResponseSchedulingWhenIdle {
+		t.Fatalf("tool response lost media or scheduling: %s", data)
+	}
+	inline, file := response.Parts[0].InlineData, response.Parts[1].FileData
+	if inline == nil || string(inline.Data) != "image" || inline.MIMEType != "image/png" || inline.DisplayName != "receipt" ||
+		file == nil || file.FileURI != "gs://context/receipt" || file.MIMEType != "application/pdf" || file.DisplayName != "invoice" {
+		t.Fatalf("SDK media changed during filtering: %s", data)
 	}
 }
 
@@ -83,7 +93,7 @@ func TestBusinessJSONSurvivesProjectionAndEncoding(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var roundTrip projection.Event
+		var roundTrip projection.Content
 		if err := json.Unmarshal(encoded, &roundTrip); err != nil {
 			t.Fatal(err)
 		}

@@ -1275,7 +1275,7 @@ func (c *collaborationScenario) toolWindow() error {
 		}
 	}
 	for _, index := range []int{1, 3} {
-		var event projection.Event
+		var event projection.Content
 		if err := json.Unmarshal(pages[0].Entries[index].Payload.JsonData, &event); err != nil {
 			return err
 		}
@@ -1283,7 +1283,7 @@ func (c *collaborationScenario) toolWindow() error {
 			return errors.New("view lost the original thought text, marker or part order")
 		}
 	}
-	var finalContent projection.Event
+	var finalContent projection.Content
 	if err := json.Unmarshal(pages[0].Entries[3].Payload.JsonData, &finalContent); err != nil {
 		return err
 	}

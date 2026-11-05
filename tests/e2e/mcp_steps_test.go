@@ -311,8 +311,8 @@ func (m *mcpScenario) appendOwnedView() error {
 	value := ae.FromTape(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
 		WithExtension("opaque:reference", "opaque-entry-marker")
 	value, err := value.WithJSONExtension(ae.ADKEvent, struct {
-		Content projection.Event `json:"content"`
-	}{Content: projection.Event{Role: "model", Parts: []*projection.Part{{Text: "Persisted Anra entry"}}}})
+		Content projection.Content `json:"content"`
+	}{Content: projection.Content{Role: "model", Parts: []*projection.Part{{Text: "Persisted Anra entry"}}}})
 	if err != nil {
 		return err
 	}
@@ -348,7 +348,7 @@ func (m *mcpScenario) checkOwnedView() error {
 	if len(window.Entries) != 1 || bytes.Contains(m.lastResult, []byte("PRIVATE-BODY")) || bytes.Contains(m.lastResult, []byte("opaque-entry-marker")) {
 		return errors.New("owned entry projection lost content or exposed storage fields")
 	}
-	var content projection.Event
+	var content projection.Content
 	if err := json.Unmarshal(window.Entries[0].Content, &content); err != nil {
 		return err
 	}
@@ -384,7 +384,7 @@ func (m *mcpScenario) checkPlainTextContent() error {
 		return errors.New("view duplicated or lost its original content")
 	}
 	for i, want := range []struct{ role, text string }{{"user", "Original user content"}, {"model", "Original model content"}} {
-		var content projection.Event
+		var content projection.Content
 		if err := json.Unmarshal(window.Entries[i].Content, &content); err != nil {
 			return err
 		}
@@ -433,7 +433,7 @@ func (m *mcpScenario) checkBorrowedClaims() error {
 	if len(window.Entries) != 2 {
 		return errors.New("borrowed view dropped thought-only content")
 	}
-	var mixed, thoughtOnly projection.Event
+	var mixed, thoughtOnly projection.Content
 	if err := json.Unmarshal(window.Entries[0].Content, &mixed); err != nil {
 		return err
 	}

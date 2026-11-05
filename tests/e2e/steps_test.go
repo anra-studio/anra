@@ -459,7 +459,7 @@ func exportedTextIs(e *pb.ExportedEntry, want string) bool {
 		var text string
 		return json.Unmarshal(e.Payload.JsonData, &text) == nil && text == want
 	case a2a.ContextMediaType:
-		var content projection.Event
+		var content projection.Content
 		if json.Unmarshal(e.Payload.JsonData, &content) != nil || len(content.Parts) != 1 || content.Parts[0] == nil {
 			return false
 		}
