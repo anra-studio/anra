@@ -3,9 +3,9 @@
 package projection
 
 import (
-	"encoding/json"
 	"errors"
 
+	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
@@ -27,20 +27,23 @@ type Entry struct {
 // entry to Borrowed; nil is for native session content. Business args/response
 // JSON remains opaque.
 // Unknown stored fields are ignored rather than exported or revalidated.
-func Project(raw te.EntryLike, provenance *Provenance) (*Entry, error) {
-	entry := &Entry{Channel: Primary, Provenance: provenance}
+func Project(raw entry.Entry, provenance *Provenance) (*Entry, error) {
+	result := &Entry{Channel: Primary, Provenance: provenance}
 	switch raw.GetKind() {
 	case te.EntryUser, te.EntryAssistant:
 	case te.EntryToolCall, te.EntryToolResult:
-		entry.Channel = Observation
+		result.Channel = Observation
 	default:
 		return nil, ErrUnsupported
 	}
 	if provenance != nil {
-		entry.Channel = Borrowed
+		result.Channel = Borrowed
 	}
-	extensions := extensionsOf(raw)
-	value, exists := extensions["adk:event"]
+	var stored storedEvent
+	exists, err := raw.DecodeExtension(entry.ADKEvent, &stored)
+	if err != nil {
+		return nil, ErrUnsupported
+	}
 	if !exists {
 		switch raw.GetKind() {
 		case te.EntryUser, te.EntryAssistant:
@@ -48,33 +51,18 @@ func Project(raw te.EntryLike, provenance *Provenance) (*Entry, error) {
 			if raw.GetKind() == te.EntryAssistant {
 				role = "model"
 			}
-			entry.Content = &Event{Role: role, Parts: []*Part{{Text: raw.GetSummary()}}}
-			return entry, nil
+			result.Content = &Event{Role: role, Parts: []*Part{{Text: raw.Content()}}}
+			return result, nil
 		default:
 			return nil, ErrUnsupported
 		}
 	}
-	payload, ok := value.(string)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	event, err := projectEvent(payload)
+	event, err := projectEvent(stored)
 	if err != nil {
 		return nil, err
 	}
-	entry.Content = event
-	return entry, nil
-}
-
-func extensionsOf(e te.EntryLike) map[string]any {
-	switch value := e.(type) {
-	case te.CustomEntry:
-		return value.Extensions
-	case *te.CustomEntry:
-		return value.Extensions
-	default:
-		return nil
-	}
+	result.Content = event
+	return result, nil
 }
 
 // storedEvent reads only content; execution metadata outside it is private
@@ -88,9 +76,8 @@ type storedContent struct {
 	Parts []*Part `json:"parts"`
 }
 
-func projectEvent(payload string) (*Event, error) {
-	var stored storedEvent
-	if json.Unmarshal([]byte(payload), &stored) != nil || stored.Content == nil {
+func projectEvent(stored storedEvent) (*Event, error) {
+	if stored.Content == nil {
 		return nil, ErrUnsupported
 	}
 	projected := &Event{Role: stored.Content.Role}

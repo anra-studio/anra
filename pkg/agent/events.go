@@ -3,11 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/anra-studio/anra/pkg/model/anchor"
-	"maps"
+	"github.com/anra-studio/anra/pkg/model/entry"
 
 	"github.com/scbizu/tape-go/pkg/runner"
-	"github.com/scbizu/tape-go/pkg/tape/entry"
+	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/adk/model"
@@ -25,27 +26,23 @@ type eventStorage struct {
 
 func (s *eventStorage) Unwrap() storage.TapeStorage { return s.TapeStorage }
 
-func (s *eventStorage) Store(ctx context.Context, raw entry.EntryLike) (entry.EntryLike, error) {
-	if value, ok := customEntry(raw); ok {
-		if payload, ok := value.Extensions["adk:event"].(string); ok {
-			var event session.Event
-			if err := json.Unmarshal([]byte(payload), &event); err != nil {
-				return nil, err
+func (s *eventStorage) Store(ctx context.Context, raw te.EntryLike) (te.EntryLike, error) {
+	value := entry.FromTape(raw)
+	var event session.Event
+	if _, err := value.DecodeExtension(entry.ADKEvent, &event); err != nil {
+		return nil, err
+	}
+	if event.Content != nil {
+		for _, part := range event.Content.Parts {
+			if part.FunctionCall != nil {
+				value = value.WithKind(te.EntryToolCall)
 			}
-			if event.Content != nil {
-				for _, part := range event.Content.Parts {
-					if part.FunctionCall != nil {
-						value.Entry.Ek = entry.EntryToolCall
-					}
-					if part.FunctionResponse != nil {
-						value.Entry.Ek = entry.EntryToolResult
-					}
-				}
+			if part.FunctionResponse != nil {
+				value = value.WithKind(te.EntryToolResult)
 			}
-			raw = value
 		}
 	}
-	return s.TapeStorage.Store(ctx, raw)
+	return s.TapeStorage.Store(ctx, value)
 }
 
 func (s *eventStorage) Range(ctx context.Context, r view.EntryRange, opts ...storage.RangeBy) (view.EntryView, error) {
@@ -79,21 +76,21 @@ func (s *eventStorage) Range(ctx context.Context, r view.EntryRange, opts ...sto
 	}
 	result.Raw = filtered
 	for i, raw := range result.Raw {
-		value, ok := customEntry(raw)
-		if !ok {
-			continue
-		}
-		if _, exists := value.Extensions["adk:event"]; exists {
-			continue
-		}
-		payload, ok := value.Extensions["anra:runner-message/v1"].(string)
-		if !ok {
+		value := entry.FromTape(raw)
+		if _, exists := value.Extension(entry.ADKEvent); exists {
+			result.Raw[i] = value.Tape()
 			continue
 		}
 		var message runner.Message
-		if err := json.Unmarshal([]byte(payload), &message); err != nil {
+		exists, err := value.DecodeExtension(entry.RunnerMessage, &message)
+		if err != nil {
 			return view.EntryView{}, err
 		}
+		if !exists {
+			result.Raw[i] = value.Tape()
+			continue
+		}
+
 		content := &genai.Content{Role: genai.RoleModel}
 		author := appName
 		if message.Role == runner.RoleUser || message.Role == runner.RoleTool {
@@ -124,24 +121,12 @@ func (s *eventStorage) Range(ctx context.Context, r view.EntryRange, opts ...sto
 			content.Parts = append(content.Parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: toolResult.ID, Name: toolResult.Name, Response: object}})
 		}
 		event := session.Event{ID: raw.GetID().String(), Timestamp: raw.GetTimestamp(), Author: author, LLMResponse: model.LLMResponse{Content: content}}
-		encoded, err := json.Marshal(event)
+		value, err = value.WithJSONExtension(entry.ADKEvent, event)
 		if err != nil {
 			return view.EntryView{}, err
 		}
-		value.Extensions = maps.Clone(value.Extensions)
-		value.Extensions["adk:event"] = string(encoded)
-		result.Raw[i] = value
+		// TapeAdapter currently requires tape-go's concrete extension carrier.
+		result.Raw[i] = value.Tape()
 	}
 	return result, nil
-}
-
-func customEntry(raw entry.EntryLike) (entry.CustomEntry, bool) {
-	switch value := raw.(type) {
-	case entry.CustomEntry:
-		return value, true
-	case *entry.CustomEntry:
-		return *value, true
-	default:
-		return entry.CustomEntry{}, false
-	}
 }

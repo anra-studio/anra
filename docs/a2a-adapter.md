@@ -257,6 +257,13 @@ exporter, update the advertised `entryMediaTypes` to its actual supported types.
 The exporter is service configuration, not part of a grant; reads project the
 granted range with the exporter configured at the time.
 
+Anra's runtime and public projection share `pkg/model/entry.Entry`, a concrete
+`EntryLike` with encapsulated extension access and JSON codecs. `FromTape`
+contains conversion from Tape's concrete entries; the runtime converts back
+with `Tape()` only at the ADK boundary because the current TapeAdapter recognizes
+its own `CustomEntry`. This preserves ADK state, legacy read adaptation and the
+existing on-disk representation without exposing extension maps to consumers.
+
 | Connect code | Meaning |
 | --- | --- |
 | `invalid_argument` | Malformed message or invalid parameters |

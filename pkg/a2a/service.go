@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/anra-studio/anra/pkg/model/journal"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -51,7 +52,7 @@ func (TextExporter) Export(e te.EntryLike) (*pb.ExportedEntry, error) {
 	default:
 		return nil, ErrUnsupported
 	}
-	data, err := json.Marshal(e.GetSummary())
+	data, err := json.Marshal(entry.FromTape(e).Content())
 	if err != nil {
 		return nil, err
 	}

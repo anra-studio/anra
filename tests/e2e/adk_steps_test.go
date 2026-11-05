@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
@@ -76,19 +77,11 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			return fmt.Errorf("legacy entries: %d", len(stored.Raw))
 		}
 		for _, raw := range stored.Raw {
-			var extensions map[string]any
-			switch v := raw.(type) {
-			case entry.CustomEntry:
-				extensions = v.Extensions
-			case *entry.CustomEntry:
-				extensions = v.Extensions
-			default:
-				return fmt.Errorf("legacy entry changed type: %T", raw)
-			}
-			if _, ok := extensions["anra:runner-message/v1"]; !ok {
+			value := ae.FromTape(raw)
+			if _, ok := value.Extension(ae.RunnerMessage); !ok {
 				return fmt.Errorf("legacy payload lost")
 			}
-			if _, ok := extensions["adk:event"]; ok {
+			if _, ok := value.Extension(ae.ADKEvent); ok {
 				return fmt.Errorf("legacy entry was rewritten")
 			}
 		}
@@ -134,21 +127,16 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			if raw.GetKind().IsAnchor() {
 				continue
 			}
-			var extensions map[string]any
-			switch value := raw.(type) {
-			case entry.CustomEntry:
-				extensions = value.Extensions
-			case *entry.CustomEntry:
-				extensions = value.Extensions
-			}
-			payload, ok := extensions["adk:event"].(string)
-			if !ok {
-				return fmt.Errorf("entry %s is missing its ADK event", raw.GetID())
-			}
+			value := ae.FromTape(raw)
 			var event session.Event
-			if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			exists, err := value.DecodeExtension(ae.ADKEvent, &event)
+			if err != nil {
 				return err
 			}
+			if !exists {
+				return fmt.Errorf("entry %s is missing its ADK event", raw.GetID())
+			}
+
 			if event.Content == nil {
 				continue
 			}

@@ -22,6 +22,7 @@ import (
 	"github.com/anra-studio/anra/pkg/agent"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/anra-studio/anra/pkg/model/projection"
 	"github.com/cucumber/godog"
 	"github.com/go-playground/validator/v10"
@@ -101,6 +102,9 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^两个工具返回交接绑定的角色版本和 Tape 视图$`, m.checkBoth)
 	sc.Step(`^MCP 服务重建和重复读取均不新增文件或改变 Tape$`, m.readOnly)
 	sc.Step(`^运行时将交接和视图存入 JSONL Tape$`, m.useJSONLTape)
+	sc.Step(`^控制器通过 Anra 条目追加带扩展的新视图$`, m.appendOwnedView)
+	sc.Step(`^Anra 条目内容和扩展在存储后保持完整$`, m.checkOwnedView)
+	sc.Step(`^JSONL 存储和 MCP 服务重建$`, m.restartJSONLTape)
 	sc.Step(`^控制器向 Tape 提交另一份交接$`, m.commitTapeOnly)
 	sc.Step(`^使用原凭证读取新交接$`, m.readWindow)
 	sc.Step(`^控制器为新交接签发凭证$`, func() {
@@ -278,14 +282,13 @@ func (m *mcpScenario) setup(kind string) error {
 }
 
 func (m *mcpScenario) append(kind te.EntryKind, text string) (te.EntryLike, error) {
-	return m.tape.Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(kind), te.WithEntryContent(text), te.WithEntryOwner("vesta")))
+	return m.viewStorage().Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(kind), te.WithEntryContent(text), te.WithEntryOwner("vesta")))
 }
 
 func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
-	_, err := m.tape.Store(m.tapeContext(), te.CustomEntry{
-		Entry:      te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-SUMMARY")),
-		Extensions: map[string]any{"adk:event": `{"content":` + content + `,"stateDelta":{"private":"PRIVATE-STATE"}}`},
-	})
+	value := ae.FromTape(te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
+		WithExtension(ae.ADKEvent, `{"content":`+content+`,"stateDelta":{"private":"PRIVATE-STATE"}}`)
+	_, err := m.viewStorage().Store(m.tapeContext(), value)
 	return err
 }
 
@@ -302,6 +305,71 @@ func (m *mcpScenario) plainTextWindow() (*pb.TapeView, error) {
 		return nil, err
 	}
 	return &pb.TapeView{Source: m.agent.Source(), SnapshotHead: head.GetID().String(), Scope: &pb.EntryRange{SeqS: first.GetID().String(), SeqE: head.GetID().String()}}, nil
+}
+
+func (m *mcpScenario) appendOwnedView() error {
+	value := ae.FromTape(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
+		WithExtension("opaque:reference", "opaque-entry-marker")
+	value, err := value.WithJSONExtension(ae.ADKEvent, struct {
+		Content projection.Event `json:"content"`
+	}{Content: projection.Event{Role: "model", Parts: []*projection.Part{{Text: "Persisted Anra entry"}}}})
+	if err != nil {
+		return err
+	}
+	stored, err := m.viewStorage().Store(m.tapeContext(), value)
+	if err != nil {
+		return err
+	}
+	head, err := m.append(te.EntryAssistant, "excluded committed boundary")
+	if err != nil {
+		return err
+	}
+	ref := &pb.TapeView{Source: m.agent.Source(), SnapshotHead: head.GetID().String(), Scope: &pb.EntryRange{SeqS: stored.GetID().String(), SeqE: head.GetID().String()}}
+	m.handoff.Context.View = ref
+	seq, err := m.commitHandoff(m.handoff)
+	if err != nil {
+		return err
+	}
+	m.grant.ID = rand.Text()
+	m.grant.AnchorSeq = seq
+	m.grant.View = ref
+	m.token = m.authorize(m.grant)
+	return nil
+}
+
+func (m *mcpScenario) checkOwnedView() error {
+	if err := m.checkWindowResponse(); err != nil {
+		return err
+	}
+	var window mcpWindow
+	if err := json.Unmarshal(m.lastResult, &window); err != nil {
+		return err
+	}
+	if len(window.Entries) != 1 || bytes.Contains(m.lastResult, []byte("PRIVATE-BODY")) || bytes.Contains(m.lastResult, []byte("opaque-entry-marker")) {
+		return errors.New("owned entry projection lost content or exposed storage fields")
+	}
+	var content projection.Event
+	if err := json.Unmarshal(window.Entries[0].Content, &content); err != nil {
+		return err
+	}
+	if len(content.Parts) != 1 || content.Parts[0].Text != "Persisted Anra entry" {
+		return errors.New("owned entry lost its encoded event")
+	}
+	batch, err := m.viewStorage().Range(m.tapeContext(), tv.EntryRange{SeqS: te.MustParseSeq(m.grant.View.Scope.SeqS), SeqE: te.MustParseSeq(m.grant.View.Scope.SeqE)})
+	if err != nil {
+		return err
+	}
+	if len(batch.Raw) != 1 {
+		return errors.New("owned entry was not retained in storage")
+	}
+	value := ae.FromTape(batch.Raw[0])
+	if marker, exists := value.Extension("opaque:reference"); !exists || marker != "opaque-entry-marker" {
+		return errors.New("storage dropped an opaque entry extension")
+	}
+	if value.GetID().String() != window.Entries[0].Seq || !value.GetTimestamp().Equal(window.Entries[0].Timestamp) {
+		return errors.New("projection changed assigned entry metadata")
+	}
+	return nil
 }
 
 func (m *mcpScenario) checkPlainTextContent() error {
@@ -843,10 +911,7 @@ func (m *mcpScenario) commitHandoff(h mcpHandoff) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tape := m.handoffTape
-	if tape == nil {
-		tape = m.tape
-	}
+	tape := m.viewStorage()
 	raw, err := tape.Store(m.tapeContext(), te.NewAnchor(te.Seq{}, "vesta", te.AnchorKindCustom, data))
 	if err != nil {
 		return "", err

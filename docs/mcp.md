@@ -66,6 +66,15 @@ MCP cannot call `Store` through this interface. The caller supplies the matching
 Source and owner. Tape is the sole source of truth for handoff anchors and their
 fixed views; the initialization anchor need not be the first entry.
 
+`pkg/model/entry.Entry` is Anra's concrete entry and implements Tape's
+`EntryLike`. Storage-facing code normalizes foreign entries with `FromTape`;
+Projection receives this owned type and reads `Content`, `Extension` or
+`DecodeExtension`, without inspecting `CustomEntry` or its map. Extension keys
+and JSON-string encoding live in the entry package. Updates return values and
+copy extension maps only when changing them. Explicit ID/timestamp methods
+preserve the Anra entry and its extensions during storage metadata assignment.
+The persisted Tape JSON format remains unchanged, including unknown extensions.
+
 Two required read-only interfaces supply the remaining data:
 
 - `Config.Roles` accepts `RoleProvider.GetRole(ctx, RoleRef)`. The provider returns

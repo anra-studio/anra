@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/anra-studio/anra/pkg/model/projection"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
@@ -49,7 +50,7 @@ func (s *Service) readTapeView(ctx context.Context, grant *Grant) (*TapeViewResu
 	}
 	result := &TapeViewResult{Channel: projection.Borrowed, Provenance: provenance, View: anchor.ProtoJSON(view), Entries: make([]ViewEntry, 0, len(batch.Raw))}
 	for _, raw := range batch.Raw {
-		e, err := project(raw, &provenance)
+		e, err := project(entry.FromTape(raw), &provenance)
 		if err != nil {
 			return nil, err
 		}
@@ -60,7 +61,7 @@ func (s *Service) readTapeView(ctx context.Context, grant *Grant) (*TapeViewResu
 	return result, nil
 }
 
-func project(raw te.EntryLike, provenance *projection.Provenance) (*ViewEntry, error) {
+func project(raw entry.Entry, provenance *projection.Provenance) (*ViewEntry, error) {
 	e := &ViewEntry{Channel: projection.Borrowed, Provenance: provenance, Seq: raw.GetID().String(), Kind: string(raw.GetKind()), Timestamp: raw.GetTimestamp()}
 	if raw.GetKind() == anchor.Kind {
 		r, err := anchor.Decode(raw)
@@ -68,7 +69,7 @@ func project(raw te.EntryLike, provenance *projection.Provenance) (*ViewEntry, e
 			return nil, errUnsupportedEntry
 		}
 		if r == nil {
-			e.Content = raw.GetSummary()
+			e.Content = raw.Content()
 			return e, nil
 		}
 		// The execution owner epoch is private runtime state.

@@ -9,7 +9,9 @@ import (
 
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
+	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/protobuf/proto"
@@ -66,6 +68,13 @@ func (p *mcpProviders) revoke(credential string) {
 	delete(p.grants, credential)
 }
 
+func (m *mcpScenario) viewStorage() storage.TapeStorage {
+	if m.handoffTape != nil {
+		return m.handoffTape
+	}
+	return m.tape
+}
+
 func (m *mcpScenario) useJSONLTape() error {
 	state, err := m.tape.Get(m.tapeContext())
 	if err != nil {
@@ -82,13 +91,33 @@ func (m *mcpScenario) useJSONLTape() error {
 	if err := tape.Init(m.tapeContext()); err != nil {
 		return err
 	}
-	for _, entry := range entries.Raw {
-		if _, err := tape.Store(m.tapeContext(), entry); err != nil {
+	for _, raw := range entries.Raw {
+		if _, err := tape.Store(m.tapeContext(), ae.FromTape(raw)); err != nil {
 			return err
 		}
 	}
 	m.server.Close()
 	m.server = nil
+	m.handoffTape = tape
+	m.service, err = anramcp.NewService(anramcp.Config{
+		Source: m.agent.Source(), Owner: "vesta", Tape: tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),
+	})
+	if err != nil {
+		return err
+	}
+	m.serve()
+	return nil
+}
+
+func (m *mcpScenario) restartJSONLTape() error {
+	m.server.Close()
+	tape, err := jsonl.NewJSONLStorage("mcp-session", filepath.Join(m.s.root, "jsonl-tape"))
+	if err != nil {
+		return err
+	}
+	if err := tape.Init(m.tapeContext()); err != nil {
+		return err
+	}
 	m.handoffTape = tape
 	m.service, err = anramcp.NewService(anramcp.Config{
 		Source: m.agent.Source(), Owner: "vesta", Tape: tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),

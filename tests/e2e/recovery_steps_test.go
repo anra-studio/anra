@@ -15,6 +15,7 @@ import (
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
@@ -105,7 +106,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 		if err != nil {
 			return err
 		}
-		_, err = tape.Store(ctx, entry.CustomEntry{Entry: entry.NewEntry(entry.WithEntryOwner("alice"), entry.WithEntryKind(entry.EntryToolCall)), Extensions: map[string]any{"adk:event": string(encoded)}})
+		_, err = tape.Store(ctx, ae.FromTape(entry.NewEntry(entry.WithEntryOwner("alice"), entry.WithEntryKind(entry.EntryToolCall))).WithExtension(ae.ADKEvent, string(encoded)))
 		return err
 	})
 	sc.Step(`^the recovered agent keeps its source, view, grant, and physical history$`, func() error {
@@ -168,16 +169,15 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 					abandoned++
 				}
 			}
-			var custom entry.CustomEntry
-			switch v := e.(type) {
-			case entry.CustomEntry:
-				custom = v
-			case *entry.CustomEntry:
-				custom = *v
+			var payload json.RawMessage
+			exists, err := ae.FromTape(e).DecodeExtension(ae.ADKEvent, &payload)
+			if err != nil {
+				return err
 			}
-			if raw, ok := custom.Extensions["adk:event"].(string); ok && strings.Contains(raw, "interrupted-call") {
+			if exists && strings.Contains(string(payload), "interrupted-call") {
 				unmatched++
 			}
+
 		}
 		if abandoned != 1 || unmatched != 1 {
 			return fmt.Errorf("recovery changed physical history: abandoned=%d interrupted=%d", abandoned, unmatched)
