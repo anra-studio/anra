@@ -11,8 +11,9 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/gen/anra/a2a/tape/v1/tapev1connect"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
@@ -50,7 +51,8 @@ func Discover(ctx context.Context, h *http.Client, cardURL string) (*sdk.AgentCa
 // the same set; only visible current cards should reach this ranking seam.
 type Peer struct {
 	CardURL string
-	Card    *sdk.AgentCard
+
+	Card *sdk.AgentCard
 }
 
 // RankPeers returns the peers the ranker considers worth visiting for the
@@ -81,7 +83,8 @@ func RankPeers(ctx context.Context, ranker Ranker, query string, peers []Peer) (
 // Client uses generated protobuf messages directly.
 // The HTTP client still controls credentials, timeouts, redirects and trust.
 type Client struct {
-	rpc         tapev1connect.TapeViewServiceClient
+	rpc tapev1connect.TapeViewServiceClient
+
 	viewVersion bool
 }
 
@@ -122,7 +125,12 @@ func NewClient(h *http.Client, card *sdk.AgentCard) (*Client, error) {
 		}
 		transport := connecthttp.NewTransport(h, base, connecthttp.WithReadMaxBytes(0), connecthttp.WithSendMaxBytes(0))
 		version, _ := json.Marshal(ext.Params["viewBorrowVersion"])
-		return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)), viewVersion: string(version) == "1"}, nil
+
+		return &Client{
+			rpc:         tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)),
+			viewVersion: string(version) == "1",
+		}, nil
+
 	}
 	return nil, ErrInactive
 }
@@ -159,7 +167,8 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 	if err := validateMessage(d); err != nil {
 		return nil, err
 	}
-	if d.RequestId != r.RequestId || (d.Status == Granted && r.View != nil && !viewMatches(r.View, d.View)) {
+
+	if d.RequestId != r.RequestId || (d.Status == Granted && r.View != nil && !viewMatches(r.View, d.Lease)) {
 		return nil, ErrInvalidParams
 	}
 	return d, nil
@@ -168,7 +177,7 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 // BorrowContext requests a grant and reads its complete permitted view. Denied
 // and pending decisions return without reads. Snapshot validation and ordered
 // pagination are shared with every other protocol caller through Borrow/ReadView.
-func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.Decision, []*pb.Page, error) {
+func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.Decision, []*pb.Quote, error) {
 	decision, err := c.Borrow(ctx, req)
 	if err != nil {
 		return nil, nil, err
@@ -176,7 +185,8 @@ func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.
 	if decision.Status != Granted {
 		return decision, nil, nil
 	}
-	pages, err := c.ReadView(ctx, decision.View)
+
+	pages, err := c.ReadView(ctx, decision.Lease)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -185,7 +195,14 @@ func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.
 
 func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {
 	ctx, info := connectContext(ctx)
-	res, err := c.rpc.Get(ctx, &pb.GetRequest{RequestId: id})
+
+	res, err := c.rpc.Get(
+		ctx,
+		&rpcpb.GetRequest{
+			RequestId: id,
+		},
+	)
+
 	if err := checkConnectResponse(info, err); err != nil {
 		return nil, err
 	}
@@ -193,7 +210,7 @@ func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {
 	return d, validateMessage(d)
 }
 
-func (c *Client) Read(ctx context.Context, r *pb.ReadRequest) (*pb.Page, error) {
+func (c *Client) Read(ctx context.Context, r *rpcpb.ReadRequest) (*pb.Quote, error) {
 	if err := validateMessage(r); err != nil {
 		return nil, err
 	}
@@ -202,64 +219,85 @@ func (c *Client) Read(ctx context.Context, r *pb.ReadRequest) (*pb.Page, error) 
 	if err := checkConnectResponse(info, err); err != nil {
 		return nil, err
 	}
-	p := res.GetPage()
+
+	p := res.GetQuote()
+
 	return p, validateMessage(p)
 }
 
 // ReadView reads every page of a granted view. A view that fits in one page
 // costs one Read call. Every page must match the granted source, view and snapshot;
 // together the pages must cover the granted range exactly once, in order.
-func (c *Client) ReadView(ctx context.Context, v *pb.View) ([]*pb.Page, error) {
-	if err := validateMessage(v); err != nil {
+func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) ([]*pb.Quote, error) {
+	if err := validateMessage(lease); err != nil {
 		return nil, err
 	}
-	var expected, end te.Seq
-	var err error
-	if len(v.Ranges) > 0 {
-		if expected, err = te.ParseSeq(v.Ranges[0].SeqS); err != nil {
-			return nil, ErrInvalidParams
-		}
-		if end, err = te.ParseSeq(v.Ranges[0].SeqE); err != nil {
-			return nil, ErrInvalidParams
-		}
-	}
-	var pages []*pb.Page
+
+	var pages []*pb.Quote
+
 	var cursor string
+
+	scopeIndex := 0
+
+	expected := te.MustParseSeq(lease.Ref.Scopes[0].SeqS)
+
 	for {
-		p, err := c.Read(ctx, &pb.ReadRequest{ViewId: v.ViewId, Cursor: cursor, PageSize: MaxPageSize})
+
+		p, err := c.Read(
+			ctx,
+			&rpcpb.ReadRequest{
+				LeaseId:  lease.Id,
+				Cursor:   cursor,
+				PageSize: MaxPageSize,
+			},
+		)
 		if err != nil {
 			return nil, err
 		}
-		if p.ViewId != v.ViewId || p.SnapshotHead != v.SnapshotHead || !proto.Equal(p.Source, v.Source) {
+
+		if p.Provenance.LeaseId != lease.Id || p.Provenance.Caller != lease.Caller || !proto.Equal(p.Provenance.Ref, lease.Ref) {
 			return nil, ErrInvalidParams
 		}
 		for _, e := range p.Entries {
-			// Entries must be exactly the next sequence in the granted range. A grant
-			// without a range (the schema allows at most one) has nothing to read.
-			if len(v.Ranges) == 0 || e.Seq != expected.String() || expected.Cmp(end) >= 0 {
+
+			if scopeIndex >= len(lease.Ref.Scopes) || e.Seq != expected.String() {
 				return nil, ErrInvalidParams
 			}
 			expected = expected.Next()
+
+			if expected.String() == lease.Ref.Scopes[scopeIndex].SeqE {
+				scopeIndex++
+				if scopeIndex < len(lease.Ref.Scopes) {
+					expected = te.MustParseSeq(lease.Ref.Scopes[scopeIndex].SeqS)
+				}
+			}
+
 		}
 		pages = append(pages, p)
 		if p.NextCursor == "" {
-			break
+			if scopeIndex != len(lease.Ref.Scopes) {
+				return nil, ErrInvalidParams
+			}
+			return pages, nil
 		}
-		// Nonempty pages must advance within the selected range; no cursor cache is needed.
-		if len(p.Entries) == 0 {
+
+		if len(p.Entries) == 0 || scopeIndex == len(lease.Ref.Scopes) {
 			return nil, ErrInvalidParams
 		}
 		cursor = p.NextCursor
 	}
-	if expected.Cmp(end) != 0 {
-		return nil, ErrInvalidParams
-	}
-	return pages, nil
 }
 
 func (c *Client) Release(ctx context.Context, id string) error {
 	ctx, info := connectContext(ctx)
-	res, err := c.rpc.Release(ctx, &pb.ReleaseRequest{ViewId: id})
+
+	res, err := c.rpc.Release(
+		ctx,
+		&rpcpb.ReleaseRequest{
+			LeaseId: id,
+		},
+	)
+
 	if err := checkConnectResponse(info, err); err != nil {
 		return err
 	}

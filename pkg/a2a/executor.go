@@ -10,7 +10,7 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/pkg/model/delegator"
 )
 
@@ -26,7 +26,7 @@ type Runtime interface {
 // may ask to borrow, or nil.
 type BusyError interface {
 	error
-	BusyView() *pb.TapeView
+	BusyView() *pb.Ref
 }
 
 // NewExecutor bridges text-only A2A messages to Anra's tape-backed runtime and
@@ -35,44 +35,76 @@ func NewExecutor(runtime Runtime) (a2asrv.AgentExecutor, error) {
 	if runtime == nil {
 		return nil, ErrInvalidParams
 	}
-	return a2asrv.AgentExecutorFunc(func(ctx context.Context, exec *a2asrv.ExecutorContext) iter.Seq2[sdk.Event, error] {
-		return func(yield func(sdk.Event, error) bool) {
-			if exec == nil || exec.Message == nil || exec.Message.Role != sdk.MessageRoleUser || exec.Message.TaskID != "" {
-				yield(nil, sdk.ErrInvalidParams)
-				return
-			}
-			input, err := requestText(exec.Message)
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			ctx, collaborating, err := requestDelegation(ctx, exec.Message)
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			result, output, err := runLocal(ctx, runtime, input)
-			if err != nil {
-				yield(nil, fmt.Errorf("anra execution failed: %w", err))
-				return
-			}
-			reply := sdk.NewMessage(sdk.MessageRoleAgent, sdk.NewTextPart(output))
-			reply.ContextID = exec.ContextID
-			if !collaborating {
-				// A generic caller activated no extension, so it receives text only.
+
+	return a2asrv.AgentExecutorFunc(
+		func(ctx context.Context, exec *a2asrv.ExecutorContext) iter.Seq2[sdk.Event, error] {
+			return func(yield func(sdk.Event, error) bool) {
+				if exec == nil || exec.Message == nil || exec.Message.Role != sdk.MessageRoleUser || exec.Message.TaskID != "" {
+
+					yield(nil, sdk.ErrInvalidParams)
+
+					return
+
+				}
+
+				input, err := requestText(exec.Message)
+				if err != nil {
+
+					yield(nil, err)
+
+					return
+
+				}
+
+				ctx, collaborating, err := requestDelegation(ctx, exec.Message)
+				if err != nil {
+
+					yield(nil, err)
+
+					return
+
+				}
+
+				result, output, err := runLocal(ctx, runtime, input)
+				if err != nil {
+
+					yield(nil, fmt.Errorf("anra execution failed: %w", err))
+
+					return
+
+				}
+
+				reply := sdk.NewMessage(sdk.MessageRoleAgent, sdk.NewTextPart(output))
+
+				reply.ContextID = exec.ContextID
+
+				if !collaborating {
+
+					// A generic caller activated no extension, so it receives text only.
+
+					yield(reply, nil)
+
+					return
+
+				}
+
+				meta, err := encodeCollaborationMetadata(result)
+				if err != nil {
+
+					yield(nil, err)
+
+					return
+
+				}
+
+				reply.Extensions = []string{CollaborationURI}
+
+				reply.Metadata = map[string]any{CollaborationURI: meta}
+
 				yield(reply, nil)
-				return
 			}
-			meta, err := encodeCollaborationMetadata(result)
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			reply.Extensions = []string{CollaborationURI}
-			reply.Metadata = map[string]any{CollaborationURI: meta}
-			yield(reply, nil)
-		}
-	}), nil
+		},
+	), nil
 }
 
 // requestText joins the message's text parts; any other part is invalid.
@@ -122,12 +154,17 @@ func runLocal(ctx context.Context, runtime Runtime, input string) (*cp.ResponseM
 	if errors.As(err, &busy) {
 		return &cp.ResponseMetadata{
 			Status: cp.Status_STATUS_BUSY,
-			Retry:  cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW,
-			View:   busy.BusyView(),
+
+			Retry: cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW,
+
+			View: busy.BusyView(),
 		}, "Agent is busy; request was not accepted.", nil
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	return &cp.ResponseMetadata{Status: cp.Status_STATUS_COMPLETED}, output, nil
+
+	return &cp.ResponseMetadata{
+		Status: cp.Status_STATUS_COMPLETED,
+	}, output, nil
 }

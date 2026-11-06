@@ -11,7 +11,7 @@ import (
 
 	"buf.build/go/protovalidate"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -27,12 +27,14 @@ type contextKey struct{}
 // Next forks the path for one outgoing edge; Begin creates fresh turn state.
 type Delegator struct {
 	metadata *cp.DelegationMetadata
-	busy     *busyPeers
+
+	busy *busyPeers
 }
 
 type busyPeers struct {
-	mu    sync.Mutex
-	peers map[string]*pb.TapeView
+	mu sync.Mutex
+
+	peers map[string]*pb.Ref
 }
 
 // Accept validates inbound metadata and records an owned copy in the context.
@@ -44,7 +46,12 @@ func Accept(ctx context.Context, metadata *cp.DelegationMetadata) (context.Conte
 		return ctx, err
 	}
 	d := newDelegator(proto.Clone(metadata).(*cp.DelegationMetadata))
-	return context.WithValue(ctx, contextKey{}, d), nil
+
+	return context.WithValue(
+		ctx,
+		contextKey{},
+		d,
+	), nil
 }
 
 // Begin caps the deadline and starts fresh BUSY memory for a local turn.
@@ -56,21 +63,40 @@ func Begin(ctx context.Context) (context.Context, context.CancelFunc) {
 		deadline = inherited
 	}
 	metadata.Deadline = timestamppb.New(deadline)
-	ctx = context.WithValue(ctx, contextKey{}, newDelegator(metadata))
+
+	ctx = context.WithValue(
+		ctx,
+		contextKey{},
+		newDelegator(metadata),
+	)
+
 	return context.WithDeadline(ctx, deadline)
 }
 
 // FromContext returns the current turn's model, or a new root when the
 // caller is outside an agent turn (for example, a CLI request).
 func FromContext(ctx context.Context) *Delegator {
-	if d, ok := ctx.Value(contextKey{}).(*Delegator); ok {
+	if d, ok := ctx.Value(
+		contextKey{},
+	).(*Delegator); ok {
 		return d
 	}
-	return newDelegator(&cp.DelegationMetadata{RootRequestId: uuid.New().String(), Deadline: timestamppb.New(boundedDeadline(ctx))})
+
+	return newDelegator(
+		&cp.DelegationMetadata{
+			RootRequestId: uuid.New().String(),
+			Deadline:      timestamppb.New(boundedDeadline(ctx)),
+		},
+	)
 }
 
 func newDelegator(metadata *cp.DelegationMetadata) *Delegator {
-	return &Delegator{metadata: metadata, busy: &busyPeers{peers: map[string]*pb.TapeView{}}}
+	return &Delegator{
+		metadata: metadata,
+		busy: &busyPeers{
+			peers: map[string]*pb.Ref{},
+		},
+	}
 }
 
 func boundedDeadline(ctx context.Context) time.Time {
@@ -89,7 +115,7 @@ func (d *Delegator) Metadata() *cp.DelegationMetadata {
 // Next prepares one edge without modifying the current or any sibling path.
 // No network call is permitted when the peer has unchanged BUSY context or the
 // deadline has expired. References are hints, never transferable grants.
-func (d *Delegator) Next(ctx context.Context, self, peer string, refs []*pb.TapeView) (context.Context, error) {
+func (d *Delegator) Next(ctx context.Context, self, peer string, refs []*pb.Ref) (context.Context, error) {
 	d.busy.mu.Lock()
 	_, seen := d.busy.peers[peer]
 	d.busy.mu.Unlock()
@@ -109,15 +135,26 @@ func (d *Delegator) Next(ctx context.Context, self, peer string, refs []*pb.Tape
 			if ref == nil {
 				return ctx, errors.New("delegator: nil context reference")
 			}
-			next.Context = append(next.Context, proto.Clone(ref).(*pb.TapeView))
+
+			next.Context = append(next.Context, proto.Clone(ref).(*pb.Ref))
+
 		}
 	}
 	next.Ancestors = append(next.Ancestors, self)
 	if err := protovalidate.Validate(next); err != nil {
 		return ctx, err
 	}
-	edge := &Delegator{metadata: next, busy: d.busy}
-	return context.WithValue(ctx, contextKey{}, edge), nil
+
+	edge := &Delegator{
+		metadata: next,
+		busy:     d.busy,
+	}
+
+	return context.WithValue(
+		ctx,
+		contextKey{},
+		edge,
+	), nil
 }
 
 // Observe records a validated peer outcome. A BUSY view is copied so
@@ -126,9 +163,11 @@ func (d *Delegator) Observe(peer string, response *cp.ResponseMetadata) {
 	if response.GetStatus() != cp.Status_STATUS_BUSY {
 		return
 	}
-	var ref *pb.TapeView
+
+	var ref *pb.Ref
+
 	if response.View != nil {
-		ref = proto.Clone(response.View).(*pb.TapeView)
+		ref = proto.Clone(response.View).(*pb.Ref)
 	}
 	d.busy.mu.Lock()
 	d.busy.peers[peer] = ref
@@ -137,8 +176,8 @@ func (d *Delegator) Observe(peer string, response *cp.ResponseMetadata) {
 
 // Borrowed records progress only after the granted context has been read. An
 // unchanged or older snapshot keeps reasoning suppressed for that peer.
-func (d *Delegator) Borrowed(peer string, view *pb.View) {
-	if view == nil || view.Source == nil {
+func (d *Delegator) Borrowed(peer string, view *pb.Lease) {
+	if view == nil || view.Ref.Source == nil {
 		return
 	}
 	d.busy.mu.Lock()
@@ -147,12 +186,17 @@ func (d *Delegator) Borrowed(peer string, view *pb.View) {
 	if !busy {
 		return
 	}
-	if reported == nil || !proto.Equal(reported.Source, view.Source) {
+
+	if reported == nil || !proto.Equal(reported.Source, view.Ref.Source) {
+
 		delete(d.busy.peers, peer)
 		return
 	}
-	previous, previousErr := entry.ParseSeq(reported.SnapshotHead)
-	next, nextErr := entry.ParseSeq(view.SnapshotHead)
+
+	previous, previousErr := entry.ParseSeq(reported.Scopes[len(reported.Scopes)-1].SeqE)
+
+	next, nextErr := entry.ParseSeq(view.Ref.Scopes[len(view.Ref.Scopes)-1].SeqE)
+
 	if previousErr == nil && nextErr == nil && next.Cmp(previous) > 0 {
 		delete(d.busy.peers, peer)
 	}

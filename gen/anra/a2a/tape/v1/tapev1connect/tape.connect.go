@@ -8,6 +8,7 @@ import (
 	connect "connectrpc.com/connect/v2"
 	context "context"
 	v1 "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	v11 "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	sync "sync"
 )
 
@@ -67,7 +68,7 @@ var (
 
 // TapeViewServiceClient is a client for the anra.a2a.tape.v1.TapeViewService service.
 type TapeViewServiceClient interface {
-	Borrow(context.Context, *v1.BorrowRequest) (*v1.BorrowResponse, error)
+	Borrow(context.Context, *v11.BorrowRequest) (*v1.BorrowResponse, error)
 	Get(context.Context, *v1.GetRequest) (*v1.GetResponse, error)
 	Read(context.Context, *v1.ReadRequest) (*v1.ReadResponse, error)
 	Release(context.Context, *v1.ReleaseRequest) (*v1.ReleaseResponse, error)
@@ -81,7 +82,7 @@ func NewTapeViewServiceClient(client *connect.Client) TapeViewServiceClient {
 
 // TapeViewServiceHandler is an implementation of the anra.a2a.tape.v1.TapeViewService service.
 type TapeViewServiceHandler interface {
-	Borrow(context.Context, *v1.BorrowRequest) (*v1.BorrowResponse, error)
+	Borrow(context.Context, *v11.BorrowRequest) (*v1.BorrowResponse, error)
 	Get(context.Context, *v1.GetRequest) (*v1.GetResponse, error)
 	Read(context.Context, *v1.ReadRequest) (*v1.ReadResponse, error)
 	Release(context.Context, *v1.ReleaseRequest) (*v1.ReleaseResponse, error)
@@ -102,7 +103,7 @@ func RegisterTapeViewServiceHandler(server *connect.Server, svc TapeViewServiceH
 // UnimplementedTapeViewServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedTapeViewServiceHandler struct{}
 
-func (UnimplementedTapeViewServiceHandler) Borrow(context.Context, *v1.BorrowRequest) (*v1.BorrowResponse, error) {
+func (UnimplementedTapeViewServiceHandler) Borrow(context.Context, *v11.BorrowRequest) (*v1.BorrowResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, "anra.a2a.tape.v1.TapeViewService.Borrow is not implemented")
 }
 
@@ -122,7 +123,7 @@ type tapeViewServiceClient struct {
 	client *connect.Client
 }
 
-func (c *tapeViewServiceClient) Borrow(ctx context.Context, req *v1.BorrowRequest) (*v1.BorrowResponse, error) {
+func (c *tapeViewServiceClient) Borrow(ctx context.Context, req *v11.BorrowRequest) (*v1.BorrowResponse, error) {
 	var res v1.BorrowResponse
 	if err := c.client.CallUnary(ctx, tapeViewServiceBorrowSpec(), req, &res); err != nil {
 		return nil, err
@@ -157,7 +158,7 @@ func (c *tapeViewServiceClient) Release(ctx context.Context, req *v1.ReleaseRequ
 type tapeViewServiceHandler struct{ svc TapeViewServiceHandler }
 
 func (h tapeViewServiceHandler) borrow(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.BorrowRequest
+	var req v11.BorrowRequest
 	if err := stream.Receive(&req); err != nil {
 		return err
 	}

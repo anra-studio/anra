@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/genai"
@@ -16,26 +16,31 @@ import (
 // default request cap. Raw PCM silence is valid without a container header.
 const mcpAudioBytes = (3 << 20) + 2
 
-func (m *mcpScenario) largeAudioWindow() (*pb.TapeView, error) {
-	state, err := m.tape.Get(m.tapeContext())
+func (m *mcpScenario) largeAudioWindow() (*pb.Ref, error) {
+	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
 	if err != nil {
 		return nil, err
 	}
-	start := state.Scope.SeqE.Next()
-	content, err := json.Marshal(genai.Content{Role: "user", Parts: []*genai.Part{{
-		InlineData: &genai.Blob{MIMEType: "audio/L16;rate=16000;channels=1", Data: make([]byte, mcpAudioBytes)},
-	}}})
+
+	content, err := json.Marshal(
+		genai.Content{
+			Role: "user",
+			Parts: []*genai.Part{{
+				InlineData: &genai.Blob{
+					MIMEType: "audio/L16;rate=16000;channels=1",
+					Data:     make([]byte, mcpAudioBytes),
+				},
+			}},
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
 	if err := m.rawEvent(te.EntryUser, string(content)); err != nil {
 		return nil, err
 	}
-	head, err := m.append(te.EntryAssistant, "excluded committed boundary")
-	if err != nil {
-		return nil, err
-	}
-	return &pb.TapeView{Source: m.agent.Source(), SnapshotHead: head.GetID().String(), Scope: &pb.EntryRange{SeqS: start.String(), SeqE: head.GetID().String()}}, nil
+
+	return finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
 }
 
 func (m *mcpScenario) readWithLargeBody() error {
@@ -75,23 +80,20 @@ func (m *mcpScenario) checkLargeAudio() error {
 	return nil
 }
 
-func (m *mcpScenario) multimodalWindow() (*pb.TapeView, error) {
-	state, err := m.tape.Get(m.tapeContext())
+func (m *mcpScenario) multimodalWindow() (*pb.Ref, error) {
+	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
 	if err != nil {
 		return nil, err
 	}
-	start := state.Scope.SeqE.Next()
+
 	if err := m.rawEvent(te.EntryUser, `{"role":"user","parts":[{"inlineData":{"mimeType":"image/png","data":"aW1hZ2U=","displayName":"receipt"},"partMetadata":{"private":"PRIVATE-METADATA"}},{"fileData":{"fileUri":"gs://context/invoice.pdf","mimeType":"application/pdf","displayName":"invoice"}}]}`); err != nil {
 		return nil, err
 	}
 	if err := m.rawEvent(te.EntryAssistant, `{"role":"model","parts":[{"executableCode":{"id":"code-1","language":"PYTHON","code":"print(1)"},"thoughtSignature":"PRIVATE-SIGNATURE"},{"codeExecutionResult":{"id":"code-1","outcome":"OUTCOME_OK","output":"1\n"}},{"text":"The result is one."}]}`); err != nil {
 		return nil, err
 	}
-	head, err := m.append(te.EntryAssistant, "excluded committed boundary")
-	if err != nil {
-		return nil, err
-	}
-	return &pb.TapeView{Source: m.agent.Source(), SnapshotHead: head.GetID().String(), Scope: &pb.EntryRange{SeqS: start.String(), SeqE: head.GetID().String()}}, nil
+
+	return finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
 }
 
 func (m *mcpScenario) checkMultimodal() error {

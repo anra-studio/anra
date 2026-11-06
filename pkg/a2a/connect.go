@@ -4,35 +4,55 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/anra-studio/anra/pkg/model/view"
+
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/validate"
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/gen/anra/a2a/tape/v1/tapev1connect"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/internal/httpserver"
 )
 
-const ViewPath = "/" + tapev1connect.TapeViewServiceName
-const ViewRESTPath = "/v1/tape/"
+const (
+	ViewPath     = "/" + tapev1connect.TapeViewServiceName
+	ViewRESTPath = "/v1/tape/"
+)
 
 // NewViewHandler serves the generated Connect and REST tape-view APIs.
 // Mount it at ViewPath + "/" and ViewRESTPath. Identity comes only from Authenticate.
-func NewViewHandler(s *Service, auth Authenticate) (http.Handler, error) {
+func NewViewHandler(s *view.Service, auth Authenticate) (http.Handler, error) {
 	if s == nil || auth == nil {
 		return nil, ErrInvalidParams
 	}
 	server := connect.NewServer(viewAccess, validate.NewServerInterceptor())
-	tapev1connect.RegisterTapeViewServiceHandler(server, &connectViews{service: s})
+
+	tapev1connect.RegisterTapeViewServiceHandler(
+		server,
+		&connectViews{
+			service: s,
+		},
+	)
+
 	handler, err := httpserver.NewHandler(server)
 	if err != nil {
 		return nil, err
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := auth(r)
-		if err != nil {
-			p = ""
-		}
-		handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), peerKey{}, p)))
-	}), nil
+
+	return http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			p, err := auth(r)
+			if err != nil {
+				p = ""
+			}
+
+			handler.ServeHTTP(w, r.WithContext(context.WithValue(
+				r.Context(),
+				peerKey{},
+				p,
+			)))
+		},
+	), nil
 }
 
 // Access checks run before validation/dispatch for every transport. Its adapter
@@ -51,42 +71,59 @@ func viewAccess(next connect.ServerFunc) connect.ServerFunc {
 	}
 }
 
-type connectViews struct{ service *Service }
+type connectViews struct {
+	service *view.Service
+}
 
 var _ tapev1connect.TapeViewServiceHandler = (*connectViews)(nil)
 
 func connectPeer(ctx context.Context) string {
-	p, _ := ctx.Value(peerKey{}).(string)
+	p, _ := ctx.Value(
+		peerKey{},
+	).(string)
+
 	return p
 }
 
-func (h *connectViews) Borrow(ctx context.Context, req *pb.BorrowRequest) (*pb.BorrowResponse, error) {
+func (h *connectViews) Borrow(ctx context.Context, req *pb.BorrowRequest) (*rpcpb.BorrowResponse, error) {
 	d, err := h.service.Borrow(ctx, connectPeer(ctx), req)
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return &pb.BorrowResponse{Decision: d}, nil
+
+	return &rpcpb.BorrowResponse{
+		Decision: d,
+	}, nil
 }
 
-func (h *connectViews) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
+func (h *connectViews) Get(ctx context.Context, req *rpcpb.GetRequest) (*rpcpb.GetResponse, error) {
 	d, err := h.service.Get(ctx, connectPeer(ctx), req.RequestId)
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return &pb.GetResponse{Decision: d}, nil
+
+	return &rpcpb.GetResponse{
+		Decision: d,
+	}, nil
 }
 
-func (h *connectViews) Read(ctx context.Context, req *pb.ReadRequest) (*pb.ReadResponse, error) {
-	p, err := h.service.Read(ctx, connectPeer(ctx), req)
+func (h *connectViews) Read(ctx context.Context, req *rpcpb.ReadRequest) (*rpcpb.ReadResponse, error) {
+	p, err := h.service.Read(ctx, connectPeer(ctx), req.LeaseId, req.Cursor, req.PageSize)
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return &pb.ReadResponse{Page: p}, nil
+
+	return &rpcpb.ReadResponse{
+		Quote: p.Proto(),
+	}, nil
 }
 
-func (h *connectViews) Release(ctx context.Context, req *pb.ReleaseRequest) (*pb.ReleaseResponse, error) {
-	if err := h.service.Release(ctx, connectPeer(ctx), req.ViewId); err != nil {
+func (h *connectViews) Release(ctx context.Context, req *rpcpb.ReleaseRequest) (*rpcpb.ReleaseResponse, error) {
+	if err := h.service.Release(ctx, connectPeer(ctx), req.LeaseId); err != nil {
 		return nil, connectError(err)
 	}
-	return &pb.ReleaseResponse{Released: true}, nil
+
+	return &rpcpb.ReleaseResponse{
+		Released: true,
+	}, nil
 }

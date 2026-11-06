@@ -13,16 +13,13 @@ type RoleProvider interface {
 }
 
 // GrantVerifier validates a bearer credential using caller-owned authorization.
-// Implementations must support concurrent calls and check revocation on every
-// call. Return ErrPermissionDenied for unknown, revoked or expired credentials;
-// other errors indicate unavailability. A nil error requires a Grant that is
-// valid and immutable for the request and whose Role, AnchorSeq and View
-// (a valid TapeView of this service's Source) are exactly those committed by
-// the handoff anchor at AnchorSeq. MCP only checks AnchorSeq and permission;
-// it never issues credentials or reads the handoff.
-// ID is a public grant reference, distinct from the secret bearer token. Caller
-// identifies the authenticated borrower. Both are issuer-owned provenance and
-// must remain stable across repeated reads, not be taken from tool arguments.
+// Implementations support concurrent calls and check credential expiry and
+// revocation on every request. Unknown or revoked credentials return
+// ErrPermissionDenied; other errors indicate backend unavailability. A nil error
+// requires a valid, non-nil Grant whose Caller, LeaseID, Role and AnchorSeq are
+// exactly those committed by the handoff. The lease ID is public, never the
+// credential. MCP checks the handoff and tool permission; the shared view service
+// checks lease ownership, expiry and termination on every content read.
 type GrantVerifier interface {
 	VerifyGrant(ctx context.Context, credential string) (*Grant, error)
 }

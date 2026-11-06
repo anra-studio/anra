@@ -14,8 +14,10 @@ such as a web UI, can use it without importing Cobra or launching a subprocess.
 | `peer` | Compose the configured model, agent and disk storage; serve A2A/TapeView; call a running agent | `Open`, `Node.Run`, `Node.Serve`, `Node.Close`, `Ask` |
 | `discovery` | Typed registry client, presence checks, heartbeat maintenance and owned metadata updates | `NewClient`, `Client.Lookup`, `Client.List`, `Client.Start`, `Registration.Update` |
 | `registry` | Persistent Peer directory, runtime ownership, presence and retirement | `Open`, `NewHandler`, `Serve` |
-| `a2a` | A2A and TapeView protocol adapters, clients and borrowing services | `NewExecutor`, `NewPeerHandler`, `NewMessageClient`, `Client.BorrowContext`, `NewService` |
-| `model/anchor`, `model/delegator`, `model/journal` | Durable execution records, delegation state and grant records | Protocol and storage types |
+| `a2a` | A2A / Connect / REST protocol adapters and clients | `NewExecutor`, `NewPeerHandler`, `NewMessageClient`, `Client.BorrowContext` |
+| `model/view` | Committed multi-scope references, caller-bound borrowing, quoted content and provenance | `NewService`, `Service.Borrow`, `Service.Grant`, `Service.ReadAll` |
+| `mcp` | Bearer authentication, handoff/role permissions and shared Quote reads | `NewService`, `Service.Handler` |
+| `model/anchor`, `model/delegator`, `model/grantRecord` | Durable execution records, delegation state and grant records | Protocol and storage types |
 
 `peer` is the composition layer. `agent` knows neither configuration files nor
 process lifecycle. `discovery` knows the directory's HTTP contract but does not
@@ -28,11 +30,12 @@ as canonical ProtoJSON objects for the model.
 The private `internal/httpserver` helper shares cancellation and HTTP shutdown
 between peer and registry servers; it has no terminal output.
 
-The proposed [shared View and borrowing architecture](designs/shared-view-design.md)
-consolidates MCP and peer borrowing under `pkg/model/view`. It restricts both
-paths to committed views and binds one caller-owned lease to each fixed view.
-The target grant persistence package is `pkg/model/grantRecord`.
-This is a target design; the boundaries above describe the current implementation.
+The approved [shared View architecture](designs/shared-view-design.md) puts MCP
+and peer borrowing behind the same `pkg/model/view.Service`. It resolves only
+committed Ref values (`Source + Scopes`), binds each lease to its caller and
+complete Ref, and returns one shared Quote content/provenance model. Durable
+request decisions and lease termination live in `pkg/model/grantRecord`.
+MCP role authorization remains independent of the Tape lease.
 
 The [registry contract](registry.md) uses canonical Peer metadata with `address`
 and `skill`, separate observed presence, and generated Connect RPCs. A2A cards
@@ -82,11 +85,11 @@ Bind a listener and pass it to `node.Serve(ctx, listener, ready)`. The bound
 address, including an OS-selected port, is advertised in the Agent Card.
 `ready` is an optional `func(net.Addr) error` callback; a host can use it to
 update its own UI. Returning an error aborts startup, disconnects established
-presence, and closes HTTP and the grant journal. The committed Peer remains known
+presence, and closes HTTP and the grant record store. The committed Peer remains known
 and offline. The library prints nothing.
 
 Cancel the serving context and wait for `Serve` to return before calling
-`node.Close`. `Serve` owns its listener and grant journal; the host owns the
+`node.Close`. `Serve` owns its listener and grant record store; the host owns the
 node. Heartbeats continue until cancellation, transient outages are retried,
 and permanent ownership rejection stops serving with its cause.
 

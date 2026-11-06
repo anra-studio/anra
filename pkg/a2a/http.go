@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/anra-studio/anra/pkg/model/view"
+
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 )
@@ -33,21 +35,24 @@ func Advertise(card *sdk.AgentCard, endpoint string) error {
 	card.Capabilities.Extensions = append(
 		card.Capabilities.Extensions,
 		sdk.AgentExtension{
-			URI:         ExtensionURI,
+			URI: ExtensionURI,
+
 			Description: "Permissioned borrowing of one tape context range",
 			Params: map[string]any{
 				"endpoint":        endpoint,
 				"entryMediaTypes": []string{TextMediaType},
 				"maxPageSize":     MaxPageSize,
 			},
-		})
+		},
+	)
+
 	return nil
 }
 
 // NewPeerHandler serves the public card and independently authenticated core
 // and extension endpoints. SDK handler options still control task lifecycle,
 // streaming and custom task stores. Card URLs must match these mount paths.
-func NewPeerHandler(card *sdk.AgentCard, core a2asrv.RequestHandler, s *Service, auth Authenticate) (http.Handler, error) {
+func NewPeerHandler(card *sdk.AgentCard, core a2asrv.RequestHandler, s *view.Service, auth Authenticate) (http.Handler, error) {
 	if card == nil || core == nil || auth == nil {
 		return nil, ErrInvalidParams
 	}
@@ -99,15 +104,34 @@ func newMessageMux(card *sdk.AgentCard, core a2asrv.RequestHandler, auth Authent
 	}
 	mux := http.NewServeMux()
 	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
-	sdkHandler := a2asrv.NewJSONRPCHandler(&a2asrv.InterceptedHandler{Handler: core, Interceptors: []a2asrv.CallInterceptor{peerAuthentication{}}})
-	mux.Handle(CorePath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := auth(r)
-		if err != nil || p == "" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		sdkHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), peerKey{}, p)))
-	}))
+
+	sdkHandler := a2asrv.NewJSONRPCHandler(
+		&a2asrv.InterceptedHandler{
+			Handler:      core,
+			Interceptors: []a2asrv.CallInterceptor{peerAuthentication{}},
+		},
+	)
+
+	mux.Handle(CorePath, http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			p, err := auth(r)
+
+			if err != nil || p == "" {
+
+				w.WriteHeader(http.StatusUnauthorized)
+
+				return
+
+			}
+
+			sdkHandler.ServeHTTP(w, r.WithContext(context.WithValue(
+				r.Context(),
+				peerKey{},
+				p,
+			)))
+		},
+	))
+
 	return mux, nil
 }
 
@@ -118,7 +142,10 @@ type peerAuthentication struct {
 }
 
 func (peerAuthentication) Before(ctx context.Context, call *a2asrv.CallContext, _ *a2asrv.Request) (context.Context, any, error) {
-	p, ok := ctx.Value(peerKey{}).(string)
+	p, ok := ctx.Value(
+		peerKey{},
+	).(string)
+
 	if !ok || p == "" {
 		return ctx, nil, sdk.ErrUnauthenticated
 	}

@@ -25,10 +25,9 @@ Protocol paths, SDK types, extension URIs, and wire encoding belong at this
 boundary. Reusable runtime and context-sharing rules should be callable by
 other hosts or adapters, including a web UI.
 
-The current `pkg/a2a` package also contains the borrowing `Service`, policies,
-and grant lifecycle logic. It therefore contains more than adapter code today.
-Separating those reusable rules from protocol handling is a remaining package
-refactor; the APIs below describe the current implementation.
+Borrowing, committed-view resolution, quoted content and lease lifecycle belong
+to `pkg/model/view`. A2A and MCP use the same service and grant record store;
+`pkg/a2a` owns only protocol handling and clients.
 
 `pkg/a2a` uses the official `a2a-go/v2 v2.5.0` SDK for core A2A JSON-RPC. The
 optional `urn:anra:a2a:tape-view:v1` extension uses a generated Connect service
@@ -57,374 +56,128 @@ service or grant journal. The CLI mounts both messaging and borrowing with
 
 ## Borrowing: lender setup
 
-Initialize the source tape under the lender's **local** owner using tape-go's
-bbolt backend, then configure a dedicated grant journal. `Config.Tape` is an
-initialized `*bbolt.Bbolt`; `Config.Journal` is an `a2a.Journal` — the storage
-contract — and `*journal.Store` from `pkg/model/journal` is the bundled bbolt
-implementation, which owns its own database file. The journal is bound to the
-source tape identity and is server configuration, never a value from a peer
-request body. The caller initializes and closes the source tape, and either
-opens the journal itself or lets the service do it.
-
-Set either `Journal` or `JournalPath`, never both: `JournalPath` lets the
-service open the file and `Service.Close` release it, while `Journal` shares one
-store between services and leaves it the caller's to close.
-
-The example imports `tapev1 "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"` and
-`"github.com/anra-studio/anra/pkg/model/journal"`.
+Create one `view.Service` for each source Tape and inject it into every adapter.
+`Views` resolves only committed Refs; the native Agent implements it. `Tape`
+accepts the existing read-only range interface. `RecordPath` opens an owned
+`grantRecord.Store`; `Records` supplies a caller-owned store instead. It binds
+persisted decisions to the configured source incarnation.
 
 ```go
-researcherTape, err := bbolt.NewBboltStorage("researcher-session", "researcher.db")
-// Check err, then defer researcherTape.Close().
-err = researcherTape.Init(owner.WithOwnerId(ctx, "researcher-local"))
-source := &tapev1.Source{AgentId: "researcher", TapeId: persistentTapeIncarnationID}
-grantJournal, err := journal.Open("grants.db", source)
-// Check err, then defer grantJournal.Close().
-// Keep the source session ID stable across restarts and check initialization errors.
-views, err := a2a.NewService(a2a.Config{
-    Source:  source,
-    Owner:   "researcher-local",
-    Tape:    researcherTape,
-    Journal: grantJournal,
-    Policy: contextPolicy, // application-owned a2a.Policy selecting authorized ranges
-})
-// Check err after each constructor/configuration call.
-executor, err := a2a.NewExecutor(researcherAnra)
-core := a2asrv.NewHandler(executor)
-err = a2a.Advertise(card, publicBaseURL + a2a.ViewPath)
-handler, err := a2a.NewPeerHandler(card, core, views, a2a.TrustedPeerIdentity)
+views, err := view.NewService(
+    view.Config{
+        Source:     researcher.Source(),
+        Owner:      "researcher-local",
+        Tape:       researcher.Tape(),
+        Views:      researcher,
+        RecordPath: "researcher.grants.db",
+    },
+)
+// Handle err before mounting adapters.
+handler, err := a2a.NewViewHandler(views, a2a.TrustedPeerIdentity)
+// Handle err, then mount handler at a2a.ViewPath + "/" and a2a.ViewRESTPath.
 ```
 
-The caller supplies a native SDK Agent Card with its name, skills, input/output
-modes, security schemes/requirements, and a JSONRPC interface at
-`publicBaseURL + a2a.CorePath`. `NewPeerHandler` serves:
-
-| Path | Behavior |
-| --- | --- |
-| `/.well-known/agent-card.json` | Public native SDK Agent Card |
-| `/a2a` | Caller-identified core A2A JSON-RPC, including SDK streaming |
-| `/anra.a2a.tape.v1.TapeViewService/` | Caller-identified protobuf/Connect extension RPCs |
-| `/v1/tape/` | Caller-identified Vanguard REST TapeView routes |
-
-Connect and REST route mounting is shared in `internal/httpserver`. REST
-bindings come from `google.api.http` protobuf annotations. Both transports run
-the same validation and access interceptors; see [HTTP routes](http.md).
-
-The CLI and trusted-team profile use `a2a.TrustedPeerIdentity` to resolve
-`Anra-Agent` into a stable requester identity, also propagated into SDK
-`CallContext.User`. Use `a2a.TrustedHTTPClient(agentName)` on the client side.
-Both registry and peer endpoints must be accessible only to trusted members;
-this header is an assertion, not proof of membership, and receivers do not
-perform a live membership lookup. No global shared token is required.
-
-`Policy` independently decides who may borrow which context. Every grant and
-subsequent read remains bound to the requester identity. For deployments that
-need credential verification, the handler callback can instead verify credentials
-and return a stable identity; the card must advertise that deployment's scheme.
-
-`Policy` selects an authorized range directly. Peer relevance ordering remains
-in `Ranker`, which receives candidate descriptions and returns their indexes,
-best first, with its own cut-off. `ScoreRanker{Scorer, Limit, MinScore}` adapts a
-scoring provider: highest score, then confidence, then original candidate order.
-Relevance ordering does not itself grant permission.
+The host drains handlers before closing the service and source Tape. The same
+service can be passed to `mcp.Config.Views`; see the [MCP contract](mcp.md).
+A local controller's `views.Grant` supplies approval for an explicit committed
+Ref. Remote Borrow uses the configured approval function or the default grant
+selection. Approval cannot supply an arbitrary Tape range; commitment remains
+owned by Views. Missing eligible views are denied and never yield empty leases.
 
 ## Borrowing: borrower setup and model consumption
 
-Anra callers resolve typed Peer metadata and observed presence from the persistent
-registry. `NewMessageClient(ctx, httpClient, entry.Peer)` constructs the core
-A2A client, and `NewPeerClient(httpClient, entry.Peer)` constructs TapeView
-transport directly from the address and recognized skill. Call
-`discovery.RequireOnline(entry)` before sending a new request. `serve` registers
-with `[lobby].address` and publishes `a2a.Card(peer)` at the standard card URL.
-See [CLI discovery](cli.md#running-servers-and-discovery) and the
-[registry contract](registry.md).
+Resolve typed Peer metadata through discovery, check `RequireOnline`, and use
+`NewPeerClient(httpClient, peer)` for the recognized borrowing skill. External
+A2A clients can discover the Agent Card and use `NewClient`. HTTP client identity,
+endpoint trust and timeouts remain caller-owned. `TrustedPeerIdentity` is only
+for trusted networks; authenticated deployments supply their credential verifier.
 
-External A2A callers can discover trusted card URLs and use
-`NewMessageClientFromCard` or `NewClient` at that boundary. `RankPeers` ranks
-native card skill descriptions for explicit agent selection. Core A2A
-communication continues to use the official SDK. For example:
+`Client.BorrowContext` composes Borrow and ReadView. It verifies decision request
+correlation and an explicitly requested Ref, then reads every page in scope order.
+Every page must retain the lease ID, caller and exact Ref. Each authorized
+sequence occurs exactly once, gaps between scopes are skipped, and incomplete
+or non-progressing pagination fails. These checks are shared by direct clients
+and the native `borrow_peer_context` tool.
 
-```go
-peerHTTPClient := a2a.TrustedHTTPClient("borrower")
-card, err := a2a.Discover(ctx, peerHTTPClient, peerCardURL)
-client, err := a2a.NewClient(peerHTTPClient, card)
-borrower, err := agent.New("borrower-local", borrowerTape,
-    agent.WithLLM(providerModel),
-    agent.WithBorrowClient(client),
-)
-output, err := borrower.Run(ctx, "Find the peer's storage concurrency findings")
-```
+The tool accepts peer/requestId/purpose/query, retains the decision in ProtoJSON,
+and presents the shared borrowed Quote as a tool result. Content is JSON text
+inside ADK's map conversion so opaque numeric lexemes remain intact. The tool
+copies provenance from the shared Quote instead of constructing new attribution.
+Native messages never acquire the roles or execution authority of borrowed
+historical messages; storing and replaying the tool result preserves this boundary.
+`RankPeers` and the existing Ranker/Scorer seam remain available for relevance
+ordering of already permitted peers.
 
-The HTTP client supplies caller identity, timeouts and endpoint trust. The tool
-accepts `requestId`, `purpose`, and `query`. It returns the decision and, for a
-grant, all pages checked against its source, snapshot and sequence range. Anra persists the result as a local tool response,
-with `agentId`, `tapeId`, `viewId`, source sequences and snapshot head intact.
-Peer entries are context data inside that response; their roles never become
-local assistant messages or locally executed tool calls.
+## Protocol and content
 
-`NewClient` uses the generated Connect binding, and `Advertise` declares its
-service URL as the extension's `endpoint`. The handwritten tape-view JSON-RPC
-transport and `/tape-views` route have been removed; update old peer cards to
-`publicBaseURL + a2a.ViewPath`. No legacy fallback is provided. Core A2A continues
-to use the official SDK. See [API schema and mise/Buf workflow](../proto/README.md)
-for generation, error mappings, and schema evolution.
+Core A2A uses the official SDK. The optional `urn:anra:a2a:tape-view:v1`
+extension uses generated Connect RPCs plus Vanguard REST:
 
-For pending decisions, retry the identical borrow request or use `Client.Get`.
-The lender resolves pending requests with the local `Service.Resolve` method.
-The borrower can release a grant with `Client.Release`; the lender can revoke it
-with `Service.Revoke`. Neither resolve nor revoke is a remote borrower RPC.
-The borrowing tool leaves the grant open until explicit release or expiry.
-
-## Wire contract and limits
-
-Clients activate `A2A-Extensions: urn:anra:a2a:tape-view:v1` on every extension
-request and require the acknowledgement header. Activation is not authorization.
-
-The Connect server uses validate-go's server interceptor with Protovalidate
-rules from `tape.proto`. Invalid required fields, byte lengths, page sizes, and
-sequence bounds are rejected before the handler runs, with `invalid_argument`
-and field violation details. View size remains the complete selected range;
-there is no independent entry-count cap. Authorization and grant integrity
-are enforced by `Service` separately from request validation.
-
-`Service`, `Client`, policies, and exporters use generated protobuf messages
-from `gen/anra/a2a/tape/v1` directly. Local requests use the same Protovalidate
-rules as Connect requests; validation errors retain `ErrInvalidParams` and
-expose `protovalidate.ValidationError`. Configuration uses
-`go-playground/validator/v10` for dependencies; `Config.Source` uses protobuf
-rules. Structural response rules also live in `tape.proto`, including source
-identifiers, canonical sequences, required timestamps, range counts, and the
-relationship between decision status and view presence. Go retains JSON syntax,
-Timestamp validity, request correlation, and authorization/integrity checks.
-Conversion is limited to tape-go ranges and the
-journal's own record types. Journal records are JSON, independent of the proto
-wire encoding, and keep unexported storage shapes private to `pkg/model/journal`.
-
-| Method | Parameters | Result |
-| --- | --- | --- |
-| `Borrow` | `requestId`, `purpose`, `query`, optional `bounds` | granted view, denied, or pending |
-| `Get` | `requestId` | Existing decision for this requester |
-| `Read` | `viewId`, optional `cursor`, optional `pageSize` | Entry page with source provenance |
-| `Release` | `viewId` | `{ "released": true }`, idempotent |
-
-The canonical wire schema is `proto/anra/a2a/tape/v1/tape.proto`. Each method
-has a generated request and response message; responses wrap `Decision` or
-`Page`. All sequence fields are canonical unsigned decimal strings with
-arbitrary precision. v1 supports at most one half-open range `[seq_s, seq_e)`,
-plus an empty approved range list. Status uses `DecisionStatus`; times use
-protobuf Timestamp. Exported entries contain only public projections and
-allowed payload metadata, never local owner IDs or CustomEntry extensions.
-`Payload.json_data` preserves raw JSON bytes and is base64 on the ProtoJSON
-transport. `ExportedEntry` has no separate text copy; retired field number 3 and
-its former name are reserved. Journal JSON retains its independent storage format.
-
-The built-in borrowing tool returns `decision` and a `borrowed_context` envelope
-containing `channel: "borrowed"`, `provenance`, and readable JSON `pages`.
-Each model-facing entry includes `seq`, `kind`, `timestamp`, `mediaType` and
-`content`; the latter is the original JSON text, preserving its number lexemes
-and part structure through ADK's map conversion without requiring base64 decoding. Decisions keep
-their ProtoJSON representation.
-Provenance binds the public grant/view ID, Source, snapshot head and approved
-scope. This envelope stays inside the model's tool result, including after Tape
-recovery; historical entry roles are not promoted into native session messages.
-The tool describes borrowed content as read-only reference. Channel labels are
-not a guarantee against a model following adversarial text; execution permissions
-remain the runtime's responsibility.
-
-Bounds can only narrow selection. A grant references the source identity, the
-snapshot head and the granted range. The tape is append-only, so that reference
-identifies the content: grants carry no session, exporter name or content
-fingerprints. Appends do not extend a grant. Each read verifies the requester,
-release, expiry and source.
-A cursor is an opaque encoding of the grant ID, snapshot and offset; it can only
-page within an independently authorized grant, never expand its range.
-
-| Limit | Value |
+| Operation | Meaning |
 | --- | --- |
-| Default / maximum page size | 32 / 100 entries |
-| View size | Complete range selected by the lender's turn/anchor policy; no independent entry-count cap |
-| Maximum encoded entry | No fixed size cap |
-| Request body | No fixed size cap |
-| Borrowed response body | No fixed size cap |
-| Maximum grant TTL | 24 hours |
-| Request ID | 256 bytes |
-| Purpose / query | 8 KiB each |
+| Borrow | Select a complete committed Ref and record granted, denied or pending |
+| Get | Retrieve the authenticated requester's recorded decision |
+| Read | Read a page of the requester's currently active lease |
+| Release | Persist terminal lease release for the authenticated requester |
 
-The default `TextExporter` exports original user/assistant text as typed
-`text/plain` JSON strings and never copies arbitrary custom extensions. Tool,
-anchor, lifecycle and other custom entries require a suitable deterministic
-`Exporter`; unsupported entry kinds fail the whole grant. If using another
-exporter, update the advertised `entryMediaTypes` to its actual supported types.
-The exporter is service configuration, not part of a grant; reads project the
-granted range with the exporter configured at the time.
+`a2a.ViewPath` is the generated TapeViewService path; `a2a.ViewRESTPath` is
+`/v1/tape/`. Each request activates the extension and receives an acknowledgement.
+Identity comes from authentication, never request body fields. Release and local
+Revoke share the same terminal record. Resolve and Revoke have no remote RPC.
 
-Anra's runtime, Export and MCP share `pkg/model/entry.Entry`, a concrete
-`EntryLike` with structured `Content()` access, original `Body()` text and
-encapsulated extension JSON codecs. `FromTape`
-contains conversion from Tape's concrete entries; the runtime converts back
-with `Tape()` only at the ADK boundary because the current TapeAdapter recognizes
-its own `CustomEntry`. This preserves ADK state, legacy read adaptation and the
-existing on-disk representation without exposing extension maps to consumers.
+Public values live under `gen/anra/model/view/v1`. Ref is `source + scopes`,
+Lease is `id + caller + ref + expiresAt`, and Quote is channel, provenance,
+entries and nextCursor. There is no independent snapshot-head/end field or
+one-range limit. All sequences are arbitrary-precision canonical decimal strings.
+`Ref.Scopes` is nonempty and uses ordered, non-overlapping half-open ranges.
+Anra resolves each exact completed window and rejects arbitrary cuts or scope
+reordering. Bounds may reject an entire candidate, never trim its scopes.
 
-`ContextExporter` also supports selected `anchor:custom` entries using
-`application/vnd.anra.anchor+json;version=1`. It shares the anchor representation
-with MCP: native Anra records supply their public value through `Record.Body()`,
-omitting `OwnerEpoch` without mutating the original record, while third-party schemas retain
-their original Body as a JSON string. This is not generic redaction of foreign
-schemas. The lender decides which complete contents belong to the granted range.
-Pagination splits entries across responses without splitting an individual
-multimodal body or limiting the total granted view. Both peer client entry
-points and the shared HTTP handler explicitly disable Connect/Vanguard body
-limits in both directions, including SDK defaults. Field validation, authentication
-and lease checks still apply. Registry metadata retains its own message policy
-in the registry handler, independently of media transports.
+The shared ContextExporter preserves SDK-backed model content, all multimodal
+Parts, thought text/markers, and opaque business JSON precision. Empty Parts
+entries remain present. Native anchors expose Body without OwnerEpoch; foreign
+anchor bodies remain verbatim text. Execution state, arbitrary extensions and
+provider signatures are excluded without changing stored events. The explicit
+TextExporter remains usable for text-only services. There is no Summary or
+Projection pass. Both adapters use the same configured exporter.
 
-| Connect code | Meaning |
-| --- | --- |
-| `invalid_argument` | Malformed message or invalid parameters |
-| `failed_precondition` | Extension inactive |
-| `already_exists` | Request ID reused with different input |
-| `not_found` | View unavailable (unknown, wrong requester, released or expired) |
-| `internal` | Storage failure or masked internal/provider failure |
-| `unimplemented` | Unknown RPC or unsupported entry representation |
-| `unauthenticated` | Caller identity is missing or rejected |
-| `resource_exhausted` | Oversized RPC message |
-
-Errors never include another requester's grant details. `Get` and repeated
-`Borrow` recover the recorded decision even after expiry/release; `Read` enforces
-current availability. JSON-RPC envelopes, notifications and batches are no
-longer part of the tape-view API.
+Payload bytes retain their exact JSON encoding; ProtoJSON represents those
+bytes as base64. MCP's JSON Quote exposes content as raw structured JSON.
+Entry pagination never splits or truncates media. Requests and responses have
+no fixed body cap, including both Peer clients and shared HTTP transports.
+Field constraints, lease checks, cursor binding and registry-specific metadata
+size policy remain in effect. See the [protobuf contract](../proto/README.md).
 
 ## Persistence and operations
 
-`Service` retains configuration and the journal store, with no in-memory grant
-projection. The journal's records, indexes and transactions live in
-`pkg/model/journal`, which uses [bolthold](https://github.com/timshannon/bolthold)
-on bbolt; `Service` owns policy selection, export and RPC error mapping.
-Construction performs no journal reads, and restart requires no replay.
-`Borrow`/`Get` look up the requester/request-ID key; `Read`/`Release` resolve
-view ID through the view index. Each lookup validates only the addressed record,
-its key and source identity. Unrelated records and the audit trail are not
-scanned on access.
+`pkg/model/grantRecord` owns the bolthold/bbolt authorization database. It keeps
+source binding, one request state indexed by lease ID, immutable grants,
+terminal release records and an append-only audit trail. Request IDs are scoped
+by caller; replaying identical input returns the same decision without renewal,
+while changed input conflicts. Pending resolution and release compare the old
+state inside their transaction. There is no second in-memory grant projection.
 
-The journal keeps a current state per request: pending, denied or granted. A
-granted record is never rewritten; resolving a pending request replaces the
-state, and a release is its own record keyed by view ID. Each update atomically
-commits the state, its indexed view ID (or the release mark) and an append-only
-audit record in one bbolt transaction, before responding. It checks the previous
-state inside that transaction, rejecting stale decisions or releases with
-`ErrConflict`. Pending/denied/granted decisions, request-ID idempotency and
-revocations persist across restart. The service serializes its local policy
-operations; services sharing a journal store use transactional state comparisons.
-Separate processes cannot open the same journal file for writing while it is
-locked.
+`view.Service` orders Read authorization with Release/Revoke. Reads authorized
+after termination fail; a request already authorized may finish. Expiry is
+checked against the shared clock on every read. Source identity and complete
+Scopes stay stable across restart and later Tape appends. Already delivered
+content cannot be recalled. Historical schema/storage migration is not supplied.
 
-Grant lookups use bolthold's on-disk index on the view ID, requiring O(log N)
-database work and one decoded record per operation. The service does not retain
-O(N) grant state. Each `Read` loads the selected range temporarily to export and
-size-check it. Request retries and state transitions compare protobuf requests
-and decisions with `proto.Equal`, without marshaling or hashing. tape-go's
-`TapeStorage` interface has no keyed grant lookup or shared transaction API, so
-the journal keeps its own database instead of using a finder.
+## Nonblocking collaboration
 
-A journal file is a bolthold store of a few record types, one bucket each:
-`sourceBinding` (source tape identity and audit sequence), `requestState` (with
-an index on `ViewID`), `grantRelease` and `auditEntry`. `Config.Journal` is an
-`a2a.Journal`; the caller either opens the bundled `*journal.Store` with
-`journal.Open`, which binds it to the configured source tape, or sets
-`Config.JournalPath` and lets the service open and close that file. Another
-implementation of the interface (for a server database) must apply decisions and
-releases atomically and report conflicts and storage failures as
-`journal.ErrConflict` and `journal.ErrStorage`. Files from the earlier layouts
-(`anra:grant-journal/v2` buckets, or a tape-go tape journal with an `entries`
-bucket) are rejected on access so saved decisions are never silently dropped;
-start a fresh journal.
+The collaboration extension transports generated request/response metadata as
+ProtoJSON over official A2A messages. Delegator owns roots, bounded deadlines,
+immutable sibling paths and turn-local BUSY suppression. A busy response does
+not admit another Turn and may contain a committed Ref hint. The hint conveys
+no lease; its recipient borrows under its own identity.
 
-Provision `AgentID` and the opaque tape incarnation ID durably. Keep them across
-normal restart; rotate the incarnation ID and start a fresh journal when replacing
-or resetting a source tape. Grants rely on the append-only tape and perform no
-content fingerprint checks, so a changed source tape with the same configured
-identity is not detected; a missing entry in the granted range still fails the
-read. Already delivered context cannot be recalled by closing a grant.
+The native Agent selects its latest successful completed window by default.
+For start S and successful close C its single scope is `[S+1,C)`. The generic
+Ref can contain multiple committed scopes; the end is derived from the last
+scope, never stored separately. Lease reads do not enter reasoning Admission,
+call the lender's model or reselect newer scopes. An unchanged or older borrowed
+Ref leaves BUSY suppression in place; a newer end or source incarnation permits
+one further attempt. There is no hop budget or automatic polling scheduler.
 
-Run `mise run e2e` for the executable peer and CLI workflows, official SDK core
-and streaming compatibility, model consumption/replay, bbolt restart,
-idempotency, requester identity and grants, and invalid wire request checks.
-
-References: [A2A extensions](https://a2a-protocol.org/latest/topics/extensions/),
-[A2A discovery](https://a2a-protocol.org/latest/topics/agent-discovery/),
-[design and ownership](designs/a2a-tape-view-extension-design.md).
-
-Client validation boundaries and the simplification experiments are recorded in
-[A2A client ablation](designs/a2a-client-ablation.md).
-
-## Nonblocking collaboration and committed TapeViews
-
-`a2a.AdvertiseCollaboration(card)` enables negotiation of
-`urn:anra:a2a:collaboration:v1` in message extensions and metadata.
-`MessageClient.Send` returns `CollaborationResult`; callers must inspect `Status`
-before using `Answer`. Its embedded generated `ResponseMetadata` uses the enums
-in `gen/anra/a2a/collaboration/v1`; `STATUS_BUSY` means no reasoning turn
-was admitted. Generic
-A2A clients receive clear unaccepted text and no view hint.
-
-Delegation and response metadata are defined in
-`proto/anra/a2a/collaboration/v1/collaboration.proto` and carried as ProtoJSON
-under the extension URI. Protovalidate enforces the metadata structure and
-status/detail combinations. Answer text stays in standard A2A parts.
-The `pkg/model/delegator` model owns root creation, deadline caps, ancestry, and
-BUSY progress. `Begin` creates a turn,
-`Next` prepares a peer edge, `Observe` records the peer outcome, and `Borrowed`
-records progress after the grant is read. A2A adapters encode/decode owned
-metadata snapshots; peer tools do not mutate the protobuf fields or BUSY maps.
-The model-facing functions live in `pkg/agent/tools/peer.go` and `borrow.go`.
-They reuse A2A messaging clients and `Client.BorrowContext`, which composes
-`Borrow` and `ReadView`. Tool schemas and result formatting stay in that package;
-permission decisions, snapshot validation, pagination, and transport stay in A2A.
-Transport identity stays in the A2A adapter. The wire uses generated enum names;
-CLI and tool labels remain
-readable lowercase strings. There is no legacy metadata decoder.
-Delegation has no hop counter or ancestry-length limit. Deadline expiry and
-cancellation remain ordinary context errors; the encoded metadata size bound
-and local model-turn limit continue to apply.
-
-Use `a2a.AdvertiseViews(card, baseURL + a2a.ViewPath)` and configure `Service`
-with `Views: runtime`. It defaults to `a2a.ContextExporter{}` for these windows.
-The runtime resolves committed TapeViews locally without acquiring reasoning
-admission. `Policy` remains available for separately configured range selection;
-it is not required when `Views` is configured. The CLI mounts messaging and
-borrowing with `NewPeerHandler`.
-
-The model-facing borrow tool accepts a peer, request ID, purpose, and query.
-The lender selects its latest completed turn's TapeView without entering
-reasoning. BUSY responses and incoming delegation context carry ungranted
-`TapeView` hints. Each recipient obtains its own requester-bound grant. Reading
-an unchanged snapshot does not enable another reasoning request in that turn.
-
-Protocol clients can pin `BorrowRequest.view`, a generated `TapeView` containing
-`source`, `snapshotHead`, and `scope`. Cards advertise `viewBorrowVersion: 1`.
-For a start anchor S and successful close C, the scope is `[S+1,C)` and the
-snapshot head is C. The grant must match that exact source, scope, and head;
-clients reject substitutions before reading.
-
-The window contains the completed user/model/tool conversation. Its exporter
-returns structured content as `application/vnd.anra.context-entry+json;version=1`,
-retaining recorded thought content with its `thought` marker. The native turn
-range excludes its opening/closing control anchors. Provider thought signatures,
-event metadata, arbitrary extensions, and state
-deltas are excluded. View authorization includes its recorded thought content;
-it remains borrowed reference under the same provenance and does not gain
-instruction authority. Tool content is never executed merely by reading it.
-The shared `entry.Content` wraps SDK content and parts, preserving media,
-files, code/results and streaming fields in order. It excludes part metadata,
-provider signatures and ADK session actions. Function and server-tool arguments
-and response objects retain raw JSON to avoid numeric coercion. Content is not
-restricted to text and function parts; historical code is reference data.
-The exporter reads Entry content directly and attaches no borrower channel or
-grant. The receiving tool binds the validated grant to its consumption envelope;
-these channel and provenance values do not become source-entry storage fields.
-Closing a turn does not copy its answer into a separate publication.
-Failure, cancellation, and abandonment preserve the preceding successful window.
-Grant expiry, release, revocation, idempotence, and recovery remain enforced by
-the TapeView service and journal. The lifecycle and implementation guide are in
-[the TapeView specification](designs/anchor-tape-view-collaboration-spec.md).
+See the approved [shared View design](designs/shared-view-design.md) and run
+`GOFLAGS=-race mise run test` for the real HTTP/Tape/record-store acceptance suite.

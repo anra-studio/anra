@@ -8,10 +8,10 @@ package tapev1
 
 import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
+	v1 "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -24,452 +24,16 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type DecisionStatus int32
-
-const (
-	DecisionStatus_DECISION_STATUS_UNSPECIFIED DecisionStatus = 0
-	DecisionStatus_DECISION_STATUS_GRANTED     DecisionStatus = 1
-	DecisionStatus_DECISION_STATUS_DENIED      DecisionStatus = 2
-	DecisionStatus_DECISION_STATUS_PENDING     DecisionStatus = 3
-)
-
-// Enum value maps for DecisionStatus.
-var (
-	DecisionStatus_name = map[int32]string{
-		0: "DECISION_STATUS_UNSPECIFIED",
-		1: "DECISION_STATUS_GRANTED",
-		2: "DECISION_STATUS_DENIED",
-		3: "DECISION_STATUS_PENDING",
-	}
-	DecisionStatus_value = map[string]int32{
-		"DECISION_STATUS_UNSPECIFIED": 0,
-		"DECISION_STATUS_GRANTED":     1,
-		"DECISION_STATUS_DENIED":      2,
-		"DECISION_STATUS_PENDING":     3,
-	}
-)
-
-func (x DecisionStatus) Enum() *DecisionStatus {
-	p := new(DecisionStatus)
-	*p = x
-	return p
-}
-
-func (x DecisionStatus) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (DecisionStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_anra_a2a_tape_v1_tape_proto_enumTypes[0].Descriptor()
-}
-
-func (DecisionStatus) Type() protoreflect.EnumType {
-	return &file_anra_a2a_tape_v1_tape_proto_enumTypes[0]
-}
-
-func (x DecisionStatus) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use DecisionStatus.Descriptor instead.
-func (DecisionStatus) EnumDescriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{0}
-}
-
-type Source struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	TapeId        string                 `protobuf:"bytes,2,opt,name=tape_id,json=tapeId,proto3" json:"tape_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Source) Reset() {
-	*x = Source{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Source) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Source) ProtoMessage() {}
-
-func (x *Source) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Source.ProtoReflect.Descriptor instead.
-func (*Source) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *Source) GetAgentId() string {
-	if x != nil {
-		return x.AgentId
-	}
-	return ""
-}
-
-func (x *Source) GetTapeId() string {
-	if x != nil {
-		return x.TapeId
-	}
-	return ""
-}
-
-// Sequences are canonical unsigned decimal strings of arbitrary precision.
-// Ranges are half-open: [seq_s, seq_e). Never narrow sequences to uint64.
-type EntryRange struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SeqS          string                 `protobuf:"bytes,1,opt,name=seq_s,json=seqS,proto3" json:"seq_s,omitempty"`
-	SeqE          string                 `protobuf:"bytes,2,opt,name=seq_e,json=seqE,proto3" json:"seq_e,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EntryRange) Reset() {
-	*x = EntryRange{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EntryRange) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EntryRange) ProtoMessage() {}
-
-func (x *EntryRange) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EntryRange.ProtoReflect.Descriptor instead.
-func (*EntryRange) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *EntryRange) GetSeqS() string {
-	if x != nil {
-		return x.SeqS
-	}
-	return ""
-}
-
-func (x *EntryRange) GetSeqE() string {
-	if x != nil {
-		return x.SeqE
-	}
-	return ""
-}
-
-type View struct {
-	state        protoimpl.MessageState `protogen:"open.v1"`
-	ViewId       string                 `protobuf:"bytes,1,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
-	Source       *Source                `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
-	SnapshotHead string                 `protobuf:"bytes,3,opt,name=snapshot_head,json=snapshotHead,proto3" json:"snapshot_head,omitempty"`
-	// A grant currently contains at most one bounded range.
-	Ranges        []*EntryRange          `protobuf:"bytes,4,rep,name=ranges,proto3" json:"ranges,omitempty"`
-	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *View) Reset() {
-	*x = View{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *View) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*View) ProtoMessage() {}
-
-func (x *View) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use View.ProtoReflect.Descriptor instead.
-func (*View) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *View) GetViewId() string {
-	if x != nil {
-		return x.ViewId
-	}
-	return ""
-}
-
-func (x *View) GetSource() *Source {
-	if x != nil {
-		return x.Source
-	}
-	return nil
-}
-
-func (x *View) GetSnapshotHead() string {
-	if x != nil {
-		return x.SnapshotHead
-	}
-	return ""
-}
-
-func (x *View) GetRanges() []*EntryRange {
-	if x != nil {
-		return x.Ranges
-	}
-	return nil
-}
-
-func (x *View) GetExpiresAt() *timestamppb.Timestamp {
-	if x != nil {
-		return x.ExpiresAt
-	}
-	return nil
-}
-
-type Decision struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Status    DecisionStatus         `protobuf:"varint,2,opt,name=status,proto3,enum=anra.a2a.tape.v1.DecisionStatus" json:"status,omitempty"`
-	// Present only for granted decisions.
-	View          *View `protobuf:"bytes,3,opt,name=view,proto3" json:"view,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Decision) Reset() {
-	*x = Decision{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Decision) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Decision) ProtoMessage() {}
-
-func (x *Decision) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Decision.ProtoReflect.Descriptor instead.
-func (*Decision) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *Decision) GetRequestId() string {
-	if x != nil {
-		return x.RequestId
-	}
-	return ""
-}
-
-func (x *Decision) GetStatus() DecisionStatus {
-	if x != nil {
-		return x.Status
-	}
-	return DecisionStatus_DECISION_STATUS_UNSPECIFIED
-}
-
-func (x *Decision) GetView() *View {
-	if x != nil {
-		return x.View
-	}
-	return nil
-}
-
-// TapeView identifies an immutable, lender-selected context window, without a
-// grant. Its head is the closing anchor; scope excludes that control entry.
-type TapeView struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Source        *Source                `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	SnapshotHead  string                 `protobuf:"bytes,2,opt,name=snapshot_head,json=snapshotHead,proto3" json:"snapshot_head,omitempty"`
-	Scope         *EntryRange            `protobuf:"bytes,3,opt,name=scope,proto3" json:"scope,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TapeView) Reset() {
-	*x = TapeView{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TapeView) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TapeView) ProtoMessage() {}
-
-func (x *TapeView) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TapeView.ProtoReflect.Descriptor instead.
-func (*TapeView) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *TapeView) GetSource() *Source {
-	if x != nil {
-		return x.Source
-	}
-	return nil
-}
-
-func (x *TapeView) GetSnapshotHead() string {
-	if x != nil {
-		return x.SnapshotHead
-	}
-	return ""
-}
-
-func (x *TapeView) GetScope() *EntryRange {
-	if x != nil {
-		return x.Scope
-	}
-	return nil
-}
-
-type BorrowRequest struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Purpose   string                 `protobuf:"bytes,2,opt,name=purpose,proto3" json:"purpose,omitempty"`
-	Query     string                 `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
-	Bounds    *EntryRange            `protobuf:"bytes,4,opt,name=bounds,proto3" json:"bounds,omitempty"`
-	// Optional exact snapshot for protocol clients. Model tools leave selection
-	// to the lender. A reference never transfers another requester's grant.
-	View          *TapeView `protobuf:"bytes,5,opt,name=view,proto3" json:"view,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BorrowRequest) Reset() {
-	*x = BorrowRequest{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BorrowRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BorrowRequest) ProtoMessage() {}
-
-func (x *BorrowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BorrowRequest.ProtoReflect.Descriptor instead.
-func (*BorrowRequest) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *BorrowRequest) GetRequestId() string {
-	if x != nil {
-		return x.RequestId
-	}
-	return ""
-}
-
-func (x *BorrowRequest) GetPurpose() string {
-	if x != nil {
-		return x.Purpose
-	}
-	return ""
-}
-
-func (x *BorrowRequest) GetQuery() string {
-	if x != nil {
-		return x.Query
-	}
-	return ""
-}
-
-func (x *BorrowRequest) GetBounds() *EntryRange {
-	if x != nil {
-		return x.Bounds
-	}
-	return nil
-}
-
-func (x *BorrowRequest) GetView() *TapeView {
-	if x != nil {
-		return x.View
-	}
-	return nil
-}
-
 type BorrowResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Decision      *Decision              `protobuf:"bytes,1,opt,name=decision,proto3" json:"decision,omitempty"`
+	Decision      *v1.Decision           `protobuf:"bytes,1,opt,name=decision,proto3" json:"decision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BorrowResponse) Reset() {
 	*x = BorrowResponse{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[6]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -481,7 +45,7 @@ func (x *BorrowResponse) String() string {
 func (*BorrowResponse) ProtoMessage() {}
 
 func (x *BorrowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[6]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -494,10 +58,10 @@ func (x *BorrowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BorrowResponse.ProtoReflect.Descriptor instead.
 func (*BorrowResponse) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{6}
+	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *BorrowResponse) GetDecision() *Decision {
+func (x *BorrowResponse) GetDecision() *v1.Decision {
 	if x != nil {
 		return x.Decision
 	}
@@ -513,7 +77,7 @@ type GetRequest struct {
 
 func (x *GetRequest) Reset() {
 	*x = GetRequest{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[7]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -525,7 +89,7 @@ func (x *GetRequest) String() string {
 func (*GetRequest) ProtoMessage() {}
 
 func (x *GetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[7]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -538,7 +102,7 @@ func (x *GetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRequest.ProtoReflect.Descriptor instead.
 func (*GetRequest) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{7}
+	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *GetRequest) GetRequestId() string {
@@ -550,14 +114,14 @@ func (x *GetRequest) GetRequestId() string {
 
 type GetResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Decision      *Decision              `protobuf:"bytes,1,opt,name=decision,proto3" json:"decision,omitempty"`
+	Decision      *v1.Decision           `protobuf:"bytes,1,opt,name=decision,proto3" json:"decision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetResponse) Reset() {
 	*x = GetResponse{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[8]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -569,7 +133,7 @@ func (x *GetResponse) String() string {
 func (*GetResponse) ProtoMessage() {}
 
 func (x *GetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[8]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -582,10 +146,10 @@ func (x *GetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetResponse.ProtoReflect.Descriptor instead.
 func (*GetResponse) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{8}
+	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *GetResponse) GetDecision() *Decision {
+func (x *GetResponse) GetDecision() *v1.Decision {
 	if x != nil {
 		return x.Decision
 	}
@@ -593,18 +157,18 @@ func (x *GetResponse) GetDecision() *Decision {
 }
 
 type ReadRequest struct {
-	state  protoimpl.MessageState `protogen:"open.v1"`
-	ViewId string                 `protobuf:"bytes,1,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
-	Cursor string                 `protobuf:"bytes,2,opt,name=cursor,proto3" json:"cursor,omitempty"`
-	// Zero uses the service default. Maximum is 100.
-	PageSize      int32 `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	LeaseId string                 `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	// Opaque continuation is decoded and bounded by the view service.
+	Cursor        string `protobuf:"bytes,2,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	PageSize      int32  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReadRequest) Reset() {
 	*x = ReadRequest{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[9]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +180,7 @@ func (x *ReadRequest) String() string {
 func (*ReadRequest) ProtoMessage() {}
 
 func (x *ReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[9]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,12 +193,12 @@ func (x *ReadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadRequest.ProtoReflect.Descriptor instead.
 func (*ReadRequest) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{9}
+	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *ReadRequest) GetViewId() string {
+func (x *ReadRequest) GetLeaseId() string {
 	if x != nil {
-		return x.ViewId
+		return x.LeaseId
 	}
 	return ""
 }
@@ -653,214 +217,16 @@ func (x *ReadRequest) GetPageSize() int32 {
 	return 0
 }
 
-// Payload preserves the exact JSON representation without numeric coercion.
-type Payload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	MediaType     string                 `protobuf:"bytes,1,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
-	JsonData      []byte                 `protobuf:"bytes,2,opt,name=json_data,json=jsonData,proto3" json:"json_data,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Payload) Reset() {
-	*x = Payload{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Payload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Payload) ProtoMessage() {}
-
-func (x *Payload) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Payload.ProtoReflect.Descriptor instead.
-func (*Payload) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *Payload) GetMediaType() string {
-	if x != nil {
-		return x.MediaType
-	}
-	return ""
-}
-
-func (x *Payload) GetJsonData() []byte {
-	if x != nil {
-		return x.JsonData
-	}
-	return nil
-}
-
-// Only public projections are exported; no local owner or custom extensions.
-type ExportedEntry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Seq           string                 `protobuf:"bytes,1,opt,name=seq,proto3" json:"seq,omitempty"`
-	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Payload       *Payload               `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ExportedEntry) Reset() {
-	*x = ExportedEntry{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[11]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ExportedEntry) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ExportedEntry) ProtoMessage() {}
-
-func (x *ExportedEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[11]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ExportedEntry.ProtoReflect.Descriptor instead.
-func (*ExportedEntry) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *ExportedEntry) GetSeq() string {
-	if x != nil {
-		return x.Seq
-	}
-	return ""
-}
-
-func (x *ExportedEntry) GetKind() string {
-	if x != nil {
-		return x.Kind
-	}
-	return ""
-}
-
-func (x *ExportedEntry) GetTimestamp() *timestamppb.Timestamp {
-	if x != nil {
-		return x.Timestamp
-	}
-	return nil
-}
-
-func (x *ExportedEntry) GetPayload() *Payload {
-	if x != nil {
-		return x.Payload
-	}
-	return nil
-}
-
-type Page struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ViewId        string                 `protobuf:"bytes,1,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
-	Source        *Source                `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
-	SnapshotHead  string                 `protobuf:"bytes,3,opt,name=snapshot_head,json=snapshotHead,proto3" json:"snapshot_head,omitempty"`
-	Entries       []*ExportedEntry       `protobuf:"bytes,4,rep,name=entries,proto3" json:"entries,omitempty"`
-	NextCursor    string                 `protobuf:"bytes,5,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Page) Reset() {
-	*x = Page{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Page) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Page) ProtoMessage() {}
-
-func (x *Page) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[12]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Page.ProtoReflect.Descriptor instead.
-func (*Page) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *Page) GetViewId() string {
-	if x != nil {
-		return x.ViewId
-	}
-	return ""
-}
-
-func (x *Page) GetSource() *Source {
-	if x != nil {
-		return x.Source
-	}
-	return nil
-}
-
-func (x *Page) GetSnapshotHead() string {
-	if x != nil {
-		return x.SnapshotHead
-	}
-	return ""
-}
-
-func (x *Page) GetEntries() []*ExportedEntry {
-	if x != nil {
-		return x.Entries
-	}
-	return nil
-}
-
-func (x *Page) GetNextCursor() string {
-	if x != nil {
-		return x.NextCursor
-	}
-	return ""
-}
-
 type ReadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Page          *Page                  `protobuf:"bytes,1,opt,name=page,proto3" json:"page,omitempty"`
+	Quote         *v1.Quote              `protobuf:"bytes,1,opt,name=quote,proto3" json:"quote,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReadResponse) Reset() {
 	*x = ReadResponse{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[13]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -872,7 +238,7 @@ func (x *ReadResponse) String() string {
 func (*ReadResponse) ProtoMessage() {}
 
 func (x *ReadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[13]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -885,26 +251,26 @@ func (x *ReadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadResponse.ProtoReflect.Descriptor instead.
 func (*ReadResponse) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{13}
+	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *ReadResponse) GetPage() *Page {
+func (x *ReadResponse) GetQuote() *v1.Quote {
 	if x != nil {
-		return x.Page
+		return x.Quote
 	}
 	return nil
 }
 
 type ReleaseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ViewId        string                 `protobuf:"bytes,1,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
+	LeaseId       string                 `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReleaseRequest) Reset() {
 	*x = ReleaseRequest{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[14]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -916,7 +282,7 @@ func (x *ReleaseRequest) String() string {
 func (*ReleaseRequest) ProtoMessage() {}
 
 func (x *ReleaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[14]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -929,12 +295,12 @@ func (x *ReleaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseRequest.ProtoReflect.Descriptor instead.
 func (*ReleaseRequest) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{14}
+	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *ReleaseRequest) GetViewId() string {
+func (x *ReleaseRequest) GetLeaseId() string {
 	if x != nil {
-		return x.ViewId
+		return x.LeaseId
 	}
 	return ""
 }
@@ -948,7 +314,7 @@ type ReleaseResponse struct {
 
 func (x *ReleaseResponse) Reset() {
 	*x = ReleaseResponse{}
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[15]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -960,7 +326,7 @@ func (x *ReleaseResponse) String() string {
 func (*ReleaseResponse) ProtoMessage() {}
 
 func (x *ReleaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[15]
+	mi := &file_anra_a2a_tape_v1_tape_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -973,7 +339,7 @@ func (x *ReleaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseResponse.ProtoReflect.Descriptor instead.
 func (*ReleaseResponse) Descriptor() ([]byte, []int) {
-	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{15}
+	return file_anra_a2a_tape_v1_tape_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ReleaseResponse) GetReleased() bool {
@@ -987,90 +353,31 @@ var File_anra_a2a_tape_v1_tape_proto protoreflect.FileDescriptor
 
 const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"\n" +
-	"\x1banra/a2a/tape/v1/tape.proto\x12\x10anra.a2a.tape.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"N\n" +
-	"\x06Source\x12\"\n" +
-	"\bagent_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\aagentId\x12 \n" +
-	"\atape_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06tapeId\"\x85\x02\n" +
-	"\n" +
-	"EntryRange\x12)\n" +
-	"\x05seq_s\x18\x01 \x01(\tB\x14\xbaH\x11r\x0f2\r^[1-9][0-9]*$R\x04seqS\x12)\n" +
-	"\x05seq_e\x18\x02 \x01(\tB\x14\xbaH\x11r\x0f2\r^[1-9][0-9]*$R\x04seqE:\xa0\x01\xbaH\x9c\x01\x1a\x99\x01\n" +
-	"\x13entry_range.ordered\x12\x18seq_s must precede seq_e\x1ahsize(this.seq_s) < size(this.seq_e) || (size(this.seq_s) == size(this.seq_e) && this.seq_s < this.seq_e)\"\xa4\x02\n" +
-	"\x04View\x12 \n" +
-	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\x128\n" +
-	"\x06source\x18\x02 \x01(\v2\x18.anra.a2a.tape.v1.SourceB\x06\xbaH\x03\xc8\x01\x01R\x06source\x12=\n" +
-	"\rsnapshot_head\x18\x03 \x01(\tB\x18\xbaH\x15r\x132\x11^(0|[1-9][0-9]*)$R\fsnapshotHead\x12>\n" +
-	"\x06ranges\x18\x04 \x03(\v2\x1c.anra.a2a.tape.v1.EntryRangeB\b\xbaH\x05\x92\x01\x02\x10\x01R\x06ranges\x12A\n" +
-	"\n" +
-	"expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\texpiresAt\"\xa1\x02\n" +
-	"\bDecision\x12)\n" +
-	"\n" +
-	"request_id\x18\x01 \x01(\tB\n" +
-	"\xbaH\ar\x05 \x01(\x80\x02R\trequestId\x12D\n" +
-	"\x06status\x18\x02 \x01(\x0e2 .anra.a2a.tape.v1.DecisionStatusB\n" +
-	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06status\x12*\n" +
-	"\x04view\x18\x03 \x01(\v2\x16.anra.a2a.tape.v1.ViewR\x04view:x\xbaHu\x1as\n" +
-	"\x16decision.view_presence\x123view must be present exactly when status is granted\x1a$(this.status == 1) == has(this.view)\"\xb4\x02\n" +
-	"\bTapeView\x128\n" +
-	"\x06source\x18\x01 \x01(\v2\x18.anra.a2a.tape.v1.SourceB\x06\xbaH\x03\xc8\x01\x01R\x06source\x129\n" +
-	"\rsnapshot_head\x18\x02 \x01(\tB\x14\xbaH\x11r\x0f2\r^[1-9][0-9]*$R\fsnapshotHead\x12:\n" +
-	"\x05scope\x18\x03 \x01(\v2\x1c.anra.a2a.tape.v1.EntryRangeB\x06\xbaH\x03\xc8\x01\x01R\x05scope:w\xbaHt\x1ar\n" +
-	"\x19tape_view.committed_scope\x12-scope must end at the committed snapshot head\x1a&this.scope.seq_e == this.snapshot_head\"\xe8\x01\n" +
-	"\rBorrowRequest\x12)\n" +
-	"\n" +
-	"request_id\x18\x01 \x01(\tB\n" +
-	"\xbaH\ar\x05 \x01(\x80\x02R\trequestId\x12$\n" +
-	"\apurpose\x18\x02 \x01(\tB\n" +
-	"\xbaH\ar\x05 \x01(\x80@R\apurpose\x12 \n" +
-	"\x05query\x18\x03 \x01(\tB\n" +
-	"\xbaH\ar\x05 \x01(\x80@R\x05query\x124\n" +
-	"\x06bounds\x18\x04 \x01(\v2\x1c.anra.a2a.tape.v1.EntryRangeR\x06bounds\x12.\n" +
-	"\x04view\x18\x05 \x01(\v2\x1a.anra.a2a.tape.v1.TapeViewR\x04view\"P\n" +
-	"\x0eBorrowResponse\x12>\n" +
-	"\bdecision\x18\x01 \x01(\v2\x1a.anra.a2a.tape.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"7\n" +
+	"\x1banra/a2a/tape/v1/tape.proto\x12\x10anra.a2a.tape.v1\x1a\x1danra/model/view/v1/view.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1cgoogle/api/annotations.proto\"R\n" +
+	"\x0eBorrowResponse\x12@\n" +
+	"\bdecision\x18\x01 \x01(\v2\x1c.anra.model.view.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"7\n" +
 	"\n" +
 	"GetRequest\x12)\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tB\n" +
-	"\xbaH\ar\x05 \x01(\x80\x02R\trequestId\"M\n" +
-	"\vGetResponse\x12>\n" +
-	"\bdecision\x18\x01 \x01(\v2\x1a.anra.a2a.tape.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"o\n" +
-	"\vReadRequest\x12 \n" +
-	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\x12\x16\n" +
+	"\xbaH\ar\x05 \x01(\x80\x02R\trequestId\"O\n" +
+	"\vGetResponse\x12@\n" +
+	"\bdecision\x18\x01 \x01(\v2\x1c.anra.model.view.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"q\n" +
+	"\vReadRequest\x12\"\n" +
+	"\blease_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\aleaseId\x12\x16\n" +
 	"\x06cursor\x18\x02 \x01(\tR\x06cursor\x12&\n" +
-	"\tpage_size\x18\x03 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x00R\bpageSize\"W\n" +
-	"\aPayload\x12&\n" +
-	"\n" +
-	"media_type\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\tmediaType\x12$\n" +
-	"\tjson_data\x18\x02 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\bjsonData\"\xd5\x01\n" +
-	"\rExportedEntry\x12*\n" +
-	"\x03seq\x18\x01 \x01(\tB\x18\xbaH\x15r\x132\x11^(0|[1-9][0-9]*)$R\x03seq\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\x12@\n" +
-	"\ttimestamp\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\ttimestamp\x123\n" +
-	"\apayload\x18\x05 \x01(\v2\x19.anra.a2a.tape.v1.PayloadR\apayloadJ\x04\b\x03\x10\x04R\asummary\"\xfd\x01\n" +
-	"\x04Page\x12 \n" +
-	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\x128\n" +
-	"\x06source\x18\x02 \x01(\v2\x18.anra.a2a.tape.v1.SourceB\x06\xbaH\x03\xc8\x01\x01R\x06source\x12=\n" +
-	"\rsnapshot_head\x18\x03 \x01(\tB\x18\xbaH\x15r\x132\x11^(0|[1-9][0-9]*)$R\fsnapshotHead\x129\n" +
-	"\aentries\x18\x04 \x03(\v2\x1f.anra.a2a.tape.v1.ExportedEntryR\aentries\x12\x1f\n" +
-	"\vnext_cursor\x18\x05 \x01(\tR\n" +
-	"nextCursor\"B\n" +
-	"\fReadResponse\x122\n" +
-	"\x04page\x18\x01 \x01(\v2\x16.anra.a2a.tape.v1.PageB\x06\xbaH\x03\xc8\x01\x01R\x04page\"2\n" +
-	"\x0eReleaseRequest\x12 \n" +
-	"\aview_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06viewId\"-\n" +
+	"\tpage_size\x18\x03 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x00R\bpageSize\"G\n" +
+	"\fReadResponse\x127\n" +
+	"\x05quote\x18\x01 \x01(\v2\x19.anra.model.view.v1.QuoteB\x06\xbaH\x03\xc8\x01\x01R\x05quote\"4\n" +
+	"\x0eReleaseRequest\x12\"\n" +
+	"\blease_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\aleaseId\"-\n" +
 	"\x0fReleaseResponse\x12\x1a\n" +
-	"\breleased\x18\x01 \x01(\bR\breleased*\x87\x01\n" +
-	"\x0eDecisionStatus\x12\x1f\n" +
-	"\x1bDECISION_STATUS_UNSPECIFIED\x10\x00\x12\x1b\n" +
-	"\x17DECISION_STATUS_GRANTED\x10\x01\x12\x1a\n" +
-	"\x16DECISION_STATUS_DENIED\x10\x02\x12\x1b\n" +
-	"\x17DECISION_STATUS_PENDING\x10\x032\xd4\x03\n" +
-	"\x0fTapeViewService\x12h\n" +
-	"\x06Borrow\x12\x1f.anra.a2a.tape.v1.BorrowRequest\x1a .anra.a2a.tape.v1.BorrowResponse\"\x1b\x82\xd3\xe4\x93\x02\x15:\x01*\"\x10/v1/tape/borrows\x12i\n" +
-	"\x03Get\x12\x1c.anra.a2a.tape.v1.GetRequest\x1a\x1d.anra.a2a.tape.v1.GetResponse\"%\x82\xd3\xe4\x93\x02\x1f\x12\x1d/v1/tape/borrows/{request_id}\x12o\n" +
-	"\x04Read\x12\x1d.anra.a2a.tape.v1.ReadRequest\x1a\x1e.anra.a2a.tape.v1.ReadResponse\"(\x82\xd3\xe4\x93\x02\"\x12 /v1/tape/views/{view_id}/entries\x12{\n" +
-	"\aRelease\x12 .anra.a2a.tape.v1.ReleaseRequest\x1a!.anra.a2a.tape.v1.ReleaseResponse\"+\x82\xd3\xe4\x93\x02%:\x01*\" /v1/tape/views/{view_id}:releaseB9Z7github.com/anra-studio/anra/gen/anra/a2a/tape/v1;tapev1b\x06proto3"
+	"\breleased\x18\x01 \x01(\bR\breleased2\xd8\x03\n" +
+	"\x0fTapeViewService\x12j\n" +
+	"\x06Borrow\x12!.anra.model.view.v1.BorrowRequest\x1a .anra.a2a.tape.v1.BorrowResponse\"\x1b\x82\xd3\xe4\x93\x02\x15:\x01*\"\x10/v1/tape/borrows\x12i\n" +
+	"\x03Get\x12\x1c.anra.a2a.tape.v1.GetRequest\x1a\x1d.anra.a2a.tape.v1.GetResponse\"%\x82\xd3\xe4\x93\x02\x1f\x12\x1d/v1/tape/borrows/{request_id}\x12p\n" +
+	"\x04Read\x12\x1d.anra.a2a.tape.v1.ReadRequest\x1a\x1e.anra.a2a.tape.v1.ReadResponse\")\x82\xd3\xe4\x93\x02#\x12!/v1/tape/views/{lease_id}/entries\x12|\n" +
+	"\aRelease\x12 .anra.a2a.tape.v1.ReleaseRequest\x1a!.anra.a2a.tape.v1.ReleaseResponse\",\x82\xd3\xe4\x93\x02&:\x01*\"!/v1/tape/views/{lease_id}:releaseB9Z7github.com/anra-studio/anra/gen/anra/a2a/tape/v1;tapev1b\x06proto3"
 
 var (
 	file_anra_a2a_tape_v1_tape_proto_rawDescOnce sync.Once
@@ -1084,58 +391,36 @@ func file_anra_a2a_tape_v1_tape_proto_rawDescGZIP() []byte {
 	return file_anra_a2a_tape_v1_tape_proto_rawDescData
 }
 
-var file_anra_a2a_tape_v1_tape_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_anra_a2a_tape_v1_tape_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_anra_a2a_tape_v1_tape_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_anra_a2a_tape_v1_tape_proto_goTypes = []any{
-	(DecisionStatus)(0),           // 0: anra.a2a.tape.v1.DecisionStatus
-	(*Source)(nil),                // 1: anra.a2a.tape.v1.Source
-	(*EntryRange)(nil),            // 2: anra.a2a.tape.v1.EntryRange
-	(*View)(nil),                  // 3: anra.a2a.tape.v1.View
-	(*Decision)(nil),              // 4: anra.a2a.tape.v1.Decision
-	(*TapeView)(nil),              // 5: anra.a2a.tape.v1.TapeView
-	(*BorrowRequest)(nil),         // 6: anra.a2a.tape.v1.BorrowRequest
-	(*BorrowResponse)(nil),        // 7: anra.a2a.tape.v1.BorrowResponse
-	(*GetRequest)(nil),            // 8: anra.a2a.tape.v1.GetRequest
-	(*GetResponse)(nil),           // 9: anra.a2a.tape.v1.GetResponse
-	(*ReadRequest)(nil),           // 10: anra.a2a.tape.v1.ReadRequest
-	(*Payload)(nil),               // 11: anra.a2a.tape.v1.Payload
-	(*ExportedEntry)(nil),         // 12: anra.a2a.tape.v1.ExportedEntry
-	(*Page)(nil),                  // 13: anra.a2a.tape.v1.Page
-	(*ReadResponse)(nil),          // 14: anra.a2a.tape.v1.ReadResponse
-	(*ReleaseRequest)(nil),        // 15: anra.a2a.tape.v1.ReleaseRequest
-	(*ReleaseResponse)(nil),       // 16: anra.a2a.tape.v1.ReleaseResponse
-	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
+	(*BorrowResponse)(nil),   // 0: anra.a2a.tape.v1.BorrowResponse
+	(*GetRequest)(nil),       // 1: anra.a2a.tape.v1.GetRequest
+	(*GetResponse)(nil),      // 2: anra.a2a.tape.v1.GetResponse
+	(*ReadRequest)(nil),      // 3: anra.a2a.tape.v1.ReadRequest
+	(*ReadResponse)(nil),     // 4: anra.a2a.tape.v1.ReadResponse
+	(*ReleaseRequest)(nil),   // 5: anra.a2a.tape.v1.ReleaseRequest
+	(*ReleaseResponse)(nil),  // 6: anra.a2a.tape.v1.ReleaseResponse
+	(*v1.Decision)(nil),      // 7: anra.model.view.v1.Decision
+	(*v1.Quote)(nil),         // 8: anra.model.view.v1.Quote
+	(*v1.BorrowRequest)(nil), // 9: anra.model.view.v1.BorrowRequest
 }
 var file_anra_a2a_tape_v1_tape_proto_depIdxs = []int32{
-	1,  // 0: anra.a2a.tape.v1.View.source:type_name -> anra.a2a.tape.v1.Source
-	2,  // 1: anra.a2a.tape.v1.View.ranges:type_name -> anra.a2a.tape.v1.EntryRange
-	17, // 2: anra.a2a.tape.v1.View.expires_at:type_name -> google.protobuf.Timestamp
-	0,  // 3: anra.a2a.tape.v1.Decision.status:type_name -> anra.a2a.tape.v1.DecisionStatus
-	3,  // 4: anra.a2a.tape.v1.Decision.view:type_name -> anra.a2a.tape.v1.View
-	1,  // 5: anra.a2a.tape.v1.TapeView.source:type_name -> anra.a2a.tape.v1.Source
-	2,  // 6: anra.a2a.tape.v1.TapeView.scope:type_name -> anra.a2a.tape.v1.EntryRange
-	2,  // 7: anra.a2a.tape.v1.BorrowRequest.bounds:type_name -> anra.a2a.tape.v1.EntryRange
-	5,  // 8: anra.a2a.tape.v1.BorrowRequest.view:type_name -> anra.a2a.tape.v1.TapeView
-	4,  // 9: anra.a2a.tape.v1.BorrowResponse.decision:type_name -> anra.a2a.tape.v1.Decision
-	4,  // 10: anra.a2a.tape.v1.GetResponse.decision:type_name -> anra.a2a.tape.v1.Decision
-	17, // 11: anra.a2a.tape.v1.ExportedEntry.timestamp:type_name -> google.protobuf.Timestamp
-	11, // 12: anra.a2a.tape.v1.ExportedEntry.payload:type_name -> anra.a2a.tape.v1.Payload
-	1,  // 13: anra.a2a.tape.v1.Page.source:type_name -> anra.a2a.tape.v1.Source
-	12, // 14: anra.a2a.tape.v1.Page.entries:type_name -> anra.a2a.tape.v1.ExportedEntry
-	13, // 15: anra.a2a.tape.v1.ReadResponse.page:type_name -> anra.a2a.tape.v1.Page
-	6,  // 16: anra.a2a.tape.v1.TapeViewService.Borrow:input_type -> anra.a2a.tape.v1.BorrowRequest
-	8,  // 17: anra.a2a.tape.v1.TapeViewService.Get:input_type -> anra.a2a.tape.v1.GetRequest
-	10, // 18: anra.a2a.tape.v1.TapeViewService.Read:input_type -> anra.a2a.tape.v1.ReadRequest
-	15, // 19: anra.a2a.tape.v1.TapeViewService.Release:input_type -> anra.a2a.tape.v1.ReleaseRequest
-	7,  // 20: anra.a2a.tape.v1.TapeViewService.Borrow:output_type -> anra.a2a.tape.v1.BorrowResponse
-	9,  // 21: anra.a2a.tape.v1.TapeViewService.Get:output_type -> anra.a2a.tape.v1.GetResponse
-	14, // 22: anra.a2a.tape.v1.TapeViewService.Read:output_type -> anra.a2a.tape.v1.ReadResponse
-	16, // 23: anra.a2a.tape.v1.TapeViewService.Release:output_type -> anra.a2a.tape.v1.ReleaseResponse
-	20, // [20:24] is the sub-list for method output_type
-	16, // [16:20] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	7, // 0: anra.a2a.tape.v1.BorrowResponse.decision:type_name -> anra.model.view.v1.Decision
+	7, // 1: anra.a2a.tape.v1.GetResponse.decision:type_name -> anra.model.view.v1.Decision
+	8, // 2: anra.a2a.tape.v1.ReadResponse.quote:type_name -> anra.model.view.v1.Quote
+	9, // 3: anra.a2a.tape.v1.TapeViewService.Borrow:input_type -> anra.model.view.v1.BorrowRequest
+	1, // 4: anra.a2a.tape.v1.TapeViewService.Get:input_type -> anra.a2a.tape.v1.GetRequest
+	3, // 5: anra.a2a.tape.v1.TapeViewService.Read:input_type -> anra.a2a.tape.v1.ReadRequest
+	5, // 6: anra.a2a.tape.v1.TapeViewService.Release:input_type -> anra.a2a.tape.v1.ReleaseRequest
+	0, // 7: anra.a2a.tape.v1.TapeViewService.Borrow:output_type -> anra.a2a.tape.v1.BorrowResponse
+	2, // 8: anra.a2a.tape.v1.TapeViewService.Get:output_type -> anra.a2a.tape.v1.GetResponse
+	4, // 9: anra.a2a.tape.v1.TapeViewService.Read:output_type -> anra.a2a.tape.v1.ReadResponse
+	6, // 10: anra.a2a.tape.v1.TapeViewService.Release:output_type -> anra.a2a.tape.v1.ReleaseResponse
+	7, // [7:11] is the sub-list for method output_type
+	3, // [3:7] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_anra_a2a_tape_v1_tape_proto_init() }
@@ -1148,14 +433,13 @@ func file_anra_a2a_tape_v1_tape_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_anra_a2a_tape_v1_tape_proto_rawDesc), len(file_anra_a2a_tape_v1_tape_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   16,
+			NumEnums:      0,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_anra_a2a_tape_v1_tape_proto_goTypes,
 		DependencyIndexes: file_anra_a2a_tape_v1_tape_proto_depIdxs,
-		EnumInfos:         file_anra_a2a_tape_v1_tape_proto_enumTypes,
 		MessageInfos:      file_anra_a2a_tape_v1_tape_proto_msgTypes,
 	}.Build()
 	File_anra_a2a_tape_v1_tape_proto = out.File

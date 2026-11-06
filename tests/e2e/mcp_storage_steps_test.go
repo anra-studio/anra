@@ -2,27 +2,31 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/rand"
 	"path/filepath"
 	"slices"
 	"sync"
 	"time"
 
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
+	bv "github.com/anra-studio/anra/pkg/model/view"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	"google.golang.org/protobuf/proto"
 )
 
 // The embedding runtime owns these fixtures across MCP service lifetimes.
 // Values are replaced under the lock and never mutated after publication.
 type mcpProviders struct {
-	mu       sync.RWMutex
-	roles    map[anramcp.RoleRef]anramcp.RoleDefinition
-	grants   map[string]anramcp.Grant
+	mu sync.RWMutex
+
+	roles map[anramcp.RoleRef]anramcp.RoleDefinition
+
+	grants map[string]anramcp.Grant
+
 	grantErr error
 }
 
@@ -80,7 +84,14 @@ func (m *mcpScenario) useJSONLTape() error {
 	if err != nil {
 		return err
 	}
-	entries, err := m.tape.Range(m.tapeContext(), tv.EntryRange{SeqS: te.SeqFromUint64(1), SeqE: state.Scope.SeqE.Next()})
+
+	entries, err := m.tape.Range(
+		m.tapeContext(),
+		tv.EntryRange{
+			SeqS: te.SeqFromUint64(1),
+			SeqE: state.Scope.SeqE.Next(),
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -99,9 +110,8 @@ func (m *mcpScenario) useJSONLTape() error {
 	m.server.Close()
 	m.server = nil
 	m.handoffTape = tape
-	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),
-	})
+
+	err = m.configureViews(tape)
 	if err != nil {
 		return err
 	}
@@ -119,9 +129,8 @@ func (m *mcpScenario) restartJSONLTape() error {
 		return err
 	}
 	m.handoffTape = tape
-	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),
-	})
+
+	err = m.configureViews(tape)
 	if err != nil {
 		return err
 	}
@@ -139,9 +148,8 @@ func (m *mcpScenario) restartService() error {
 	m.server.Close()
 	m.server = nil
 	var err error
-	m.service, err = anramcp.NewService(anramcp.Config{
-		Source: m.agent.Source(), Owner: "vesta", Tape: m.tape, Roles: m.providers, Grants: m.grantsFor(m.agent.Source()),
-	})
+
+	err = m.configureViews(m.tape)
 	if err != nil {
 		return err
 	}
@@ -153,11 +161,18 @@ func (m *mcpScenario) restartService() error {
 type scopedGrants struct {
 	*mcpProviders
 	source *pb.Source
-	now    func() time.Time
+
+	now func() time.Time
 }
 
 func (m *mcpScenario) grantsFor(source *pb.Source) anramcp.GrantVerifier {
-	return scopedGrants{mcpProviders: m.providers, source: source, now: func() time.Time { return time.Unix(0, m.clock.Load()) }}
+	return scopedGrants{
+		mcpProviders: m.providers,
+		source:       source,
+		now: func() time.Time {
+			return time.Unix(0, m.clock.Load())
+		},
+	}
 }
 
 func (v scopedGrants) VerifyGrant(ctx context.Context, credential string) (*anramcp.Grant, error) {
@@ -165,8 +180,61 @@ func (v scopedGrants) VerifyGrant(ctx context.Context, credential string) (*anra
 	if err != nil {
 		return nil, err
 	}
-	if !g.ExpiresAt.After(v.now()) || g.Role.ID != v.source.AgentId || !proto.Equal(g.View.Source, v.source) {
+
+	if !g.ExpiresAt.After(v.now()) || g.Role.ID != v.source.AgentId {
 		return nil, anramcp.ErrPermissionDenied
 	}
 	return g, nil
+}
+
+func (m *mcpScenario) configureViews(tape storage.TapeStorage) error {
+	if m.views != nil {
+		if err := m.views.Close(); err != nil {
+			return err
+		}
+	}
+
+	var err error
+
+	m.views, err = bv.NewService(
+		bv.Config{
+			Source:     m.agent.Source(),
+			Owner:      "vesta",
+			Tape:       tape,
+			RecordPath: filepath.Join(m.s.root, "mcp.grants.db"),
+			Views: recoveredViews{
+				Tape:  tape,
+				Owner: "vesta",
+			},
+			Now: func() time.Time {
+				return time.Unix(0, m.clock.Load())
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	m.service, err = anramcp.NewService(
+		anramcp.Config{
+			Views:  m.views,
+			Roles:  m.providers,
+			Grants: m.grantsFor(m.agent.Source()),
+		},
+	)
+
+	return err
+}
+
+func (m *mcpScenario) issueLease(caller string, ref *pb.Ref) error {
+	lease, err := m.views.Grant(m.s.ctx, caller, rand.Text(), ref)
+	if err != nil {
+		return err
+	}
+
+	m.lease = lease
+
+	m.grant.LeaseID = lease.Id
+
+	return nil
 }

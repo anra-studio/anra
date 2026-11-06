@@ -9,7 +9,7 @@ import (
 	"buf.build/go/protovalidate"
 	"github.com/go-playground/validator/v10"
 
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
@@ -28,14 +28,21 @@ const (
 
 // Record describes tape initialization or an execution turn transition.
 type Record struct {
-	Schema     string       `json:"schema" validate:"eq=anra.dev/anchor/v1"`
-	Type       Type         `json:"type" validate:"oneof=tape.initialized turn.started turn.closed"`
-	Source     *pb.Source   `json:"source,omitempty" validate:"required_if=Type tape.initialized,excluded_unless=Type tape.initialized,omitempty,structonly"`
-	TurnID     string       `json:"turnId,omitempty" validate:"required_unless=Type tape.initialized,excluded_if=Type tape.initialized,maxbytes=256"`
-	OwnerEpoch string       `json:"ownerEpoch,omitempty" validate:"required_if=Type turn.started,excluded_if=Type tape.initialized,maxbytes=256"`
-	BaseView   *pb.TapeView `json:"baseView,omitempty" validate:"excluded_unless=Type turn.started,omitempty,structonly"`
-	StartSeq   string       `json:"startSeq,omitempty" validate:"required_if=Type turn.closed,excluded_unless=Type turn.closed"`
-	Outcome    string       `json:"outcome,omitempty" validate:"required_if=Type turn.closed,excluded_unless=Type turn.closed,omitempty,oneof=completed failed cancelled abandoned"`
+	Schema string `json:"schema" validate:"eq=anra.dev/anchor/v1"`
+
+	Type Type `json:"type" validate:"oneof=tape.initialized turn.started turn.closed"`
+
+	Source *pb.Source `json:"source,omitempty" validate:"required_if=Type tape.initialized,excluded_unless=Type tape.initialized,omitempty,structonly"`
+
+	TurnID string `json:"turnId,omitempty" validate:"required_unless=Type tape.initialized,excluded_if=Type tape.initialized,maxbytes=256"`
+
+	OwnerEpoch string `json:"ownerEpoch,omitempty" validate:"required_if=Type turn.started,excluded_if=Type tape.initialized,maxbytes=256"`
+
+	BaseView *pb.Ref `json:"baseView,omitempty" validate:"excluded_unless=Type turn.started,omitempty,structonly"`
+
+	StartSeq string `json:"startSeq,omitempty" validate:"required_if=Type turn.closed,excluded_unless=Type turn.closed"`
+
+	Outcome string `json:"outcome,omitempty" validate:"required_if=Type turn.closed,excluded_unless=Type turn.closed,omitempty,oneof=completed failed cancelled abandoned"`
 }
 
 // Body returns the public record value without the private ownership epoch.
@@ -51,13 +58,18 @@ var recordValidator = func() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
 	// validator's built-in string max counts runes. Stored identities have a
 	// byte limit, so preserve that wire-format constraint explicitly.
-	if err := v.RegisterValidation("maxbytes", func(fl validator.FieldLevel) bool {
-		limit, err := strconv.Atoi(fl.Param())
-		if err != nil {
-			return false
-		}
-		return len(fl.Field().String()) <= limit
-	}); err != nil {
+
+	if err := v.RegisterValidation(
+		"maxbytes",
+		func(fl validator.FieldLevel) bool {
+			limit, err := strconv.Atoi(fl.Param())
+			if err != nil {
+				return false
+			}
+
+			return len(fl.Field().String()) <= limit
+		},
+	); err != nil {
 		panic(err)
 	}
 	return v

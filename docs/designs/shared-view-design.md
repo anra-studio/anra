@@ -1,12 +1,12 @@
 # 共享 View 与借阅服务
 
-状态：架构决议，尚未实现。本文描述目标设计，不表示当前 MCP 已接入 peer lease。
+状态：approved。按本文决议实现共享 View、Lease 和 Quote；实现验收结果另行记录。
 
 MCP 和 peer 读取同一类已提交上下文，统一使用 `pkg/model/view` 的借阅服务、内容表示和来源信封。peer 也只允许借阅已提交的 View，去掉空范围授权和自由选段能力。
 
 本次允许直接调整类型、协议和存储格式。不设计历史数据迁移、兼容解码、旧字段、过渡别名或双入口回退。
 
-## 现状与问题
+## 重构前的问题
 
 - `pkg/mcp/view.go` 自行读取 Tape、生成 `TapeViewResult` / `ViewEntry`，从 MCP Grant 组装 Channel 和 Provenance。
 - `pkg/a2a/service.go` 同时承担协议服务、范围选择、lease 签发、读取、分页和撤销。现有 `pb.View` 是授权，`pb.TapeView` 是没有授权的快照引用，两者名称没有表达差异。
@@ -112,7 +112,7 @@ Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。�
 
 借阅业务请求和 Decision 同样由公共 schema 声明，供共享服务和 grantRecord 使用，避免 grantRecord.State 继续通过 A2A 请求类型反向耦合协议。RPC 专有的响应封装及 HTTP annotations 继续位于各协议 schema 中。
 
-这些无传输行为的生成消息作为共同的类型化领域值使用；不再另写一套同字段 Go struct，也不加旧名 alias。`pkg/model/view` 拥有消费模型和行为。JSON / ProtoJSON 编码属于边界，统一使用明确的字段名。
+Source、EntryRange、Ref、Lease 和决策直接复用公共生成消息，不另写同字段 Go 副本或旧名 alias。Quote 的 JSON 表示使用 RawMessage 内容，协议转换负责将其映射为 protobuf 的精确保真 Payload。`pkg/model/view` 拥有消费模型和行为。JSON / ProtoJSON 编码属于边界，统一使用明确的字段名。
 
 Protobuf 的字段约束使用 Protovalidate，非 Protobuf 的构建约束使用 validator 标签。在外部输入或对象构建边界完成格式验证；共享服务执行真实的提交解析、授权和状态转换规则，消费方不递归重复验证受信任结果。
 
@@ -146,13 +146,15 @@ MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工�
 
 保留 Origin 先于认证、重复 Authorization 拒绝、请求级身份隔离和所有 MCP 响应 no-store。Bearer 不增加字符集限制，也不进入日志、Tape 或 Provenance。请求和内容响应不增加固定 body 上限；分页按条目划分，不拆分或截断多模态内容。
 
-## 落地顺序与验收
+## 实现与验收
 
 1. 建立公共 Ref / Lease schema 和 `pkg/model/view`，明确上面的约束及字段名，重新生成协议绑定。
 2. 将 A2A 借阅业务和 grantRecord 接入共享服务；所有借阅改为解析已提交 View，删除自由范围 Policy 和空 lease 分支。原生 anchor、委托提示和 grantRecord 使用公共 Ref / Lease。
 3. 将公开条目出口、Channel 和 Provenance 收到共享服务，删除 MCP 与 peer 各自的来源组装及内容分支。
 4. MCP 凭证改为绑定同一服务的 lease，删除直接 TapeReader 旁路；host 注入同一个实例。同步更新协议与运行文档。
 5. 通过真实 HTTP、Tape 和 grantRecord 完成验收，再提交实现。
+
+实现位置：公共 schema 位于 `proto/anra/model/view/v1/view.proto`；共享服务、Quote 和 Exporter 位于 `pkg/model/view`；原授权存储已重命名为 `pkg/model/grantRecord`。MCP 和 A2A 注入同一服务实例，MCP 已移除直接 TapeReader 路径。
 
 复用并调整现有中文 E2E，重点覆盖：
 
@@ -162,4 +164,8 @@ MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工�
 - 追加新 Turn 和服务重建不扩大已有 Ref；释放、撤销及到期对两个入口同时生效。Read 不签发、不续租、不进入推理。
 - 多模态、思考内容、原生和第三方锚点、JSON 数字精度及私有元数据边界在两个入口保持一致。
 
-纯算法与编解码边界才增加单测，不为字段搬运添加 mock 或测试接口。实现完成后运行 `GOFLAGS=-race mise run test`；本次设计文档不修改运行时代码，不以先前测试结果冒充实现验收。
+纯算法与编解码边界才增加单测，不为字段搬运添加 mock 或测试接口。实现验收运行 `GOFLAGS=-race mise run test`，结果随实现提交记录。
+
+## 验收结果
+
+实现已完成。`GOFLAGS=-race mise run test` 全量通过：244 个场景、1128 个步骤，包括公共协议生成一致性、构建、纯逻辑与真实网络/持久化 E2E。Go 修改已执行 gofumpt，`git diff --check` 和文档链接检查通过。

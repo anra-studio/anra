@@ -1,7 +1,7 @@
 # Anchor-backed TapeView collaboration
 
-Status: implemented. This replaces the publication object in the earlier
-[BUSY design](anchor-busy-collaboration-spec.md) and its implementation guide.
+Status: superseded by the approved [shared View design](shared-view-design.md).
+The historical field names below do not describe the current implementation.
 
 ## Borrowable object
 

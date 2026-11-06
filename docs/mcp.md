@@ -1,260 +1,151 @@
 # Read-only handoff context over MCP
 
-`pkg/mcp` implements the [Anra MCP design](https://github.com/anra-studio/anra/blob/d7b0a38d0e9d7afd29a763e71679814c6e2b76c8/docs/designs/anra-mcp-spec.md)
-tracked by [Issue #13](https://github.com/anra-studio/anra/issues/13). The design
-currently lives on the documentation branch. This implementation is based on
-`main` and does not change the Peer or CLI endpoints.
+MCP exposes `read_role(anchorSeq)` and `read_tape_view(anchorSeq)` through the
+official Go MCP SDK's stateless Streamable HTTP transport. It shares one
+`pkg/model/view.Service` with the peer borrowing adapter. MCP does not select
+Tape ranges, open storage, issue leases, or maintain another authorization store.
+See the approved [shared View design](designs/shared-view-design.md).
 
-The service uses the [official Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk)
-for protocol negotiation, JSON-RPC, and stateless Streamable HTTP with JSON
-responses. Mount `Service.Handler()` at the embedding runtime's `/mcp` endpoint.
-Every HTTP request, including discovery, requires `Authorization: Bearer …`.
-After Origin checks, the HTTP authentication middleware rejects multiple
-Authorization fields with HTTP 401 and a Bearer challenge, regardless of their
-order or values. A single
-field keeps case-insensitive scheme matching and accepts multiple ASCII spaces
-after the scheme. The trimmed credential is passed to the external
-`GrantVerifier`; no token68 character restriction is imposed. Only a successful
-authentication adds the Grant to the current request context and dispatches to
-the protected MCP transport.
-Remote deployments terminate TLS. When configured, the handler enforces the
-Origin allowlist on every method; the SDK's localhost Host/DNS rebinding check
-also remains enabled.
-MCP session identifiers, role names, and claimed external session
-IDs never establish identity.
+## Hosting and ownership
 
-`Config.TrustedOrigins` is an exact allowlist of serialized HTTP(S) origins,
-for example `[]string{"https://console.example"}`. When unset or empty
-(`len(TrustedOrigins) == 0`), the service does not restrict Origin; requests
-carrying Origin are allowed with valid Bearer credentials. A nonempty allowlist
-requires requests carrying Origin to contain exactly one value matching an
-entry. Built-in validator tags check HTTP(S) URLs and reject wildcards once at
-startup. With an allowlist configured, nonmatching, empty or repeated Origin
-headers fail with HTTP 403, the static `permission_denied` envelope and
-`Cache-Control: no-store`. Matching is byte-for-byte: configuration and request
-values are never parsed or normalized for comparison. Use the browser's
-serialized scheme, host and port. A trailing slash, path, credentials, query,
-fragment or differently cased host in configuration does not match that Origin.
-Requests without Origin remain usable by native clients in both modes. Every
-request still requires valid Bearer credentials; Origin validation is independent
-of Bearer authentication.
-
-The embedding runtime owns the listener, TLS, and browser trust configuration.
-Local deployments should bind loopback. Configure browser origins explicitly
-from trusted deployment settings. The handler never derives trust from Host,
-Forwarded or X-Forwarded-* headers. Reverse proxies must preserve Origin and
-Authorization, reject untrusted hostnames, prevent direct access to the backend,
-and terminate TLS securely. Do not strip Origin to bypass this check. Origin
-is checked before authentication. The backend can reject only duplicate fields
-that reach it: a proxy that merges or drops Authorization fields can hide the
-original multiplicity. Enforce duplicate rejection at that proxy as well.
-Origin trust does not grant CORS access or replace connection authentication. See the
-[MCP transport security requirements](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning).
-
-## Read-only dependencies and lifecycle
-
-MCP is a stateless reader. It opens no database, creates no files, writes no
-Tape entries, and owns no dependency lifecycle. `Service` has no close method.
-The embedding runtime owns the listener and HTTP shutdown, Tape initialization
-and recovery, Role publication, and credential issuance and revocation. Stop
-HTTP requests before closing the dependencies; drain the Agent before closing
-its Tape. No MCP state is recovered or copied when constructing a new service.
-
-`Config.Tape` accepts `TapeReader`, the `Range` portion of tape-go's existing
-`storage.EntryStorage`. Both bbolt and JSONL Tape implementations satisfy it.
-MCP cannot call `Store` through this interface. The caller supplies the matching
-Source and owner. Tape is the sole source of truth for handoff anchors and their
-fixed views; the initialization anchor need not be the first entry.
-
-`pkg/model/entry.Entry` is Anra's concrete entry and implements Tape's
-`EntryLike`. Storage-facing code normalizes foreign entries with `FromTape`;
-`Content()` exposes the structured SDK-backed model body, while `Body()` returns
-the original Tape text for anchors and text-export compatibility. Export and
-MCP read content directly from this type. `Extension` and `DecodeExtension`
-encapsulate extension access without exposing `CustomEntry` or its map. Extension keys
-and JSON-string encoding live in the entry package. Updates return values and
-copy extension maps only when changing them. Explicit ID/timestamp methods
-preserve the Anra entry and its extensions during storage metadata assignment.
-The persisted Tape JSON format remains unchanged, including unknown extensions.
-
-Two required read-only interfaces supply the remaining data:
-
-- `Config.Roles` accepts `RoleProvider.GetRole(ctx, RoleRef)`. The provider returns
-  the `RoleDefinition` for exactly `(id, version)`, with stable contents for that
-  revision. A `Profile` holds the role's purpose, instructions and the tools it is
-  proficient with, each with its required permissions; `Profile.String()` renders
-  them into the instructions. The provider owns definition validation; MCP trusts
-  the returned revision. The provider returns
-  `ErrInvalidReference` for a missing revision, which MCP reports as
-  `invalid_reference`; other provider errors become `unavailable`.
-- `Config.Grants` accepts `GrantVerifier.VerifyGrant(ctx, credential)`. The
-  embedding runtime verifies credentials using its own authorization component,
-  existing journal, or an in-memory map. Unknown or revoked credentials return
-  `(nil, nil)` or `ErrPermissionDenied`; other errors become `unavailable`.
-  Verification runs on every HTTP request, including discovery. `GrantVerifier`
-  owns expiry, revocation, Role and Source checks; MCP checks the exact
-  anchor sequence and tool permission on tool invocation.
-
-`Grant.AnchorSeq` uses `required,number,startsnotwith=0`: a nonzero ASCII decimal
-string without leading zeros, with no integer-width limit. The issuer owns Grant
-validation. The HTTP handler decodes tool arguments and `resolve` requires their
-anchor sequence to match the authorized Grant exactly, without repeating format
-validation. Nonmatching strings, including missing or malformed sequences, return
-`permission_denied`; malformed JSON, unknown fields and non-string sequences
-return `invalid_reference`. The SDK's low-level `AddTool` does not enforce its
-advertised input schema. Independent validators need no private MCP rule
-registrations for the exported types.
-
-Both providers must support concurrent calls and return values that remain
-immutable for the duration of the request. MCP does not cache Role revisions or
-grants. Provider implementations own retention and revocation across service
-restarts. An in-memory provider survives MCP reconstruction when retained by
-the embedding runtime; it does not imply persistence across process restarts.
-
-For example, given an existing Tape, Role provider and credential verifier:
+The host initializes the Agent and Tape, creates the shared view service, and
+injects it into both adapters:
 
 ```go
-service, err := mcp.NewService(mcp.Config{
-    Source: a.Source(), Owner: "vesta", Tape: a.Tape(),
-    Roles: roleProvider, Grants: grantVerifier,
-})
-if err != nil {
-    return err
-}
-mux.Handle("/mcp", service.Handler())
+views, err := view.NewService(
+    view.Config{
+        Source:     a.Source(),
+        Owner:      "vesta",
+        Tape:       a.Tape(),
+        Views:      a,
+        RecordPath: "vesta.grants.db",
+    },
+)
+// Handle err before constructing either adapter.
+contextService, err := mcp.NewService(
+    mcp.Config{
+        Views:  views,
+        Roles:  roleProvider,
+        Grants: grantVerifier,
+    },
+)
+// Handle err before mounting contextService.Handler().
+peerHandler, err := a2a.NewViewHandler(views, authenticatePeer)
+// Handle err before mounting the Connect and REST routes.
 ```
 
-Before dispatching external work, the controller publishes the Role revision
-through its existing Role owner, appends a handoff anchor (for example
-`anra.dev/anchor/intr/v1`, which adds role and binding) through Tape, and
-arranges the matching credential with its authorization component. A grant is
-`{id, caller, role, anchorSeq, view, permissions, expiresAt}`: `id` is a public
-grant reference, distinct from the bearer secret, and `caller` identifies the
-authenticated borrower. The issuer supplies both; they are not accepted in tool
-arguments or derived from stored content. The view is the Tape range
-`seqS → seqE` the handoff committed. The `GrantVerifier` guarantees these
-values are exactly those the anchor committed; MCP never parses the anchor
-body. Credential delivery belongs to the integration. Never put credentials
-in prompts, Tape entries, artifacts, or logs. MCP provides no publication,
-commit, issuance or revocation methods.
+`RecordPath` opens an owned `grantRecord.Store`; `Records` instead accepts an
+already open store that remains owned by its caller. Drain both HTTP adapters
+before closing the shared service or Tape. MCP owns none of these lifetimes.
+The runtime can use initialized bbolt or JSONL `storage.TapeStorage`.
 
-On each tool read MCP checks that the request's `anchorSeq` equals the grant's
-and that the grant carries the tool's permission. It returns the granted Role
-revision or reads the granted view, like a borrow: the caller receives the
-range and reads the entries itself. Tape integrity and immutability belong to
-Tape and the grant issuer, not MCP. Reads never acquire reasoning Admission or
-select the current Tape head, so later entries cannot expand the view.
+## Ref, Lease, and Quote
 
-## Tool contract
+The common protobuf values live in `gen/anra/model/view/v1`:
 
-Both tools accept exactly `{"anchorSeq":"21"}`. Sequences are positive canonical
-decimal strings of arbitrary precision. Unknown arguments, including role,
-session, and scope overrides, fail validation. Results contain identical JSON
-in MCP `structuredContent` and the text `content` item.
+- `Ref` contains only `Source` and nonempty `Scopes`. Sequences are positive
+  canonical decimal strings of arbitrary precision. Scopes are half-open,
+  ordered, and non-overlapping; the native committed-view resolver enforces
+  exact eligible windows. There is no separate snapshot or finalized sequence
+  field: the view's end is the last scope's `seqE`.
+- `Lease` binds its public `id`, authenticated `caller`, immutable `ref`, and
+  `expiresAt`. A reference alone grants no access. Borrow retries do not renew
+  leases. Empty and freely selected uncommitted ranges cannot receive a lease.
+- `view.Quote` contains the borrowed channel, provenance, and public entries.
+  Provenance is `{caller, leaseId, ref}`. Entries do not repeat it individually.
 
-`read_role` returns the revision referenced by the handoff, never the current
-configuration:
+The controller resolves an exact committed Ref and calls the shared service's
+trusted local `Grant(ctx, caller, requestID, ref)` operation. The operation uses
+the same commitment resolver, durable decision records, and lease rules as peer
+borrowing, while the host supplies the approval. It requires an explicit Ref.
+A handoff's credential binds `{caller, leaseId, role, anchorSeq, permissions,
+expiresAt}`. The lease ID is public; it is never the bearer credential.
+
+`GrantVerifier` owns credential validation, expiry, revocation, and the handoff's
+Caller/LeaseID/Role/AnchorSeq binding. Unknown or revoked credentials return
+`ErrPermissionDenied`, other errors indicate backend unavailability. Success
+requires a valid non-nil immutable Grant. MCP checks the exact anchor and tool
+permission; the shared service checks current lease ownership, expiry, and
+termination before reading any content.
+
+`RoleProvider` publishes complete immutable role revisions. A missing revision
+returns `ErrInvalidReference`; other failures become `unavailable`. Providers
+own definition validation and must support concurrent calls. Tape lease
+termination does not remove independently valid role-tool permissions.
+
+## Tool results
+
+Both tools accept only `{"anchorSeq":"21"}`. Unknown fields and JSON decoding
+errors return `invalid_reference`; a string that does not match the granted
+anchor returns `permission_denied`. The advertised schema describes positive
+canonical decimal strings; invocation uses exact comparison with the validated
+Grant rather than repeating input struct validation.
+
+`read_role` returns the bound typed RoleDefinition/Profile revision. It never
+selects a newer role definition. `read_tape_view` calls
+`views.ReadAll(ctx, grant.Caller, grant.LeaseID)` and returns the shared Quote:
 
 ```json
-{"id":"vesta","version":"role-revision-42","profile":{"purpose":"Maintain Anra","instructions":"Help maintain Anra","tools":[{"name":"read_files","permissions":["read"]}]}}
+{
+  "channel": "borrowed",
+  "provenance": {
+    "caller": "external-runtime",
+    "leaseId": "public-lease-id",
+    "ref": {
+      "source": {"agentId": "vesta", "tapeId": "incarnation-id"},
+      "scopes": [{"seqS": "3", "seqE": "5"}, {"seqS": "9", "seqE": "11"}]
+    }
+  },
+  "entries": []
+}
 ```
 
-`read_tape_view` returns
-`{"channel":"borrowed","provenance": …,"view": …,"entries": […]}`.
-The granted view remains in ProtoJSON form. The result and every entry carry
-`channel: "borrowed"` and the same issuer-bound provenance: `caller`, `grantId`,
-`source`, `snapshotHead`, and `scope`. The source and scope use the generated
-protobuf types' JSON names (`agent_id`, `tape_id`, `seq_s`, `seq_e`); sequences
-remain strings. The bearer secret is never included. Anchors and historical
-user/model/tool records all remain borrowed reference, not executable authority.
-Entries also contain `seq`, `kind`, `timestamp`, and `content`. Conversation
-content is always a structured event: an original plain-text entry becomes one
-text Part with its historical user/model role; ADK content retains its parts,
-function calls and responses. `Entry.Content()` returns `*entry.Content`, with no
-flattened text field or concatenation. The same content model serves MCP and A2A
-Export; there is no intermediate projection entry. The grant authorizes recorded thought content in
-its view as well: thought text retains `thought: true` and its position among
-the parts, and thought-only entries are retained. Thought markers remain in
-the structured content rather than being flattened into ordinary text.
-Execution metadata, owners, arbitrary extensions and provider thought signatures
-are excluded. The issuer must select a view whose content the borrower may read.
+A nonempty view returns all authorized entries; the example omits entry bodies.
+Each entry carries `seq`, `kind`, `timestamp`, `mediaType`, and its public
+structured `content`. Results contain the same JSON in MCP text content and
+structuredContent. Reads do not call Borrow, renew leases, select the current
+Tape end, or enter reasoning Admission.
 
-Custom anchors use the same `anchor.Export` dispatch as peer borrowing:
-native Anra records expose `Record.Body()`, a public record value omitting
-`OwnerEpoch` without modifying the source record, while foreign schema bodies remain text
-without generic redaction. Neither peer content responses nor MCP tool results
-have a fixed size cap.
+MCP and peer share the public exporter. It preserves multimodal Part order,
+authorized thought text and markers, and opaque tool JSON number lexemes.
+Empty Parts entries remain present. Execution state, arbitrary extensions,
+Part metadata and provider thought signatures are excluded without changing
+stored ADK events. Native anchors use `Record.Body()` without OwnerEpoch;
+foreign anchors keep their original body as text. The issuer owns the decision
+to share those bodies. Unsupported or undecodable content fails the whole read.
+There is no Summary or intermediate Projection model.
 
-`entry.Content` wraps `genai.Content` and its parts, rather than exporting
-an entire ADK session event. SDK media, file references, code/results, streaming
-fields and part order are preserved; the content codec does not discard a part for
-lacking text or a function call. Part JSON excludes `thoughtSignature` and
-`partMetadata`. Event-level execution data is never decoded into public content.
-Function-call/response and server-tool payloads override SDK maps with opaque
-JSON to preserve business number representations, including empty objects and
-business keys that happen to match metadata field names. SDK upgrades must
-review changes to the wrapped content types and exported fields. Exporting a
-historical code or tool part does not execute it.
+Peer pagination traverses each scope in order and skips unauthorized gaps.
+Source, caller, lease and complete Ref stay fixed across every page. A missing
+entry or failed segment is an error, not a successful partial Quote. MCP returns
+the complete Quote. Neither adapter imposes fixed request or result body caps;
+MCP explicitly disables the SDK's default request-body cap.
 
-`entry.Channel` and `entry.Provenance` describe consumption, not persisted
-content. The MCP reader binds `borrowed` and the authenticated Grant's provenance
-to its existing view/entry response; the peer borrowing tool binds them to its
-existing `borrowed_context` envelope. A2A Export encodes content without borrower
-authority. Native `primary`/`observation` classification belongs to the native
-consumer. An event's historical `role` or stored `channel`/`provenance` claims
-cannot select the borrowing consumer's channel. Grants are not written into the
-source Entry.
+## Authentication and public errors
 
-Admission and Tape writers own content validation. Entry decodes the stored
-event into its shared content type, including thought markers; it does
-not recursively validate schemas or register
-private validator rules. Unknown protocol fields are omitted, not grounds for
-rejecting otherwise readable stored content. Business args/response JSON remains
-opaque, preserving numeric precision, empty objects and public tool chunks.
-Reading public content leaves the original ADK event extension intact, including
-the execution state and signatures needed by the native runtime and recovery.
+Origin restrictions run before Bearer authentication. When TrustedOrigins is
+configured, a supplied Origin must be one exact allowlisted value; absent
+Origin remains usable by native clients. Every HTTP request, including tool
+discovery, requires a credential. Repeated Authorization fields always fail,
+regardless of order or values. A single field accepts case-insensitive Bearer
+and multiple ASCII spaces; no token68 character restriction is added.
+Successful authentication places the Grant in that request's context only.
 
-Consumers must keep borrowed entries in a read-only `borrowed_context` tool or
-observation envelope, without flattening historical roles into native messages.
-The built-in peer borrowing tool does this and retains the envelope across Tape
-recovery. These structural boundaries prevent content from changing its channel
-or grant. They do not guarantee that an arbitrary model or external client will
-ignore every malicious instruction; client policy and tool permissions must
-continue enforcing the read-only boundary.
+Authentication failure is HTTP 401 with a Bearer challenge and the public
+permission_denied error envelope. Authentication backend failure is HTTP 503
+with unavailable; rejected Origin is HTTP 403. All responses enforce no-store.
+Tool failures use the same static `{error: {code, message}}` object in both
+result forms and set isError. Unknown, foreign, expired, released or revoked
+leases produce permission_denied at tool read; storage failures become
+unavailable and unsupported content becomes failed_precondition. Credentials,
+private references and storage diagnostics are never embedded in these errors.
 
-Anchors are part of the view because they record decision and interruption
-points. Native Anra anchors are exported as their `anchor.Record` (schema, type,
-turn ID, base view, start sequence, outcome) without the private owner epoch. Other anchors, including integration handoffs,
-are exported with their stored body verbatim as `content`, so handoff payloads must
-not contain information the grantee may not read. Unsupported entry kinds fail
-with `failed_precondition`.
+Remote hosts terminate TLS and retain the SDK's Host/DNS rebinding protection.
+The backend rejects only duplicate Authorization fields it actually receives;
+proxies must also enforce rejection before merging or discarding fields.
+Borrowed channel/provenance metadata expresses consumption policy. Native
+consumers persist Quote in a read-only borrowed_context tool result and keep
+actual tool execution permissions separate; the metadata does not guarantee
+that arbitrary models ignore every prompt injection.
 
-MCP imposes no request or tool-result body size limit. The transport explicitly
-disables the SDK's default request cap; responses return complete authorized
-content, including inline media. Each result repeats its encoding as text and
-structured JSON. Responses enforce `Cache-Control: no-store`.
-
-## Errors
-
-Authenticated tool failures set `isError: true` and carry
-`{"error":{"code":"…","message":"…"}}` in both result forms. Messages are
-static and never include private references, paths, credentials, or storage
-diagnostics.
-
-| Code | Meaning |
-| --- | --- |
-| `permission_denied` | Wrong anchor, missing tool permission, or missing/expired/revoked credential |
-| `invalid_reference` | Malformed arguments or missing Role revision |
-| `failed_precondition` | Unsupported entry or content encoding failure |
-| `unavailable` | Tape read failure (including undecodable stored entries) or provider failure |
-
-Authentication failures return HTTP 401 with the generic `permission_denied`
-envelope and a Bearer challenge. Storage failures during authentication return
-HTTP 503 with `unavailable`. Cross-anchor requests are denied before resolving
-the target, so nonexistent and private targets remain indistinguishable.
-MCP protocol errors, such as unknown methods or tools, use standard SDK JSON-RPC
-errors.
-
-The executable acceptance contract is [mcp.feature](../tests/e2e/features/mcp.feature).
-Run `mise run e2e` during development and `mise run test` for all repository checks.
-Both commands run the BDD suite with the race detector enabled.
+This model change has no historical storage or protocol compatibility path.
