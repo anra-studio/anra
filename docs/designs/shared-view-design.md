@@ -21,7 +21,7 @@ MCP 和 peer 读取同一类已提交上下文，统一使用 `pkg/model/view` �
 | --- | --- | --- |
 | Ref | Source、FinalizedAnchorSeq、Scopes | 定位一个真实、已提交、不可变的多段 View，本身不授予读取权限 |
 | Lease | ID、Caller、Ref、ExpiresAt | 借阅服务签发；精确绑定一个 Ref 和一个调用方 |
-| Context | Channel、Provenance、公开条目 | 借阅服务依据当前有效 lease 构造，供 MCP 和 peer 共同消费 |
+| Quote | Channel、Provenance、公开条目 | 借阅服务依据当前有效 lease 构造，供 MCP 和 peer 共同消费 |
 | Entry | Seq、Kind、Timestamp、公开内容 | `entry.Entry` 提供多模态内容，anchor 提供公开 Body；读取结果不暴露原始存储条目 |
 
 ### 已提交的 View
@@ -65,15 +65,15 @@ expired 由有效期判定，不要求额外写一份过期状态。借阅请求
 
 共享服务为 Read 的授权判断和 Release / Revoke 的提交定义一致的先后顺序。终止状态先提交的后续读取必须拒绝；已经获得读取许可的在途请求可以完成，撤销不能收回已发送的内容。
 
-### 内容和来源
+### Quote：引用内容与来源
 
-所有借阅读取统一产生 `view.Context`：`channel: borrowed`、一份 Provenance，以及公开条目。Provenance 包含 Caller、Lease ID、Source、FinalizedAnchorSeq 和完整 Scopes。删除独立的 MCP Grant ID 来源链；Bearer 凭证只是引用这个 lease。
+所有借阅读取统一产生 `view.Quote`：`channel: borrowed`、一份 Provenance，以及公开条目。Provenance 包含 Caller、Lease ID、Source、FinalizedAnchorSeq 和完整 Scopes。删除独立的 MCP Grant ID 来源链；Bearer 凭证只是引用这个 lease。
 
 Channel 和 Provenance 从 `entry` 移到 `view`。它们由已验证的借阅关系产生，不能从条目内容、客户端参数、历史 user/model role 或自述身份中推导。Primary / Observation 仍由原生消费方赋予；两个借阅入口只能输出 Borrowed。
 
-Context 是权限信封，公开 Entry 只携带条目标识和内容，不逐条复制 Channel、Provenance 或整份 Ref。分页属于同一个 Context，不能改变其 lease、来源或范围。
+Quote 是授权读取返回的引用内容及来源，包含 Channel、Provenance 和 Entries。Lease 负责授予读取权限，Quote 本身不授予权限。公开 Entry 只携带条目标识和内容，不逐条复制 Channel、Provenance 或整份 Ref。分页属于同一个 Quote，不能改变其 lease、来源或范围。
 
-读取按 Scopes 的顺序遍历各段，段内保持 Tape 序号顺序；分页可以跨段，cursor 绑定该 lease、固定 Ref 和读取位置。完整性检查以当前段为准，跳到下一段时允许序号间隙，不要求跨段连续。例如 Scopes 为 `[9,14)` 和 `[31,42)` 时，序号 13 后接 31，不读取 `[14,31)`。任一段缺失或读取失败都返回错误，不能把部分段结果当作完整 Context 成功返回。
+读取按 Scopes 的顺序遍历各段，段内保持 Tape 序号顺序；分页可以跨段，cursor 绑定该 lease、固定 Ref 和读取位置。完整性检查以当前段为准，跳到下一段时允许序号间隙，不要求跨段连续。例如 Scopes 为 `[9,14)` 和 `[31,42)` 时，序号 13 后接 31，不读取 `[14,31)`。任一段缺失或读取失败都返回错误，不能把部分段结果当作完整 Quote 成功返回。
 
 内容继续复用现有领域对象：
 
@@ -85,7 +85,7 @@ Context 是权限信封，公开 Entry 只携带条目标识和内容，不逐�
 
 保留不支持内容和编码失败的显式错误，不静默删除条目。统一取消现有 MCP 对空 Parts 的独立过滤，两条协议对同一 View 返回相同条目序列。业务 JSON 中的数字词法必须保持精度，禁止经 `map[string]any` 解码后重新编码。模型工具因 ADK 转换需要而使用 JSON 文本字符串的处理留在工具适配边界。
 
-Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。原生消费者将 Context 放入只读 `borrowed_context` 工具结果，历史内容不展开为当前 Session 的主指令；实际工具执行权限仍由运行时控制。
+Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。原生消费者将 Quote 放入只读 `borrowed_context` 工具结果，历史内容不展开为当前 Session 的主指令；实际工具执行权限仍由运行时控制。
 
 ## 模块职责与依赖
 
@@ -100,7 +100,7 @@ Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。�
 | `model/journal` | 持久化幂等决策、lease 和终止状态，保证原子写入 |
 | `mcp` | Bearer 认证、请求上下文、交接与角色权限、MCP 编解码和公开错误映射 |
 | `a2a` | peer 身份、extension 协商、Connect/REST 与 A2A 编解码、领域服务调用和错误映射 |
-| `agent/tools` | 发现 peer、发起借阅、完整读取、把共享 Context 转为 ADK 工具结果 |
+| `agent/tools` | 发现 peer、发起借阅、完整读取、把共享 Quote 转为 ADK 工具结果 |
 | host / `peer` | 创建和注入同一个借阅服务，拥有依赖初始化、关闭及凭证发行 |
 
 共享服务只定义已经有调用方的能力：Borrow、Get、Read、Release 和本地 Resolve / Revoke。控制器可通过受信任的本地操作，为准确的已提交 Ref 签发调用方 lease；它与 peer Borrow 使用相同的签发及 journal 写入规则。本地操作不成为新的远程管理接口。
@@ -133,9 +133,9 @@ flowchart TD
     Service -->|选择和解析 Ref| Agent[Agent 已提交窗口索引]
     Service --> Journal[journal 授权状态]
     Service --> Tape[固定 Ref 的 Tape 内容]
-    Service --> Context[统一的 borrowed Context]
-    Context --> MCPResponse[MCP 结果编码]
-    Context --> PeerResponse[peer 响应编码]
+    Service --> Quote[统一的 borrowed Quote]
+    Quote --> MCPResponse[MCP 结果编码]
+    Quote --> PeerResponse[peer 响应编码]
     PeerResponse --> Tool[ADK borrowed_context]
 ```
 
