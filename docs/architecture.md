@@ -28,6 +28,11 @@ as canonical ProtoJSON objects for the model.
 The private `internal/httpserver` helper shares cancellation and HTTP shutdown
 between peer and registry servers; it has no terminal output.
 
+The proposed [shared View and borrowing architecture](designs/shared-view-design.md)
+consolidates MCP and peer borrowing under `pkg/model/view`. It restricts both
+paths to committed views and binds one caller-owned lease to each fixed view.
+This is a target design; the boundaries above describe the current implementation.
+
 The [registry contract](registry.md) uses canonical Peer metadata with `address`
 and `skill`, separate observed presence, and generated Connect RPCs. A2A cards
 are produced at the adapter boundary. Known Peers survive loss of contact;
