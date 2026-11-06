@@ -123,12 +123,14 @@ protobuf rules. Validation errors support `errors.Is(err, ErrInvalidParams)`
 and `errors.As` for `protovalidate.ValidationError` or configuration
 `validator.ValidationErrors`.
 
-HTTP transport limits encoded/decompressed RPC requests to 1 MiB. Borrowed
-entries and responses have no fixed size cap, including on both peer clients;
+Peer TapeView requests, entries and responses have no fixed body size cap,
+including on both peer clients and the shared Connect/REST handler;
 pagination splits transport without truncating a multimodal entry. Borrowed pages
 retain source, view, snapshot, and sequence provenance checks in `Client.ReadView`.
 `Client.BorrowContext` reuses those checks, while `pkg/agent/tools` formats the
 decisions as ProtoJSON and pages as readable JSON content, without duplicate text fields.
+Protocol field rules still apply; registry metadata retains its separate
+message-size policy in the registry handler.
 The lender's selected turn/anchor range defines the complete view size. There
 is no separate maximum-entry cap or truncation of that range; pagination only
 splits its transport. `Policy` supplies the turn boundaries.

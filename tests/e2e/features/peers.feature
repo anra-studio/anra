@@ -63,9 +63,9 @@ Feature: Trusted peers communicate and borrow permissioned context
       | granted |
       | denied  |
 
-  Scenario Outline: Invalid or unauthorized wire requests cannot borrow context
-    When a peer submits a wire request with "<problem>"
-    Then the wire error is "<code>"
+  Scenario Outline: 无效或未授权的协议请求不能借阅上下文
+    When 节点提交包含 "<problem>" 的协议请求
+    Then 返回协议错误 "<code>"
 
     Examples:
       | problem           | code                |
@@ -74,4 +74,3 @@ Feature: Trusted peers communicate and borrow permissioned context
       | missing purpose   | invalid_argument    |
       | reversed bounds   | invalid_argument    |
       | excessive page    | invalid_argument    |
-      | excessive body    | resource_exhausted  |

@@ -244,7 +244,7 @@ page within an independently authorized grant, never expand its range.
 | Default / maximum page size | 32 / 100 entries |
 | View size | Complete range selected by the lender's turn/anchor policy; no independent entry-count cap |
 | Maximum encoded entry | No fixed size cap |
-| Request body | 1 MiB |
+| Request body | No fixed size cap |
 | Borrowed response body | No fixed size cap |
 | Maximum grant TTL | 24 hours |
 | Request ID | 256 bytes |
@@ -274,8 +274,10 @@ their original Body as a JSON string. This is not generic redaction of foreign
 schemas. The lender decides which complete contents belong to the granted range.
 Pagination splits entries across responses without splitting an individual
 multimodal body or limiting the total granted view. Both peer client entry
-points explicitly disable Connect's default response cap; request limits and
-the registry's separate message limits remain in place.
+points and the shared HTTP handler explicitly disable Connect/Vanguard body
+limits in both directions, including SDK defaults. Field validation, authentication
+and lease checks still apply. Registry metadata retains its own message policy
+in the registry handler, independently of media transports.
 
 | Connect code | Meaning |
 | --- | --- |

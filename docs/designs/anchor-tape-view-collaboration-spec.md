@@ -101,7 +101,8 @@ lender shares with trusted peers.
 
 Exported entries and borrowed responses have no fixed size cap. Pagination
 splits transport, preserving entire multimodal entries and the authorized range;
-request limits remain transport concerns. Unsupported entries still fail export
+peer requests and responses have no fixed body cap. Field and authorization
+rules remain unchanged. Unsupported entries still fail export
 rather than silently changing scope. Selected custom anchors use the shared
 MCP/peer representation: native records omit the ownership epoch, and foreign
 schema bodies remain unchanged as text.

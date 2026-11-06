@@ -14,11 +14,11 @@ import (
 
 // NewHandler exposes the same RPC implementations through Connect and
 // schema-defined REST routes. Both transports run the server's interceptors.
-// Request and response limits are independent; zero disables the respective cap.
-func NewHandler(server *connect.Server, maxRequestBytes, maxResponseBytes int) (http.Handler, error) {
+// Body size policy belongs to the application, not this shared transport.
+func NewHandler(server *connect.Server) (http.Handler, error) {
 	mux := http.NewServeMux()
-	connecthttp.Mount(mux, server, connecthttp.WithReadMaxBytes(maxRequestBytes), connecthttp.WithSendMaxBytes(maxResponseBytes))
-	if err := vanguard.Mount(mux, server, vanguard.WithMaxReadBytes(int64(maxRequestBytes))); err != nil {
+	connecthttp.Mount(mux, server, connecthttp.WithReadMaxBytes(0), connecthttp.WithSendMaxBytes(0))
+	if err := vanguard.Mount(mux, server, vanguard.WithMaxReadBytes(0)); err != nil {
 		return nil, err
 	}
 	return mux, nil

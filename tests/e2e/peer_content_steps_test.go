@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"time"
 
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
@@ -24,6 +26,7 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -40,6 +43,8 @@ func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
 	p := &peerContentScenario{s: s}
 	sc.Step(`^节点存有大型多模态条目和两种锚点$`, p.setup)
 	sc.Step(`^调用方为完整内容取得借阅 lease$`, s.borrow)
+	sc.Step(`^Connect 和 REST 接受超过默认消息大小的合法借阅请求$`, p.sendLargeBodies)
+	sc.Step(`^两种 Peer 客户端的大请求到达服务端字段校验$`, p.sendLargeClientRequests)
 	sc.Step(`^Connect、REST 和直接 Peer 客户端读取相同的完整多模态条目$`, p.readTransports)
 	sc.Step(`^其余分页保留原生锚点公开 Body 和第三方锚点原文$`, p.readAnchors)
 	sc.Step(`^其他调用方不能查询读取或释放该 lease$`, s.checkIntruder)
@@ -132,6 +137,65 @@ func (p *peerContentScenario) checkMedia(page *pb.Page) error {
 	}
 	if content.Role != "user" || len(content.Parts) != 1 || content.Parts[0].InlineData == nil || content.Parts[0].InlineData.MIMEType != "audio/L16;rate=16000;channels=1" || !bytes.Equal(content.Parts[0].InlineData.Data, p.media) {
 		return errors.New("large multimodal body did not survive transport intact")
+	}
+	return nil
+}
+
+func (p *peerContentScenario) sendLargeBodies() error {
+	s := p.s
+	body, err := protojson.Marshal(s.request)
+	if err != nil {
+		return err
+	}
+	// Whitespace keeps the canonical request unchanged while making the actual
+	// HTTP body larger than both the former limit and Connect's default limit.
+	body = append(body, bytes.Repeat([]byte(" "), 5<<20)...)
+	for _, path := range []string{a2a.ViewPath + "/Borrow", "/v1/tape/borrows"} {
+		req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, s.server.URL+path, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Connect-Protocol-Version", "1")
+		req.Header.Set(a2a.ExtensionHeader, a2a.ExtensionURI)
+		response, err := s.httpClient("borrower").Do(req)
+		if err != nil {
+			return err
+		}
+		data, readErr := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return err
+		}
+		if response.StatusCode != http.StatusOK || response.Header.Get(a2a.ExtensionHeader) != a2a.ExtensionURI {
+			return fmt.Errorf("large valid request to %s: HTTP %d %s", path, response.StatusCode, data)
+		}
+		var result pb.BorrowResponse
+		if err := protojson.Unmarshal(data, &result); err != nil {
+			return err
+		}
+		if !proto.Equal(result.Decision, s.decision) {
+			return errors.New("large transport body changed the idempotent grant")
+		}
+	}
+	return nil
+}
+
+func (p *peerContentScenario) sendLargeClientRequests() error {
+	s := p.s
+	client, err := a2a.NewPeerClient(s.httpClient("borrower"), p.peer)
+	if err != nil {
+		return err
+	}
+	request := &pb.ReadRequest{ViewId: s.decision.View.ViewId, Cursor: strings.Repeat("x", 5<<20)}
+	for _, reader := range []*a2a.Client{s.client, client} {
+		_, err := reader.Read(s.ctx, request)
+		if err == nil {
+			return errors.New("large request bypassed cursor validation")
+		}
+		if !errors.Is(err, a2a.ErrInvalidParams) {
+			return fmt.Errorf("large client request did not reach cursor validation: %w", err)
+		}
 	}
 	return nil
 }

@@ -146,8 +146,8 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the decision is still "([^"]*)"$`, s.recoverDecision)
 	sc.Step(`^the researcher resolves the request as "([^"]*)"$`, s.resolve)
 	sc.Step(`^access matches the "([^"]*)" decision$`, s.checkAccess)
-	sc.Step(`^a peer submits a wire request with "([^"]*)"$`, s.wireRequest)
-	sc.Step(`^the wire error is "([^"]*)"$`, func(want string) error {
+	sc.Step(`^节点提交包含 "([^"]*)" 的协议请求$`, s.wireRequest)
+	sc.Step(`^返回协议错误 "([^"]*)"$`, func(want string) error {
 		if s.wireCode != want {
 			return fmt.Errorf("wire error = %q, want %q", s.wireCode, want)
 		}
@@ -790,8 +790,6 @@ func (s *scenario) wireRequest(problem string) error {
 		body = `{"requestId":"wire-request","purpose":"research","query":"bbolt","bounds":{"seqS":"9","seqE":"2"}}`
 	case "excessive page":
 		method, body = "Read", `{"viewId":"unknown","pageSize":101}`
-	case "excessive body":
-		body = strings.Repeat(" ", a2a.MaxBodyBytes+1)
 	default:
 		return fmt.Errorf("unknown wire problem %s", problem)
 	}
