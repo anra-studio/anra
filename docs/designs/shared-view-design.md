@@ -45,7 +45,7 @@ peer 的全部借阅路径都经过这个解析入口。按 purpose/query 选择
 
 Lease 精确绑定 `Caller + Ref`，包含公开 ID 和有效期。ID 用于引用授权，不是 Bearer secret。其 Ref 在签发后不变，后续推理、追加数据或新窗口都不改变已有 lease。
 
-状态由现有 journal 持久化：
+状态由 grantRecord 持久化：
 
 ```mermaid
 stateDiagram-v2
@@ -88,7 +88,7 @@ Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。�
 
 ## 模块职责与依赖
 
-`pkg/model/view` 拥有借阅规则和公共模型。根包 `pkg/model` 继续负责 LLM provider 初始化。共享服务从现有 A2A 服务抽取，直接使用现有 Tape 和 journal，不调用本进程的 HTTP 接口，也不增加第二套状态。
+`pkg/model/view` 拥有借阅规则和公共模型。根包 `pkg/model` 继续负责 LLM provider 初始化。共享服务从现有 A2A 服务抽取，直接复用 Tape 和 grantRecord，不调用本进程的 HTTP 接口，也不增加第二套状态。
 
 | 模块 | 目标职责 |
 | --- | --- |
@@ -96,13 +96,13 @@ Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。�
 | `model/view` | 借阅决策、lease 签发和读取、固定快照读取、公开内容、分页、来源信封和领域错误 |
 | `model/entry` | 存储条目、扩展访问、SDK-backed 模型内容 |
 | `model/anchor` | 原生执行记录及公开 Body |
-| `model/journal` | 持久化幂等决策、lease 和终止状态，保证原子写入 |
+| `model/grantRecord` | 持久化幂等决策、lease 和终止状态，保证原子写入 |
 | `mcp` | Bearer 认证、请求上下文、交接与角色权限、MCP 编解码和公开错误映射 |
 | `a2a` | peer 身份、extension 协商、Connect/REST 与 A2A 编解码、领域服务调用和错误映射 |
 | `agent/tools` | 发现 peer、发起借阅、完整读取、把共享 Quote 转为 ADK 工具结果 |
 | host / `peer` | 创建和注入同一个借阅服务，拥有依赖初始化、关闭及凭证发行 |
 
-共享服务只定义已经有调用方的能力：Borrow、Get、Read、Release 和本地 Resolve / Revoke。控制器可通过受信任的本地操作，为准确的已提交 Ref 签发调用方 lease；它与 peer Borrow 使用相同的签发及 journal 写入规则。本地操作不成为新的远程管理接口。
+共享服务只定义已经有调用方的能力：Borrow、Get、Read、Release 和本地 Resolve / Revoke。控制器可通过受信任的本地操作，为准确的已提交 Ref 签发调用方 lease；它与 peer Borrow 使用相同的签发及 grantRecord 写入规则。本地操作不成为新的远程管理接口。
 
 现有 Exporter 有文本和结构化内容两种实际实现，可以保留这个策略边界并迁到共享服务。每个部署为两个协议注入同一个内容策略；MCP 不再有独立的 `exportEntry`。不为测试新增 Provider 框架、通用 middleware 框架或一组仅转发字段的接口。
 
@@ -110,13 +110,13 @@ Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。�
 
 将 Source、EntryRange、Ref 和 Lease 等公共数据声明从 A2A 命名空间抽到中立的 `proto/anra/model/view/v1/view.proto`，生成到 `gen/anra/model/view/v1`。原 `TapeView` 命名为 Ref，只包含 Source 和 `repeated EntryRange scopes`，不保留单段 scope 字段、独立末端字段或 `max_items = 1` 限制。原授权 `View` 命名为 Lease，Lease 直接引用单个完整 Ref，不重复声明其中的来源和范围；一个 Ref 内可以有多段。
 
-借阅业务请求和 Decision 同样由公共 schema 声明，供共享服务和 journal 使用，避免 journal.State 继续通过 A2A 请求类型反向耦合协议。RPC 专有的响应封装及 HTTP annotations 继续位于各协议 schema 中。
+借阅业务请求和 Decision 同样由公共 schema 声明，供共享服务和 grantRecord 使用，避免 grantRecord.State 继续通过 A2A 请求类型反向耦合协议。RPC 专有的响应封装及 HTTP annotations 继续位于各协议 schema 中。
 
 这些无传输行为的生成消息作为共同的类型化领域值使用；不再另写一套同字段 Go struct，也不加旧名 alias。`pkg/model/view` 拥有消费模型和行为。JSON / ProtoJSON 编码属于边界，统一使用明确的字段名。
 
 Protobuf 的字段约束使用 Protovalidate，非 Protobuf 的构建约束使用 validator 标签。在外部输入或对象构建边界完成格式验证；共享服务执行真实的提交解析、授权和状态转换规则，消费方不递归重复验证受信任结果。
 
-这样 anchor 和 journal 可以依赖公共生成值，而不依赖 `pkg/model/view` 的服务；共享服务可以使用 anchor 公开内容，不形成 `view -> anchor -> view` 的包循环。A2A 的客户端、生成消息和错误类型不会反向进入共享业务服务。
+这样 anchor 和 grantRecord 可以依赖公共生成值，而不依赖 `pkg/model/view` 的服务；共享服务可以使用 anchor 公开内容，不形成 `view -> anchor -> view` 的包循环。A2A 的客户端、生成消息和错误类型不会反向进入共享业务服务。
 
 修改 `.proto` 后重新生成，禁止直接编辑 `tape.pb.go`。直接删除旧的重复声明，不保留兼容字段或历史存储读取路径。
 
@@ -130,7 +130,7 @@ flowchart TD
     Token[Bearer 凭证] --> MCP[MCP middleware + resolve]
     MCP -->|Caller + Lease ID| Service
     Service -->|选择和解析 Ref| Agent[Agent 已提交窗口索引]
-    Service --> Journal[journal 授权状态]
+    Service --> GrantRecord[grantRecord 授权状态]
     Service --> Tape[固定 Ref 的 Tape 内容]
     Service --> Quote[统一的 borrowed Quote]
     Quote --> MCPResponse[MCP 结果编码]
@@ -138,7 +138,7 @@ flowchart TD
     PeerResponse --> Tool[ADK borrowed_context]
 ```
 
-MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工具权限。凭证本身的有效期、撤销和交接绑定仍由 issuer / GrantVerifier 负责；lease 的有效期、撤销和来源由共享服务负责。不再携带一份可绕过 journal 直接读取的独立 TapeView 授权。
+MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工具权限。凭证本身的有效期、撤销和交接绑定仍由 issuer / GrantVerifier 负责；lease 的有效期、撤销和来源由共享服务负责。不再携带一份可绕过 grantRecord 直接读取的独立 TapeView 授权。
 
 `read_tape_view` 先执行现有交接和工具权限检查，再通过共享服务读取绑定 lease。`read_role` 仍读取绑定的角色 revision；Tape lease 不提供角色权限。若交接承诺了 Ref，控制器签发时必须确保它与绑定 lease 完全相同，不能在读取时重借一个新 View 来代替。
 
@@ -149,10 +149,10 @@ MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工�
 ## 落地顺序与验收
 
 1. 建立公共 Ref / Lease schema 和 `pkg/model/view`，明确上面的约束及字段名，重新生成协议绑定。
-2. 将 A2A 借阅业务和现有 journal 接入共享服务；所有借阅改为解析已提交 View，删除自由范围 Policy 和空 lease 分支。原生 anchor、委托提示和 journal 使用公共 Ref / Lease。
+2. 将 A2A 借阅业务和 grantRecord 接入共享服务；所有借阅改为解析已提交 View，删除自由范围 Policy 和空 lease 分支。原生 anchor、委托提示和 grantRecord 使用公共 Ref / Lease。
 3. 将公开条目出口、Channel 和 Provenance 收到共享服务，删除 MCP 与 peer 各自的来源组装及内容分支。
 4. MCP 凭证改为绑定同一服务的 lease，删除直接 TapeReader 旁路；host 注入同一个实例。同步更新协议与运行文档。
-5. 通过真实 HTTP、Tape 和 journal 完成验收，再提交实现。
+5. 通过真实 HTTP、Tape 和 grantRecord 完成验收，再提交实现。
 
 复用并调整现有中文 E2E，重点覆盖：
 

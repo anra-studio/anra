@@ -31,6 +31,7 @@ between peer and registry servers; it has no terminal output.
 The proposed [shared View and borrowing architecture](designs/shared-view-design.md)
 consolidates MCP and peer borrowing under `pkg/model/view`. It restricts both
 paths to committed views and binds one caller-owned lease to each fixed view.
+The target grant persistence package is `pkg/model/grantRecord`.
 This is a target design; the boundaries above describe the current implementation.
 
 The [registry contract](registry.md) uses canonical Peer metadata with `address`
