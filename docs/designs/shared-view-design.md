@@ -19,7 +19,7 @@ MCP 和 peer 读取同一类已提交上下文，统一使用 `pkg/model/view` �
 
 | 概念 | 内容 | 所有者与约束 |
 | --- | --- | --- |
-| Ref | Source、FinalizedAnchorSeq、Scopes | 定位一个真实、已提交、不可变的多段 View，本身不授予读取权限 |
+| Ref | Source、Scopes | 定位一个真实、已提交、不可变的多段 View，本身不授予读取权限 |
 | Lease | ID、Caller、Ref、ExpiresAt | 借阅服务签发；精确绑定一个 Ref 和一个调用方 |
 | Quote | Channel、Provenance、公开条目 | 借阅服务依据当前有效 lease 构造，供 MCP 和 peer 共同消费 |
 | Entry | Seq、Kind、Timestamp、公开内容 | `entry.Entry` 提供多模态内容，anchor 提供公开 Body；读取结果不暴露原始存储条目 |
@@ -29,16 +29,15 @@ MCP 和 peer 读取同一类已提交上下文，统一使用 `pkg/model/view` �
 Ref 表示一个已提交快照中的完整选定范围，使用 `Scopes` 表达一段或多段内容：
 
 - Source 标识 agent 及其 Tape incarnation。
-- `Ref.FinalizedAnchorSeq` 是持久化成功的关闭锚点序号，标识固定的提交边界。Protobuf 字段名为 `finalized_anchor_seq`，JSON / ProtoJSON 字段名为 `finalizedAnchorSeq`，类型保持任意精度十进制字符串。
 - `Ref.Scopes` 是非空的 `EntryRange` 列表，JSON / ProtoJSON 字段名为 `scopes`；每段都是非空半开区间 `[SeqS, SeqE)`。
-- 各段属于同一个 Source，按 SeqS 递增且互不重叠，可以相邻。每段 `SeqE <= FinalizedAnchorSeq`，不能把整个列表约束成只有一段，也不能要求每段都结束于 FinalizedAnchorSeq。
-- FinalizedAnchorSeq 是整个 View 固定的提交边界，不由读取时的最后一个条目推导。Scopes 间的空隙不属于授权内容；读取不能取最小起点和最大终点来补齐空隙。
+- 各段属于同一个 Source，按 SeqS 递增且互不重叠，可以相邻，不限制为单段。
+- 需要整个 View 的末端序号时，从最后一段 Scope 的 SeqE 取得，不单独存储一个末端字段，也不从最后一个返回条目推导。Scopes 间的空隙不属于授权内容；读取不能取最小起点和最大终点来补齐空隙。
 - 所有序号均为无前导零的非零 ASCII 十进制字符串，保持任意精度。
-- 原生单个完整 Turn 生成一段 `[start + 1, close)`，其末端等于 FinalizedAnchorSeq，排除起止控制锚点。多段 View 由已提交视图的所有者确定并固定全部 Scopes；单 Turn 的一段表示不限制 Ref 的通用段数。失败、取消和未结束的 Turn 不成为可借阅内容。
+- 原生单个完整 Turn 生成一段 `[start + 1, close)`，排除起止控制锚点。多段 View 由已提交视图的所有者确定并固定全部 Scopes；单 Turn 的一段表示不限制 Ref 的通用段数。失败、取消和未结束的 Turn 不成为可借阅内容。
 
-格式合法不等于已经提交。原生 Agent 的已提交视图索引负责解析 Ref，确认 Source、FinalizedAnchorSeq 和完整 Scopes 对应同一个真实 View。借阅服务信任该解析结果，不再次对 Provider 输出进行格式扫描，也不通过当前 Tape 末尾推导新范围。消费方不自动排序、合并或裁剪 Scopes 来替换原 Ref。
+已提交性由视图的生成和提交规则保证，不能由某个末端序号证明。原生 Agent 的已提交视图索引负责解析 Ref，确认 Source 和完整 Scopes 对应同一个真实的已提交 View。借阅服务信任该解析结果，不再次对 Provider 输出进行格式扫描，也不通过当前 Tape 末尾推导新范围。消费方不自动排序、合并或裁剪 Scopes 来替换原 Ref。
 
-peer 的全部借阅路径都经过这个解析入口。按 purpose/query 选择时只能选择一个已提交 View；指定 Ref 时必须匹配 Source、FinalizedAnchorSeq 和完整有序 Scopes。请求中的 bounds 若保留，只能作为资格约束：不能完整容纳该 View 的全部段就拒绝，不能据此截取子段或减少段数。
+peer 的全部借阅路径都经过这个解析入口。按 purpose/query 选择时只能选择一个已提交 View；指定 Ref 时必须匹配 Source 和完整有序 Scopes。请求中的 bounds 若保留，只能作为资格约束：不能完整容纳该 View 的全部段就拒绝，不能据此截取子段或减少段数。
 
 没有可用窗口返回 denied，需要本地决策时可以返回 pending。只有 granted 决策携带 lease；不再签发空范围 lease，也不允许策略返回任意 Tape 范围。锚点导出的验收数据同样必须先形成真实的已提交窗口。
 
@@ -67,7 +66,7 @@ expired 由有效期判定，不要求额外写一份过期状态。借阅请求
 
 ### Quote：引用内容与来源
 
-所有借阅读取统一产生 `view.Quote`：`channel: borrowed`、一份 Provenance，以及公开条目。Provenance 包含 Caller、Lease ID、Source、FinalizedAnchorSeq 和完整 Scopes。删除独立的 MCP Grant ID 来源链；Bearer 凭证只是引用这个 lease。
+所有借阅读取统一产生 `view.Quote`：`channel: borrowed`、一份 Provenance，以及公开条目。Provenance 包含 Caller、Lease ID、Source 和完整 Scopes。删除独立的 MCP Grant ID 来源链；Bearer 凭证只是引用这个 lease。
 
 Channel 和 Provenance 从 `entry` 移到 `view`。它们由已验证的借阅关系产生，不能从条目内容、客户端参数、历史 user/model role 或自述身份中推导。Primary / Observation 仍由原生消费方赋予；两个借阅入口只能输出 Borrowed。
 
@@ -109,7 +108,7 @@ Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。�
 
 ### 类型与 Protobuf
 
-将 Source、EntryRange、Ref 和 Lease 等公共数据声明从 A2A 命名空间抽到中立的 `proto/anra/model/view/v1/view.proto`，生成到 `gen/anra/model/view/v1`。原 `TapeView` 命名为 Ref，使用 `repeated EntryRange scopes`，不保留单段 scope 字段或 `max_items = 1` 限制。原授权 `View` 命名为 Lease，Lease 直接引用单个完整 Ref，去掉重复的 Source / 提交锚点 / ranges 字段组；一个 Ref 内可以有多段。
+将 Source、EntryRange、Ref 和 Lease 等公共数据声明从 A2A 命名空间抽到中立的 `proto/anra/model/view/v1/view.proto`，生成到 `gen/anra/model/view/v1`。原 `TapeView` 命名为 Ref，只包含 Source 和 `repeated EntryRange scopes`，不保留单段 scope 字段、独立末端字段或 `max_items = 1` 限制。原授权 `View` 命名为 Lease，Lease 直接引用单个完整 Ref，不重复声明其中的来源和范围；一个 Ref 内可以有多段。
 
 借阅业务请求和 Decision 同样由公共 schema 声明，供共享服务和 journal 使用，避免 journal.State 继续通过 A2A 请求类型反向耦合协议。RPC 专有的响应封装及 HTTP annotations 继续位于各协议 schema 中。
 
@@ -159,7 +158,7 @@ MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工�
 
 - 同一调用方和 lease 经 MCP、peer 得到相同 Ref、Provenance、条目顺序及完整内容；复用真实提交路径构造至少两段不相邻内容，验证跨段分页跳过间隙且不重复、不丢失授权条目。
 - 没有成功提交窗口时拒绝借阅；未结束或失败 Turn、空范围及自由区间不能生成 lease。锚点与大型媒体用例通过真实提交窗口构造。
-- Bearer 或 peer 调用方不能读取另一调用方的 lease，参数不能改写 Scopes / FinalizedAnchorSeq、插入间隙或增减段；角色工具权限独立执行。
+- Bearer 或 peer 调用方不能读取另一调用方的 lease，参数不能改写 Source 或 Scopes、插入间隙或增减段；角色工具权限独立执行。
 - 追加新 Turn 和服务重建不扩大已有 Ref；释放、撤销及到期对两个入口同时生效。Read 不签发、不续租、不进入推理。
 - 多模态、思考内容、原生和第三方锚点、JSON 数字精度及私有元数据边界在两个入口保持一致。
 
