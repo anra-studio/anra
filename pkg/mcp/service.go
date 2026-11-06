@@ -12,8 +12,6 @@ import (
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
 
-const DefaultMaxResponseBytes = 1024 * 1024
-
 // TapeReader is the read-only portion of tape-go's storage.EntryStorage.
 // The caller owns initialization, recovery, writes, and storage lifetime.
 type TapeReader interface {
@@ -33,10 +31,6 @@ type Config struct {
 	// Entries are compared byte-for-byte without normalization. Configure the
 	// serialized scheme, host, and port sent by the browser.
 	TrustedOrigins []string `validate:"dive,http_url,excludes=*"`
-	// Zero uses 1 MiB. Bounds the encoded role and tape view
-	// results, so an oversized view fails atomically instead of being truncated.
-	// A tool result repeats its encoding as both text and structured content.
-	MaxResponseBytes int `validate:"omitempty,min=1024,max=16777216"`
 }
 
 // Service reads caller-owned Tape, role definitions, and authorization.
@@ -51,9 +45,6 @@ func NewService(c Config) (*Service, error) {
 	}
 	if err := protovalidate.Validate(c.Source); err != nil {
 		return nil, fmt.Errorf("mcp source: %w", err)
-	}
-	if c.MaxResponseBytes == 0 {
-		c.MaxResponseBytes = DefaultMaxResponseBytes
 	}
 	return &Service{config: c}, nil
 }

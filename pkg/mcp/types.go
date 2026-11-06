@@ -35,7 +35,7 @@ type ErrorResponse struct {
 var (
 	ErrPermissionDenied   = &Error{"permission_denied", "unauthorized connection or missing grant for target handoff anchor"}
 	ErrInvalidReference   = &Error{"invalid_reference", "invalid handoff reference or missing role revision"}
-	ErrFailedPrecondition = &Error{"failed_precondition", "committed context cannot be reconstructed within the supported projection and size limits"}
+	ErrFailedPrecondition = &Error{"failed_precondition", "committed context cannot be encoded"}
 	ErrUnavailable        = &Error{"unavailable", "context service temporarily unavailable"}
 )
 
@@ -56,7 +56,7 @@ type Grant struct {
 }
 
 type toolInput struct {
-	AnchorSeq string `json:"anchorSeq" validate:"required,number,startsnotwith=0"`
+	AnchorSeq string `json:"anchorSeq"`
 }
 
 var validate = validator.New(validator.WithRequiredStructEnabled())

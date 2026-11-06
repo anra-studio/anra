@@ -16,9 +16,6 @@ func TestAnchorSequenceValidationMatchesTape(t *testing.T) {
 	} {
 		seq, err := te.ParseSeq(value)
 		want := err == nil && !seq.IsZero()
-		if got := validate.Struct(toolInput{AnchorSeq: value}) == nil; got != want {
-			t.Errorf("tool input %q valid = %t; Tape nonzero sequence = %t", value, got, want)
-		}
 		if got := standalone.StructPartial(Grant{AnchorSeq: value}, "AnchorSeq") == nil; got != want {
 			t.Errorf("grant %q valid = %t; Tape nonzero sequence = %t", value, got, want)
 		}

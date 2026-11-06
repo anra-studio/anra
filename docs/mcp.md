@@ -86,8 +86,7 @@ Two required read-only interfaces supply the remaining data:
   them into the instructions. The provider owns definition validation; MCP trusts
   the returned revision. The provider returns
   `ErrInvalidReference` for a missing revision, which MCP reports as
-  `invalid_reference`; other provider errors become `unavailable`. Encoded
-  results exceeding `MaxResponseBytes` fail with `failed_precondition`.
+  `invalid_reference`; other provider errors become `unavailable`.
 - `Config.Grants` accepts `GrantVerifier.VerifyGrant(ctx, credential)`. The
   embedding runtime verifies credentials using its own authorization component,
   existing journal, or an in-memory map. Unknown or revoked credentials return
@@ -96,11 +95,15 @@ Two required read-only interfaces supply the remaining data:
   owns expiry, revocation, Role and Source checks; MCP checks the exact
   anchor sequence and tool permission on tool invocation.
 
-`Grant.AnchorSeq` and tool input use `required,number,startsnotwith=0`: a nonzero
-ASCII decimal string without leading zeros, with no integer-width limit. The
-handler validates tool input explicitly; the SDK's low-level `AddTool` does not
-enforce its advertised input schema. Independent validators need no private MCP
-rule registrations for the exported types.
+`Grant.AnchorSeq` uses `required,number,startsnotwith=0`: a nonzero ASCII decimal
+string without leading zeros, with no integer-width limit. The issuer owns Grant
+validation. The HTTP handler decodes tool arguments and `resolve` requires their
+anchor sequence to match the authorized Grant exactly, without repeating format
+validation. Nonmatching strings, including missing or malformed sequences, return
+`permission_denied`; malformed JSON, unknown fields and non-string sequences
+return `invalid_reference`. The SDK's low-level `AddTool` does not enforce its
+advertised input schema. Independent validators need no private MCP rule
+registrations for the exported types.
 
 Both providers must support concurrent calls and return values that remain
 immutable for the duration of the request. MCP does not cache Role revisions or
@@ -179,8 +182,8 @@ are excluded. The issuer must select a view whose content the borrower may read.
 Custom anchors use the same `anchor.Export` dispatch as peer borrowing:
 native Anra records expose `Record.Body()`, a public record value omitting
 `OwnerEpoch` without modifying the source record, while foreign schema bodies remain text
-without generic redaction. Peer content responses have no fixed size cap; MCP's
-configured `MaxResponseBytes` still applies to its complete encoded tool result.
+without generic redaction. Neither peer content responses nor MCP tool results
+have a fixed size cap.
 
 `entry.Content` wraps `genai.Content` and its parts, rather than exporting
 an entire ADK session event. SDK media, file references, code/results, streaming
@@ -226,10 +229,10 @@ are exported with their stored body verbatim as `content`, so handoff payloads m
 not contain information the grantee may not read. Unsupported entry kinds fail
 with `failed_precondition`.
 
-`MaxResponseBytes` defaults to 1 MiB (configurable from 1 KiB to 16 MiB) and
-bounds the encoded role and view results. Each result repeats its encoding as
-text and structured JSON. Requests are capped at 16 KiB. Limits fail
-atomically, with no truncation. Responses enforce `Cache-Control: no-store`.
+MCP imposes no request or tool-result body size limit. The transport explicitly
+disables the SDK's default request cap; responses return complete authorized
+content, including inline media. Each result repeats its encoding as text and
+structured JSON. Responses enforce `Cache-Control: no-store`.
 
 ## Errors
 
@@ -242,7 +245,7 @@ diagnostics.
 | --- | --- |
 | `permission_denied` | Wrong anchor, missing tool permission, or missing/expired/revoked credential |
 | `invalid_reference` | Malformed arguments or missing Role revision |
-| `failed_precondition` | Unsupported entry or exceeded limits |
+| `failed_precondition` | Unsupported entry or content encoding failure |
 | `unavailable` | Tape read failure (including undecodable stored entries) or provider failure |
 
 Authentication failures return HTTP 401 with the generic `permission_denied`

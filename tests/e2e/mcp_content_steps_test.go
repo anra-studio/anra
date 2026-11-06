@@ -7,9 +7,73 @@ import (
 	"fmt"
 
 	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/genai"
 )
+
+// The encoded audio exceeds both the former MCP result cap and the SDK's
+// default request cap. Raw PCM silence is valid without a container header.
+const mcpAudioBytes = (3 << 20) + 2
+
+func (m *mcpScenario) largeAudioWindow() (*pb.TapeView, error) {
+	state, err := m.tape.Get(m.tapeContext())
+	if err != nil {
+		return nil, err
+	}
+	start := state.Scope.SeqE.Next()
+	content, err := json.Marshal(genai.Content{Role: "user", Parts: []*genai.Part{{
+		InlineData: &genai.Blob{MIMEType: "audio/L16;rate=16000;channels=1", Data: make([]byte, mcpAudioBytes)},
+	}}})
+	if err != nil {
+		return nil, err
+	}
+	if err := m.rawEvent(te.EntryUser, string(content)); err != nil {
+		return nil, err
+	}
+	head, err := m.append(te.EntryAssistant, "excluded committed boundary")
+	if err != nil {
+		return nil, err
+	}
+	return &pb.TapeView{Source: m.agent.Source(), SnapshotHead: head.GetID().String(), Scope: &pb.EntryRange{SeqS: start.String(), SeqE: head.GetID().String()}}, nil
+}
+
+func (m *mcpScenario) readWithLargeBody() error {
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
+		"name": anramcp.ReadTapeView, "arguments": map[string]string{"anchorSeq": m.grant.AnchorSeq},
+	}})
+	if err != nil {
+		return err
+	}
+	// Whitespace changes transport size without changing the authorized request.
+	body = append(body, bytes.Repeat([]byte(" "), 5<<20)...)
+	return m.sendRequest(body, m.token, nil)
+}
+
+func (m *mcpScenario) checkLargeAudio() error {
+	if err := m.checkWindowResponse(); err != nil {
+		return err
+	}
+	var window mcpWindow
+	if err := json.Unmarshal(m.lastResult, &window); err != nil {
+		return err
+	}
+	if len(window.Entries) != 1 {
+		return fmt.Errorf("audio view has %d entries, want 1", len(window.Entries))
+	}
+	var content genai.Content
+	if err := json.Unmarshal(window.Entries[0].Content, &content); err != nil {
+		return err
+	}
+	if content.Role != "user" || len(content.Parts) != 1 || content.Parts[0].InlineData == nil {
+		return errors.New("audio view lost its role or inline data")
+	}
+	audio := content.Parts[0].InlineData
+	if audio.MIMEType != "audio/L16;rate=16000;channels=1" || !bytes.Equal(audio.Data, make([]byte, mcpAudioBytes)) {
+		return errors.New("audio view changed or truncated the audio")
+	}
+	return nil
+}
 
 func (m *mcpScenario) multimodalWindow() (*pb.TapeView, error) {
 	state, err := m.tape.Get(m.tapeContext())

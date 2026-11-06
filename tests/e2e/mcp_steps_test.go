@@ -82,6 +82,20 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^已提交包含伪造通道和来源声明的 MCP 交接并签发凭证$`, func() error { return m.setup("borrowed claims") })
 	sc.Step(`^已提交只含原始文本条目的 MCP 交接并签发凭证$`, func() error { return m.setup("plain text") })
 	sc.Step(`^已提交包含图片文件和代码结果的 MCP 交接并签发凭证$`, func() error { return m.setup("multimodal") })
+	sc.Step(`^已提交包含大型音频的 MCP 交接并签发凭证$`, func() error { return m.setup("large audio") })
+	sc.Step(`^使用超过 SDK 默认大小的 MCP 请求读取 Tape 视图$`, m.readWithLargeBody)
+	sc.Step(`^MCP 完整返回已授权的大型音频及来源$`, m.checkLargeAudio)
+	sc.Step(`^使用不匹配凭证的锚点读取 MCP Tape 视图$`, func() error {
+		return m.call(anramcp.ReadTapeView, m.token, "0", nil)
+	})
+	sc.Step(`^官方 MCP 客户端能完整读取大型音频$`, func() error {
+		var err error
+		m.lastResult, err = m.success(anramcp.ReadTapeView)
+		if err != nil {
+			return err
+		}
+		return m.checkLargeAudio()
+	})
 	sc.Step(`^借阅内容保留图片文件和代码结果的原始顺序且不泄露执行元数据$`, m.checkMultimodal)
 	sc.Step(`^原始文本仅作为结构化内容返回且没有摘要字段$`, m.checkPlainTextContent)
 	sc.Step(`^借阅条目仅携带凭证签发的通道与来源$`, m.checkWindowResponse)
@@ -270,6 +284,12 @@ func (m *mcpScenario) setup(kind string) error {
 	}
 	if kind == "multimodal" {
 		ref, err = m.multimodalWindow()
+		if err != nil {
+			return err
+		}
+	}
+	if kind == "large audio" {
+		ref, err = m.largeAudioWindow()
 		if err != nil {
 			return err
 		}
@@ -549,6 +569,10 @@ func (m *mcpScenario) rawCall(tool, token string, args json.RawMessage, headers 
 	if err != nil {
 		return err
 	}
+	return m.sendRequest(body, token, headers)
+}
+
+func (m *mcpScenario) sendRequest(body []byte, token string, headers http.Header) error {
 	req, err := http.NewRequestWithContext(m.s.ctx, http.MethodPost, m.server.URL, bytes.NewReader(body))
 	if err != nil {
 		return err
