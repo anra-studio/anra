@@ -321,7 +321,7 @@ func initializeHTTP(sc *godog.ScenarioContext, a *applicationScenario) {
 					return fmt.Errorf("REST pagination disagrees with granted context: %v", page)
 				}
 
-				cursor = page.NextCursor
+				cursor = response.NextCursor
 
 				if (i == 0) != (cursor != "") {
 					return errors.New("incorrect REST page cursor")

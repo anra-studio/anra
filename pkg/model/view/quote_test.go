@@ -31,7 +31,7 @@ func TestQuoteCodecsPreserveScopesAndOpaqueNumbers(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := &Quote{
-		Channel: Borrowed,
+		Channel: Observation,
 		Provenance: Provenance{
 			Caller:  "reader",
 			LeaseID: "lease",
@@ -53,6 +53,9 @@ func TestQuoteCodecsPreserveScopesAndOpaqueNumbers(t *testing.T) {
 	if err := protojson.Unmarshal(wire, &decoded); err != nil {
 		t.Fatal(err)
 	}
+	if err := protovalidate.Validate(&decoded); err != nil {
+		t.Fatal(err)
+	}
 	encoded, err := json.Marshal(FromProto(&decoded))
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +64,8 @@ func TestQuoteCodecsPreserveScopesAndOpaqueNumbers(t *testing.T) {
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(result.Provenance.Ref, ref) || !bytes.Equal(result.Entries[0].Content, content) {
-		t.Fatalf("quote codecs changed scopes or number lexemes: %s", encoded)
+	if result.Channel != original.Channel || !proto.Equal(result.Provenance.Ref, ref) || !bytes.Equal(result.Entries[0].Content, content) {
+		t.Fatalf("quote codecs changed channel, scopes or number lexemes: %s", encoded)
 	}
 }
 

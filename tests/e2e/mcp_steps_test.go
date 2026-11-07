@@ -1392,7 +1392,7 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 			return errors.New("MCP and peer quote provenance differ")
 		}
 		entries = append(entries, read.Quote.Entries...)
-		cursor = read.Quote.NextCursor
+		cursor = read.NextCursor
 		if cursor == "" {
 			break
 		}

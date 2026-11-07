@@ -50,6 +50,7 @@ message ReadRequest {
 }
 message ReadResponse {
   anra.model.view.v1.Quote quote = 1 [(buf.validate.field).required = true];
+  string next_cursor = 2;
 }
 message ReleaseRequest {
   string lease_id = 1 [(buf.validate.field).string.min_bytes = 1];

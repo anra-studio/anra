@@ -96,9 +96,9 @@ message Provenance {
   Ref ref = 3 [(buf.validate.field).required = true];
 }
 
+// Quote carries attributed content in a collaboration channel, not read state.
 message Quote {
-  string channel = 1 [(buf.validate.field).string.const = "borrowed"];
+  string channel = 1;
   Provenance provenance = 2 [(buf.validate.field).required = true];
   repeated ExportedEntry entries = 3;
-  string next_cursor = 4;
 }

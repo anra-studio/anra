@@ -66,7 +66,7 @@ type scenario struct {
 
 	decision *pb.Decision
 
-	firstPage *pb.Quote
+	firstPage *rpcpb.ReadResponse
 
 	lastRequest runner.Request
 
@@ -666,7 +666,7 @@ func (s *scenario) readFirst() error {
 	if err != nil {
 		return err
 	}
-	if len(s.firstPage.Entries) != 1 || !exportedTextIs(s.firstPage.Entries[0], "bbolt requires a single writer") || s.firstPage.NextCursor == "" {
+	if len(s.firstPage.Quote.Entries) != 1 || !exportedTextIs(s.firstPage.Quote.Entries[0], "bbolt requires a single writer") || s.firstPage.NextCursor == "" {
 		return fmt.Errorf("unexpected first page: %v", s.firstPage)
 	}
 	return nil
@@ -696,7 +696,7 @@ func (s *scenario) finishSnapshot() error {
 		return err
 	}
 
-	if len(page.Entries) != 1 || !exportedTextIs(page.Entries[0], "concurrent updates need version checks") || page.Entries[0].Seq != s.decision.Lease.Ref.Scopes[1].SeqS || page.NextCursor != "" || !proto.Equal(page.Provenance, s.firstPage.Provenance) {
+	if len(page.Quote.Entries) != 1 || !exportedTextIs(page.Quote.Entries[0], "concurrent updates need version checks") || page.Quote.Entries[0].Seq != s.decision.Lease.Ref.Scopes[1].SeqS || page.NextCursor != "" || !proto.Equal(page.Quote.Provenance, s.firstPage.Quote.Provenance) {
 		return fmt.Errorf("original snapshot was not preserved: %v", page)
 	}
 	return nil

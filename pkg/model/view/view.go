@@ -74,13 +74,12 @@ type Entry struct {
 	Content   json.RawMessage `json:"content"`
 }
 
-// Quote is content read under one lease, together with its source attribution.
+// Quote carries attributed content in a collaboration channel.
 // Metadata in a Quote does not grant permission to read or execute anything.
 type Quote struct {
 	Channel    Channel    `json:"channel"`
 	Provenance Provenance `json:"provenance"`
 	Entries    []Entry    `json:"entries"`
-	NextCursor string     `json:"nextCursor,omitempty"`
 }
 
 // Proto encodes public payloads without decoding or changing their JSON.
@@ -92,7 +91,6 @@ func (q *Quote) Proto() *pb.Quote {
 			LeaseId: q.Provenance.LeaseID,
 			Ref:     q.Provenance.Ref,
 		},
-		NextCursor: q.NextCursor,
 	}
 	for _, e := range q.Entries {
 		out.Entries = append(
@@ -121,8 +119,7 @@ func FromProto(q *pb.Quote) *Quote {
 			LeaseID: q.Provenance.LeaseId,
 			Ref:     q.Provenance.Ref,
 		},
-		Entries:    make([]Entry, 0, len(q.Entries)),
-		NextCursor: q.NextCursor,
+		Entries: make([]Entry, 0, len(q.Entries)),
 	}
 	for _, e := range q.Entries {
 		out.Entries = append(

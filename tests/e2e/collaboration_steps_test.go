@@ -2010,7 +2010,7 @@ func (c *collaborationScenario) toolWindow() error {
 			return err
 		}
 
-		if !proto.Equal(page.Provenance.Ref, ref) || len(page.Entries) != 1 || !proto.Equal(page.Entries[0], pages[0].Entries[count]) {
+		if !proto.Equal(page.Quote.Provenance.Ref, ref) || len(page.Quote.Entries) != 1 || !proto.Equal(page.Quote.Entries[0], pages[0].Entries[count]) {
 			return errors.New("pagination changed the committed context")
 		}
 		count++

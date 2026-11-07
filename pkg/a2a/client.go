@@ -210,7 +210,7 @@ func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {
 	return d, validateMessage(d)
 }
 
-func (c *Client) Read(ctx context.Context, r *rpcpb.ReadRequest) (*pb.Quote, error) {
+func (c *Client) Read(ctx context.Context, r *rpcpb.ReadRequest) (*rpcpb.ReadResponse, error) {
 	if err := validateMessage(r); err != nil {
 		return nil, err
 	}
@@ -220,14 +220,12 @@ func (c *Client) Read(ctx context.Context, r *rpcpb.ReadRequest) (*pb.Quote, err
 		return nil, err
 	}
 
-	p := res.GetQuote()
-
-	return p, validateMessage(p)
+	return res, validateMessage(res)
 }
 
 // ReadView reads every page of a granted view. A view that fits in one page
-// costs one Read call. Every page must match the granted source, view and snapshot;
-// together the pages must cover the granted range exactly once, in order.
+// costs one Read call. Every Quote must match the granted caller, lease and Ref;
+// together the pages must cover the granted scopes exactly once, in order.
 func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) ([]*pb.Quote, error) {
 	if err := validateMessage(lease); err != nil {
 		return nil, err
@@ -243,7 +241,7 @@ func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) ([]*pb.Quote, er
 
 	for {
 
-		p, err := c.Read(
+		page, err := c.Read(
 			ctx,
 			&rpcpb.ReadRequest{
 				LeaseId:  lease.Id,
@@ -254,6 +252,7 @@ func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) ([]*pb.Quote, er
 		if err != nil {
 			return nil, err
 		}
+		p := page.Quote
 
 		if p.Provenance.LeaseId != lease.Id || p.Provenance.Caller != lease.Caller || !proto.Equal(p.Provenance.Ref, lease.Ref) {
 			return nil, ErrInvalidParams
@@ -274,7 +273,7 @@ func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) ([]*pb.Quote, er
 
 		}
 		pages = append(pages, p)
-		if p.NextCursor == "" {
+		if page.NextCursor == "" {
 			if scopeIndex != len(lease.Ref.Scopes) {
 				return nil, ErrInvalidParams
 			}
@@ -284,7 +283,7 @@ func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) ([]*pb.Quote, er
 		if len(p.Entries) == 0 || scopeIndex == len(lease.Ref.Scopes) {
 			return nil, ErrInvalidParams
 		}
-		cursor = p.NextCursor
+		cursor = page.NextCursor
 	}
 }
 

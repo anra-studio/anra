@@ -114,7 +114,8 @@ func (h *connectViews) Read(ctx context.Context, req *rpcpb.ReadRequest) (*rpcpb
 	}
 
 	return &rpcpb.ReadResponse{
-		Quote: p.Proto(),
+		Quote:      p.Quote.Proto(),
+		NextCursor: p.NextCursor,
 	}, nil
 }
 

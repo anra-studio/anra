@@ -75,7 +75,9 @@ A decision contains a lease exactly when granted. Empty/uncommitted views are
 not granted. Borrow request IDs are caller-scoped and idempotent; changed input
 conflicts. Reads check lease ownership, expiry, release/revocation and complete
 scope contents. Multiple scopes are read in order, skipping gaps. Each Quote
-page retains the same borrowed channel, caller, lease ID and Ref. ReadView
+page retains the same borrowed channel, caller, lease ID and Ref. Quote itself
+does not restrict channel to borrowed. ReadResponse carries nextCursor alongside
+Quote; pagination state is not part of the collaboration content. ReadView
 requires progress and exact complete sequence coverage across all scopes.
 
 Protobuf field constraints use Protovalidate; non-Protobuf construction inputs

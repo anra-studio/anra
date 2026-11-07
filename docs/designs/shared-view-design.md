@@ -21,7 +21,7 @@ MCP 和 peer 读取同一类已提交上下文，统一使用 `pkg/model/view` �
 | --- | --- | --- |
 | Ref | Source、Scopes | 定位一个真实、已提交、不可变的多段 View，本身不授予读取权限 |
 | Lease | ID、Caller、Ref、ExpiresAt | 借阅服务签发；精确绑定一个 Ref 和一个调用方 |
-| Quote | Channel、Provenance、公开条目 | 借阅服务依据当前有效 lease 构造，供 MCP 和 peer 共同消费 |
+| Quote | Channel、Provenance、公开条目 | 表达合作交互中的引用内容与来源；借阅服务依据当前有效 lease 构造 borrowed 通道的 Quote |
 | Entry | Seq、Kind、Timestamp、公开内容 | `entry.Entry` 提供多模态内容，anchor 提供公开 Body；读取结果不暴露原始存储条目 |
 
 ### 已提交的 View
@@ -70,7 +70,7 @@ expired 由有效期判定，不要求额外写一份过期状态。借阅请求
 
 Channel 和 Provenance 从 `entry` 移到 `view`。它们由已验证的借阅关系产生，不能从条目内容、客户端参数、历史 user/model role 或自述身份中推导。Primary / Observation 仍由原生消费方赋予；两个借阅入口只能输出 Borrowed。
 
-Quote 是授权读取返回的引用内容及来源，包含 Channel、Provenance 和 Entries。Lease 负责授予读取权限，Quote 本身不授予权限。公开 Entry 只携带条目标识和内容，不逐条复制 Channel、Provenance 或整份 Ref。分页属于同一个 Quote，不能改变其 lease、来源或范围。
+Quote 表达合作交互中的引用内容及来源，包含 Channel、Provenance 和 Entries；通道不限定为 borrowed。借阅服务根据当前有效 lease 将其读取结果标为 borrowed，其他合作交互可以使用其他通道。Lease 负责授予读取权限，Quote 本身不授予权限。公开 Entry 只携带条目标识和内容，不逐条复制 Channel、Provenance 或整份 Ref。分页是读取操作的状态：共享服务的 Page 与协议 ReadResponse 将 Quote 和 NextCursor 分开携带，Quote 不包含游标；各页不能改变其 lease、来源或范围。
 
 读取按 Scopes 的顺序遍历各段，段内保持 Tape 序号顺序；分页可以跨段，cursor 绑定该 lease、固定 Ref 和读取位置。完整性检查以当前段为准，跳到下一段时允许序号间隙，不要求跨段连续。例如 Scopes 为 `[9,14)` 和 `[31,42)` 时，序号 13 后接 31，不读取 `[14,31)`。任一段缺失或读取失败都返回错误，不能把部分段结果当作完整 Quote 成功返回。
 

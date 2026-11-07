@@ -126,8 +126,11 @@ Identity comes from authentication, never request body fields. Release and local
 Revoke share the same terminal record. Resolve and Revoke have no remote RPC.
 
 Public values live under `gen/anra/model/view/v1`. Ref is `source + scopes`,
-Lease is `id + caller + ref + expiresAt`, and Quote is channel, provenance,
-entries and nextCursor. There is no independent snapshot-head/end field or
+Lease is `id + caller + ref + expiresAt`, and Quote is channel, provenance and
+entries. Quote supports collaboration channels beyond borrowing; the borrowing
+service assigns `borrowed` to its own quotes. ReadResponse carries the Quote and
+nextCursor separately, since continuation belongs to the read operation.
+There is no independent snapshot-head/end field or
 one-range limit. All sequences are arbitrary-precision canonical decimal strings.
 `Ref.Scopes` is nonempty and uses ordered, non-overlapping half-open ranges.
 Anra resolves each exact completed window and rejects arbitrary cuts or scope

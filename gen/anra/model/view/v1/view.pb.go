@@ -618,12 +618,12 @@ func (x *Provenance) GetRef() *Ref {
 	return nil
 }
 
+// Quote carries attributed content in a collaboration channel, not read state.
 type Quote struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Channel       string                 `protobuf:"bytes,1,opt,name=channel,proto3" json:"channel,omitempty"`
 	Provenance    *Provenance            `protobuf:"bytes,2,opt,name=provenance,proto3" json:"provenance,omitempty"`
 	Entries       []*ExportedEntry       `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"`
-	NextCursor    string                 `protobuf:"bytes,4,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -679,13 +679,6 @@ func (x *Quote) GetEntries() []*ExportedEntry {
 	return nil
 }
 
-func (x *Quote) GetNextCursor() string {
-	if x != nil {
-		return x.NextCursor
-	}
-	return ""
-}
-
 var File_anra_model_view_v1_view_proto protoreflect.FileDescriptor
 
 const file_anra_model_view_v1_view_proto_rawDesc = "" +
@@ -739,17 +732,13 @@ const file_anra_model_view_v1_view_proto_rawDesc = "" +
 	"Provenance\x12\x1f\n" +
 	"\x06caller\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\x06caller\x12\"\n" +
 	"\blease_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02 \x01R\aleaseId\x121\n" +
-	"\x03ref\x18\x03 \x01(\v2\x17.anra.model.view.v1.RefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"\xd8\x01\n" +
-	"\x05Quote\x12)\n" +
-	"\achannel\x18\x01 \x01(\tB\x0f\xbaH\fr\n" +
-	"\n" +
-	"\bborrowedR\achannel\x12F\n" +
+	"\x03ref\x18\x03 \x01(\v2\x17.anra.model.view.v1.RefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"\xa6\x01\n" +
+	"\x05Quote\x12\x18\n" +
+	"\achannel\x18\x01 \x01(\tR\achannel\x12F\n" +
 	"\n" +
 	"provenance\x18\x02 \x01(\v2\x1e.anra.model.view.v1.ProvenanceB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"provenance\x12;\n" +
-	"\aentries\x18\x03 \x03(\v2!.anra.model.view.v1.ExportedEntryR\aentries\x12\x1f\n" +
-	"\vnext_cursor\x18\x04 \x01(\tR\n" +
-	"nextCursor*\x87\x01\n" +
+	"\aentries\x18\x03 \x03(\v2!.anra.model.view.v1.ExportedEntryR\aentries*\x87\x01\n" +
 	"\x0eDecisionStatus\x12\x1f\n" +
 	"\x1bDECISION_STATUS_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17DECISION_STATUS_GRANTED\x10\x01\x12\x1a\n" +

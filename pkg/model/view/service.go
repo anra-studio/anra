@@ -308,9 +308,15 @@ type cursor struct {
 	Offset  int    `json:"offset"`
 }
 
+// Page carries a read continuation separately from the quoted content.
+type Page struct {
+	Quote      *Quote
+	NextCursor string
+}
+
 // Read returns whole public entries from one lease, preserving the immutable Ref
 // across page boundaries. A continuation cannot select another lease or range.
-func (s *Service) Read(ctx context.Context, caller, id, continuation string, size int32) (*Quote, error) {
+func (s *Service) Read(ctx context.Context, caller, id, continuation string, size int32) (*Page, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if size < 0 || size > MaxPageSize || len(continuation) > 1024 {
@@ -336,6 +342,9 @@ func (s *Service) Read(ctx context.Context, caller, id, continuation string, siz
 		offset = c.Offset
 	}
 	end := min(offset+int(size), len(q.Entries))
+	page := &Page{
+		Quote: q,
+	}
 	if end < len(q.Entries) {
 		data, err := json.Marshal(
 			cursor{
@@ -346,10 +355,10 @@ func (s *Service) Read(ctx context.Context, caller, id, continuation string, siz
 		if err != nil {
 			return nil, err
 		}
-		q.NextCursor = base64.RawURLEncoding.EncodeToString(data)
+		page.NextCursor = base64.RawURLEncoding.EncodeToString(data)
 	}
 	q.Entries = q.Entries[offset:end]
-	return q, nil
+	return page, nil
 }
 
 func (s *Service) Release(ctx context.Context, caller, id string) error {

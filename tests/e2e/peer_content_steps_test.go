@@ -56,7 +56,7 @@ func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^调用方为完整内容取得借阅 lease$`, s.borrow)
 	sc.Step(`^Connect 和 REST 接受超过默认消息大小的合法借阅请求$`, p.sendLargeBodies)
 	sc.Step(`^两种 Peer 客户端的大请求到达服务端字段校验$`, p.sendLargeClientRequests)
-	sc.Step(`^Connect、REST 和直接 Peer 客户端读取相同的完整多模态条目$`, p.readTransports)
+	sc.Step(`^Connect、REST 和直接 Peer 客户端读取相同的完整多模态条目且游标位于读取响应$`, p.readTransports)
 	sc.Step(`^其余分页保留原生锚点公开 Body 和第三方锚点原文$`, p.readAnchors)
 	sc.Step(`^借出节点的存储和服务重建$`, p.restart)
 	sc.Step(`^原 lease 仍可读取完整多模态条目$`, p.readRecovered)
@@ -213,10 +213,11 @@ func (p *peerContentScenario) start() error {
 	return err
 }
 
-func (p *peerContentScenario) checkMedia(page *pb.Quote) error {
+func (p *peerContentScenario) checkMedia(response *rpcpb.ReadResponse) error {
 	view := p.s.decision.GetLease()
+	page := response.Quote
 
-	if view == nil || page.Provenance.LeaseId != view.Id || !proto.Equal(page.Provenance.Ref, view.Ref) || len(page.Entries) != 1 || page.Entries[0].Seq != p.ref.Scopes[0].SeqS || page.NextCursor == "" {
+	if view == nil || page.Provenance.LeaseId != view.Id || !proto.Equal(page.Provenance.Ref, view.Ref) || len(page.Entries) != 1 || page.Entries[0].Seq != p.ref.Scopes[0].SeqS || response.NextCursor == "" {
 		return errors.New("large content lost grant provenance or pagination boundaries")
 	}
 	payload := page.Entries[0].Payload
@@ -344,7 +345,22 @@ func (p *peerContentScenario) readTransports() error {
 		return err
 	}
 
-	return p.checkMedia(response.Quote)
+	wire, err := protojson.Marshal(&response)
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		return err
+	}
+	var quoteFields map[string]json.RawMessage
+	if err := json.Unmarshal(fields["quote"], &quoteFields); err != nil {
+		return err
+	}
+	if _, nested := quoteFields["nextCursor"]; nested || len(fields["nextCursor"]) == 0 {
+		return errors.New("read continuation belongs to the response, not the quote")
+	}
+	return p.checkMedia(&response)
 }
 
 func (p *peerContentScenario) readAnchors() error {
@@ -352,7 +368,7 @@ func (p *peerContentScenario) readAnchors() error {
 
 	for index, seq := range []string{te.MustParseSeq(p.ref.Scopes[0].SeqS).Next().String(), p.ref.Scopes[1].SeqS, te.MustParseSeq(p.ref.Scopes[1].SeqS).Next().String()} {
 
-		page, err := s.client.Read(
+		response, err := s.client.Read(
 			s.ctx,
 			&rpcpb.ReadRequest{
 				LeaseId:  s.decision.Lease.Id,
@@ -363,6 +379,7 @@ func (p *peerContentScenario) readAnchors() error {
 		if err != nil {
 			return err
 		}
+		page := response.Quote
 
 		if len(page.Entries) != 1 || page.Entries[0].Seq != seq || page.Provenance.LeaseId != s.decision.Lease.Id || !proto.Equal(page.Provenance.Ref, s.decision.Lease.Ref) {
 			return errors.New("content pagination changed source, order or scope")
@@ -424,7 +441,7 @@ func (p *peerContentScenario) readAnchors() error {
 		if index == 2 && !exportedTextIs(e, "context complete") {
 			return errors.New("paging lost the final model content")
 		}
-		p.cursor = page.NextCursor
+		p.cursor = response.NextCursor
 
 		if (index == 2) != (p.cursor == "") {
 			return errors.New("content paging stopped early or escaped its grant")
