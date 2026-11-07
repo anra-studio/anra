@@ -11,6 +11,7 @@ Agents can communicate with peers and share relevant context with permission.
 - [Agent team design](docs/agent-team.md)
 - [A2A adapter](docs/a2a-adapter.md)
 - [HTTP and REST routes](docs/http.md)
+- [Read-only MCP handoff context](docs/mcp.md)
 - [API and development workflow](proto/README.md)
 - [BDD end-to-end scenarios and testing policy](docs/testing.md)
 

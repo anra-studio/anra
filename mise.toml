@@ -40,11 +40,15 @@ run = "go build -o anra ./cmd/anra"
 
 [tasks.e2e]
 description = "Run the executable Given/When/Then acceptance scenarios"
-run = "go test -count=1 -v ./tests/e2e"
+run = "go test -race -count=1 -v ./tests/e2e"
+
+[tasks.unit]
+description = "Check pure domain logic and codecs"
+run = "go test ./pkg/..."
 
 [tasks.test]
-description = "Check the API contract, build all packages, and run BDD E2E scenarios"
-depends = ["proto-lint", "proto-build", "proto-check-generated", "build", "e2e"]
+description = "Check the API contract, build all packages, and run unit and BDD E2E tests"
+depends = ["proto-lint", "proto-build", "proto-check-generated", "build", "unit", "e2e"]
 
 [tasks.e2e-report]
 description = "Run BDD scenarios and generate a local HTML investigation report"

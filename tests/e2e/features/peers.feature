@@ -1,85 +1,76 @@
-Feature: Trusted peers communicate and borrow permissioned context
-  A borrower discovers a peer, speaks standard A2A, and reads only the context
-  that the lender approved. Decisions and closures survive storage restarts.
+# language: zh-CN
+功能: 节点通过 A2A 通信并借阅已提交视图
+  调用方只读取完整获准的已提交 Scopes，授权决策和终止状态在重启后保持。
 
-  Background:
-    Given a researcher peer with two findings and a durable grant journal
+  背景:
+    假如 研究节点已提交两份发现并持久化授权记录
 
-  Scenario: Send a message to a discovered peer using standard A2A
-    When the borrower discovers the researcher and sends "hello"
-    Then the peer answers "research response"
-    And the peer can stream a response to "hello again"
+  场景: 通过标准 A2A 向发现的节点发送消息
+    当 调用方发现研究节点并发送 "hello"
+    那么 节点回答 "research response"
+    而且 节点也能流式回答 "hello again"
 
-  Scenario: Borrowed context informs an answer and survives a borrower restart
-    When the borrower asks its agent to use the researcher's findings
-    Then the answer is "Use version checks for competing writes."
-    And the borrowed tool result retains the source and sequence provenance
-    When I close and reopen the borrower agent's storage
-    Then its model can recall the findings as a tool result
-    And every stored borrower entry belongs to the borrower
+  场景: 授权范围在借出节点重启后保持不变
+    当 调用方请求借阅已提交视图
+    那么 借阅决策为 "granted"
+    当 调用方读取第一条发现
+    而且 研究节点在授权后提交新的发现
+    而且 研究节点重启存储和服务
+    那么 重试同一请求仍返回原 lease
+    而且 调用方分页读完原有授权视图
 
-  Scenario: A grant keeps its original snapshot across a lender restart
-    When the borrower requests context
-    Then the decision is "granted"
-    When the borrower reads the first finding
-    And the researcher adds a finding after the grant
-    And the researcher closes and reopens its storage and server
-    Then retrying the request returns the same grant
-    And the borrower can finish paging the original snapshot
+  场景: 多段已提交视图经过分页仍完整读取
+    假如 研究节点已提交 103 条发现
+    当 调用方请求借阅已提交视图
+    那么 调用方跨页读完全部 103 条发现
 
-  Scenario: A selected range is fully read across multiple pages
-    Given the researcher has 103 findings
-    When the borrower requests context
-    Then the borrower receives all 103 findings across multiple pages
+  场景: 同一请求 ID 不能改写借阅输入
+    当 调用方请求借阅已提交视图
+    而且 调用方保持请求 ID 但修改查询
+    那么 借阅请求返回冲突
 
-  Scenario: Reusing a request ID with different input is rejected
-    When the borrower requests context
-    And the borrower changes the query but keeps the request ID
-    Then the request fails with a conflict
+  场景: 其他调用方不能使用已有借阅授权
+    当 调用方请求借阅已提交视图
+    那么 其他调用方不能查询读取或释放该 lease
+    而且 其他调用方自己的请求被拒绝且不返回内容
 
-  Scenario: Another identified peer cannot use the borrower's grant
-    When the borrower requests context
-    Then another peer cannot look up, read, or release that grant
-    And another peer's own request is denied without context
+  场景大纲: 终止授权后重启仍拒绝读取
+    当 调用方请求借阅已提交视图
+    而且 授权终止方式为 <closure>
+    而且 研究节点重启存储和服务
+    那么 调用方不能继续读取该 lease
+    而且 记录的决策仍标识原 lease
 
-  Scenario Outline: Ending a grant prevents further reads after restart
-    When the borrower requests context
-    And the grant is <closure>
-    And the researcher closes and reopens its storage and server
-    Then the borrower cannot read the grant
-    And the recorded decision still identifies the original grant
-
-    Examples:
+    例子:
       | closure  |
       | released |
       | revoked  |
       | expired  |
 
-  Scenario Outline: A pending decision can be resolved and recovered
-    Given the researcher requires approval for borrowing
-    When the borrower requests context
-    Then the decision is "pending"
-    When the researcher closes and reopens its storage and server
-    Then the decision is still "pending"
-    When the researcher resolves the request as "<outcome>"
-    And the researcher closes and reopens its storage and server
-    Then the decision is still "<outcome>"
-    And access matches the "<outcome>" decision
+  场景大纲: 待批准的借阅决策可以完成并恢复
+    假如 研究节点要求本地批准借阅
+    当 调用方请求借阅已提交视图
+    那么 借阅决策为 "pending"
+    当 研究节点重启存储和服务
+    那么 恢复后的决策仍为 "pending"
+    当 研究节点将请求处理为 "<outcome>"
+    而且 研究节点重启存储和服务
+    那么 恢复后的决策仍为 "<outcome>"
+    而且 读取结果符合 "<outcome>" 决策
 
-    Examples:
+    例子:
       | outcome |
       | granted |
       | denied  |
 
-  Scenario Outline: Invalid or unauthorized wire requests cannot borrow context
-    When a peer submits a wire request with "<problem>"
-    Then the wire error is "<code>"
+  场景大纲: 无效或未授权的协议请求不能借阅上下文
+    当 节点提交包含 "<problem>" 的协议请求
+    那么 返回协议错误 "<code>"
 
-    Examples:
+    例子:
       | problem           | code                |
       | no identity       | unauthenticated     |
       | no extension      | failed_precondition |
       | missing purpose   | invalid_argument    |
       | reversed bounds   | invalid_argument    |
       | excessive page    | invalid_argument    |
-      | excessive body    | resource_exhausted  |

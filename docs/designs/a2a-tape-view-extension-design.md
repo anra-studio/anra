@@ -178,7 +178,7 @@ accept local owner routing. Sequence IDs are meaningful only with this source.
 
 An entry page includes `viewId`, source identity, snapshot head, entries, and
 `nextCursor` when more entries exist. Each entry carries `seq`, `kind`,
-`timestamp`, a readable `summary`, and an explicitly typed payload
+`timestamp` and an explicitly typed payload
 (`mediaType` and `data`) if granted. Arbitrary local `CustomEntry.Extensions`
 are never automatically exported. Typed export codecs define what can be
 shared, including messages and artifacts; unsupported types fail explicitly.
@@ -242,13 +242,13 @@ append-only, so the reference identifies the content and grants carry no
 session, exporter or content fingerprints. The journal holds three record kinds:
 a grant (immutable), request state (pending or denied) and a release. The
 default exporter shares only
-user/assistant summaries; other payloads require a deterministic typed exporter.
+original user/assistant text; other payloads require a deterministic typed exporter.
 Limits and error codes are fixed in the integration contract linked above.
 
 Configured card discovery, best-peer ranking, permissioned best-range ranking,
 borrowing RPCs, and Anra tool-result consumption are implemented. Network
 directory registration and a concrete JEV adapter remain future integrations;
-`Ranker` and `Eligible` provide their boundaries. The historical A2A task-store
+`Ranker` and application-owned `Policy` provide their boundaries. The historical A2A task-store
 adapter has not been restored.
 
 ## Trusted-team identity profile

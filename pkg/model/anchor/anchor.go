@@ -6,7 +6,8 @@ import (
 	"errors"
 	"strings"
 
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/proto"
 )
@@ -23,7 +24,7 @@ func Decode(e te.EntryLike) (*Record, error) {
 	var tag struct {
 		Schema string `json:"schema"`
 	}
-	raw := []byte(e.GetSummary())
+	raw := []byte(entry.FromTape(e).Body())
 	if err := json.Unmarshal(raw, &tag); err != nil {
 		if strings.Contains(string(raw), "anra.dev/anchor/") {
 			return nil, errors.New("anchor: malformed record")
@@ -43,9 +44,10 @@ func Decode(e te.EntryLike) (*Record, error) {
 	}
 }
 
-func CloneRef(r *pb.TapeView) *pb.TapeView {
+func CloneRef(r *pb.Ref) *pb.Ref {
 	if r == nil {
 		return nil
 	}
-	return proto.Clone(r).(*pb.TapeView)
+
+	return proto.Clone(r).(*pb.Ref)
 }

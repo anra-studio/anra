@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package anra.a2a.collaboration.v1;
 
-import "anra/a2a/tape/v1/tape.proto";
+import "anra/model/view/v1/view.proto";
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -25,7 +25,7 @@ message DelegationMetadata {
     }
   }];
   // Hints only: each recipient borrows under its own identity from the lender.
-  repeated anra.a2a.tape.v1.TapeView context = 4 [(buf.validate.field).repeated.max_items = 8];
+  repeated anra.model.view.v1.Ref context = 4 [(buf.validate.field).repeated.max_items = 8];
 }
 
 enum Status {
@@ -52,5 +52,5 @@ message ResponseMetadata {
     not_in: [0]
   }];
   RetryHint retry = 2 [(buf.validate.field).enum.defined_only = true];
-  anra.a2a.tape.v1.TapeView view = 3;
+  anra.model.view.v1.Ref view = 3;
 }

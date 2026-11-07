@@ -2,27 +2,32 @@ package agent
 
 import (
 	"errors"
+	"reflect"
 	"sync"
 	"time"
 
-	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
+	"github.com/scbizu/tape-go/pkg/tape/storage"
 )
 
 type Anra struct {
-	mu        sync.Mutex
-	role      string
+	mu sync.Mutex
+
+	role string
+
 	execution execution
-	tape      *bbolt.Bbolt
-	runtime   runtimeConfig
+
+	tape storage.TapeStorage
+
+	runtime runtimeConfig
 }
 
-// New requires an initialized bbolt tape and exclusive runtime ownership of its
+// New requires an initialized tape and exclusive runtime ownership of its
 // owner/session. The caller drains Shutdown before closing the tape.
-func New(role string, tape *bbolt.Bbolt, opts ...Option) (*Anra, error) {
+func New(role string, tape storage.TapeStorage, opts ...Option) (*Anra, error) {
 	if role == "" {
 		return nil, errors.New("agent: empty role")
 	}
-	if tape == nil {
+	if tape == nil || (reflect.ValueOf(tape).Kind() == reflect.Pointer && reflect.ValueOf(tape).IsNil()) {
 		return nil, errors.New("agent: nil tape")
 	}
 	anra := &Anra{
@@ -30,7 +35,8 @@ func New(role string, tape *bbolt.Bbolt, opts ...Option) (*Anra, error) {
 		tape: tape,
 		runtime: runtimeConfig{
 			maxModelTurns: defaultMaxModelTurns,
-			timeout:       2 * time.Minute,
+
+			timeout: 2 * time.Minute,
 		},
 	}
 	for _, opt := range opts {
@@ -51,4 +57,6 @@ func New(role string, tape *bbolt.Bbolt, opts ...Option) (*Anra, error) {
 }
 
 // Tape returns the owned tape for the independently served grant reader.
-func (a *Anra) Tape() *bbolt.Bbolt { return a.tape }
+func (a *Anra) Tape() storage.TapeStorage {
+	return a.tape
+}

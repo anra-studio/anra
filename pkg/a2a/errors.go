@@ -5,17 +5,19 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/anra-studio/anra/pkg/model/view"
+
 	"connectrpc.com/connect/v2"
 )
 
 // Errors returned by this package. Use errors.Is to test for them.
 var (
-	ErrInvalidParams = errors.New("invalid parameters")
-	ErrConflict      = errors.New("request ID conflict")
-	ErrUnavailable   = errors.New("view unavailable")
-	ErrStorage       = errors.New("tape storage failure")
+	ErrInvalidParams = view.ErrInvalidParams
+	ErrConflict      = view.ErrConflict
+	ErrUnavailable   = view.ErrUnavailable
+	ErrStorage       = view.ErrStorage
 	ErrInactive      = errors.New("tape-view extension inactive")
-	ErrUnsupported   = errors.New("unsupported entry representation")
+	ErrUnsupported   = view.ErrUnsupported
 )
 
 // Preserve public error categories without exposing storage or policy details.
@@ -35,15 +37,34 @@ func connectError(err error) error {
 }
 
 var connectErrors = []struct {
-	err  error
+	err error
+
 	code connect.Code
 }{
-	{ErrInvalidParams, connect.CodeInvalidArgument},
-	{ErrInactive, connect.CodeFailedPrecondition},
-	{ErrConflict, connect.CodeAlreadyExists},
-	{ErrUnavailable, connect.CodeNotFound},
-	{ErrStorage, connect.CodeInternal},
-	{ErrUnsupported, connect.CodeUnimplemented},
+	{
+		err:  ErrInvalidParams,
+		code: connect.CodeInvalidArgument,
+	},
+	{
+		err:  ErrInactive,
+		code: connect.CodeFailedPrecondition,
+	},
+	{
+		err:  ErrConflict,
+		code: connect.CodeAlreadyExists,
+	},
+	{
+		err:  ErrUnavailable,
+		code: connect.CodeNotFound,
+	},
+	{
+		err:  ErrStorage,
+		code: connect.CodeInternal,
+	},
+	{
+		err:  ErrUnsupported,
+		code: connect.CodeUnimplemented,
+	},
 }
 
 func fromConnectError(err error) error {

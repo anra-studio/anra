@@ -1,7 +1,7 @@
 # Anchor-backed TapeView collaboration
 
-Status: implemented. This replaces the publication object in the earlier
-[BUSY design](anchor-busy-collaboration-spec.md) and its implementation guide.
+Status: superseded by the approved [shared View design](shared-view-design.md).
+The historical field names below do not describe the current implementation.
 
 ## Borrowable object
 
@@ -93,14 +93,19 @@ model content is encoded as
 the existing text exporter representation.
 
 ADK event IDs, authors, execution metadata, state deltas, arbitrary custom
-extensions, thought parts, and execution anchors are not exported. Tool calls
+extensions, provider thought signatures, and the turn's control boundaries are
+not exported. Authorized thought content remains part of the borrowed view. Tool calls
 and results are data in the borrower's tool response; borrowing never executes
 them. Completed prompts and tool arguments/results are part of the context the
 lender shares with trusted peers.
 
-The ordinary 8 KiB exported-entry and page/body limits still apply. The previous
-2 KiB publication-answer eligibility limit is removed. An unsupported or
-oversized entry fails export rather than silently truncating or changing scope.
+Exported entries and borrowed responses have no fixed size cap. Pagination
+splits transport, preserving entire multimodal entries and the authorized range;
+peer requests and responses have no fixed body cap. Field and authorization
+rules remain unchanged. Unsupported entries still fail export
+rather than silently changing scope. Selected custom anchors use the shared
+MCP/peer representation: native records omit the ownership epoch, and foreign
+schema bodies remain unchanged as text.
 
 ## Nonblocking collaboration
 
