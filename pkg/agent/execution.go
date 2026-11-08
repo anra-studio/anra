@@ -10,7 +10,9 @@ import (
 
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/flow/clbr"
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
@@ -26,7 +28,7 @@ type BusyError struct {
 	view *pb.Ref
 }
 
-var _ a2a.BusyError = (*BusyError)(nil)
+var _ clbr.BusyError = (*BusyError)(nil)
 
 func (*BusyError) Error() string {
 	return ErrBusy.Error()
@@ -136,13 +138,16 @@ func (a *Anra) viewRef(window tv.TapeView) *pb.Ref {
 	}
 }
 
-func (a *Anra) apply(raw te.EntryLike) error {
+func (a *Anra) apply(raw entry.Entry) error {
 	r, err := anchor.Decode(raw)
+	if errors.Is(err, anchor.ErrUnsupported) {
+		// Other schemas do not drive the native execution state machine.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	if r == nil {
-		// Other schemas do not drive the native execution state machine.
 		return nil
 	}
 	x := &a.execution
@@ -194,8 +199,8 @@ func (a *Anra) apply(raw te.EntryLike) error {
 	return nil
 }
 
-func (a *Anra) appendAnchor(ctx context.Context, r anchor.Record) error {
-	r.Schema = anchor.Schema
+func (a *Anra) appendAnchor(ctx context.Context, r anchor.BuiltIn) error {
+	r.Schema = anchor.BuiltInSchema
 	data, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -211,7 +216,11 @@ func (a *Anra) appendAnchor(ctx context.Context, r anchor.Record) error {
 		a.execution.fenced = true
 		return fmt.Errorf("%w: append: %w", ErrFenced, err)
 	}
-	if err := a.apply(stored); err != nil {
+	value, err := entry.FromTape(stored)
+	if err == nil {
+		err = a.apply(value)
+	}
+	if err != nil {
 		a.execution.fenced = true
 		return fmt.Errorf("%w: %w", ErrFenced, err)
 	}
@@ -245,7 +254,11 @@ func (a *Anra) recoverExecution() error {
 			return err
 		}
 		for _, e := range entries.Raw {
-			if err := a.apply(e); err != nil {
+			value, err := entry.FromTape(e)
+			if err != nil {
+				return fmt.Errorf("agent: decode tape entry: %w", err)
+			}
+			if err := a.apply(value); err != nil {
 				return fmt.Errorf("agent: replay %s: %w", e.GetID(), err)
 			}
 		}
@@ -253,7 +266,7 @@ func (a *Anra) recoverExecution() error {
 	if a.execution.source == nil {
 		if err := a.appendAnchor(
 			ctx,
-			anchor.Record{
+			anchor.BuiltIn{
 				Type: anchor.TapeInitialized,
 				Source: &pb.Source{
 					AgentId: a.role,
@@ -267,7 +280,7 @@ func (a *Anra) recoverExecution() error {
 	if active := a.execution.active; active != nil {
 		if err := a.appendAnchor(
 			ctx,
-			anchor.Record{
+			anchor.BuiltIn{
 				Type:       anchor.TurnClosed,
 				TurnID:     active.id,
 				StartSeq:   active.start.String(),
@@ -310,7 +323,7 @@ func (a *Anra) admit(ctx context.Context, cancel context.CancelFunc) (chan struc
 
 	if err := a.appendAnchor(
 		ctx,
-		anchor.Record{
+		anchor.BuiltIn{
 			Type:       anchor.TurnStarted,
 			TurnID:     uuid.New().String(),
 			OwnerEpoch: a.execution.epoch,
@@ -334,7 +347,7 @@ func (a *Anra) finish(runErr error) error {
 		return ErrFenced
 	}
 
-	r := anchor.Record{
+	r := anchor.BuiltIn{
 		Type:     anchor.TurnClosed,
 		TurnID:   active.id,
 		StartSeq: active.start.String(),

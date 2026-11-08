@@ -11,6 +11,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
+	"github.com/anra-studio/anra/pkg/flow/clbr"
 	"github.com/anra-studio/anra/pkg/model/delegator"
 )
 
@@ -67,58 +68,72 @@ func NewMessageClientFromCard(ctx context.Context, h *http.Client, card *sdk.Age
 	if err != nil {
 		return nil, err
 	}
-	return &MessageClient{client: client, Name: card.Name, collaboration: advertisesCollaboration(card), Card: card}, nil
+	return &MessageClient{
+		client:        client,
+		Name:          card.Name,
+		collaboration: advertisesCollaboration(card),
+		Card:          card,
+	}, nil
 }
 
 // Send returns a typed outcome when the peer advertises collaboration.
-func (r *MessageClient) Send(ctx context.Context, input string) (CollaborationResult, error) {
+func (r *MessageClient) Send(ctx context.Context, input string) (clbr.Result, error) {
 	request := sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(input))
 	if r.collaboration {
 		request.Extensions = []string{CollaborationURI}
 		metadata, err := encodeCollaborationMetadata(delegator.FromContext(ctx).Metadata())
 		if err != nil {
-			return CollaborationResult{}, err
+			return clbr.Result{}, err
 		}
 		request.Metadata = map[string]any{CollaborationURI: metadata}
 	}
-	result, err := r.client.SendMessage(ctx, &sdk.SendMessageRequest{Message: request})
+	result, err := r.client.SendMessage(ctx, &sdk.SendMessageRequest{
+		Message: request,
+	})
 	if err != nil {
-		return CollaborationResult{}, err
+		return clbr.Result{}, err
 	}
 	message, ok := result.(*sdk.Message)
 	if !ok || message.Role != sdk.MessageRoleAgent {
-		return CollaborationResult{}, errors.New("peer returned no direct answer")
+		return clbr.Result{}, errors.New("peer returned no direct answer")
 	}
 	var parts []string
 	for _, part := range message.Parts {
 		if part == nil {
-			return CollaborationResult{}, ErrInvalidParams
+			return clbr.Result{}, ErrInvalidParams
 		}
 		if _, ok := part.Content.(sdk.Text); !ok {
-			return CollaborationResult{}, ErrUnsupported
+			return clbr.Result{}, ErrUnsupported
 		}
 		parts = append(parts, part.Text())
 	}
 	output := strings.Join(parts, "\n")
 	if r.collaboration {
 		if !collaborationEnabled(message) {
-			return CollaborationResult{}, ErrInactive
+			return clbr.Result{}, ErrInactive
 		}
 		metadata := new(cp.ResponseMetadata)
 		if err := decodeCollaborationMetadata(message.Metadata[CollaborationURI], metadata); err != nil {
-			return CollaborationResult{}, err
+			return clbr.Result{}, err
 		}
-		response := CollaborationResult{ResponseMetadata: metadata}
+		response := clbr.Result{
+			ResponseMetadata: metadata,
+		}
 		if metadata.Status == cp.Status_STATUS_COMPLETED {
 			if strings.TrimSpace(output) == "" {
-				return CollaborationResult{}, ErrInvalidParams
+				return clbr.Result{}, ErrInvalidParams
 			}
 			response.Answer = output
 		}
 		return response, nil
 	}
 	if strings.TrimSpace(output) == "" {
-		return CollaborationResult{}, errors.New("peer returned an empty answer")
+		return clbr.Result{}, errors.New("peer returned an empty answer")
 	}
-	return CollaborationResult{ResponseMetadata: &cp.ResponseMetadata{Status: cp.Status_STATUS_COMPLETED}, Answer: output}, nil
+	return clbr.Result{
+		ResponseMetadata: &cp.ResponseMetadata{
+			Status: cp.Status_STATUS_COMPLETED,
+		},
+		Answer: output,
+	}, nil
 }

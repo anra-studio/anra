@@ -2,6 +2,7 @@ package view
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/model/entry"
@@ -14,14 +15,11 @@ const (
 	AnchorMediaType  = "application/vnd.anra.anchor+json;version=1"
 )
 
-type (
-	Exporter interface {
-		Export(te.EntryLike) (Entry, error)
-	}
-	ContextExporter struct{}
-)
+var ErrUnsupported = errors.New("unsupported entry representation")
 
-func (ContextExporter) Export(raw te.EntryLike) (Entry, error) {
+type ContextExporter struct{}
+
+func (ContextExporter) Export(raw entry.Entry) (Entry, error) {
 	e := Entry{
 		Seq:       raw.GetID().String(),
 		Kind:      string(raw.GetKind()),
@@ -33,8 +31,12 @@ func (ContextExporter) Export(raw te.EntryLike) (Entry, error) {
 	if raw.GetKind() == anchor.Kind {
 		body, err = anchor.Export(raw)
 		e.MediaType = AnchorMediaType
+		if errors.Is(err, anchor.ErrUnsupported) {
+			// Keep the entry's sequence but do not expose unknown anchor content.
+			body, err = nil, nil
+		}
 	} else {
-		body, err = entry.FromTape(raw).Content()
+		body, err = raw.Content()
 	}
 	if err != nil {
 		return Entry{}, ErrUnsupported
@@ -48,11 +50,11 @@ func (ContextExporter) Export(raw te.EntryLike) (Entry, error) {
 
 type TextExporter struct{}
 
-func (TextExporter) Export(raw te.EntryLike) (Entry, error) {
+func (TextExporter) Export(raw entry.Entry) (Entry, error) {
 	if raw.GetKind() != te.EntryUser && raw.GetKind() != te.EntryAssistant {
 		return Entry{}, ErrUnsupported
 	}
-	data, err := json.Marshal(entry.FromTape(raw).Body())
+	data, err := json.Marshal(raw.Body())
 	if err != nil {
 		return Entry{}, err
 	}

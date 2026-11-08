@@ -12,13 +12,20 @@ import (
 	"github.com/anra-studio/anra/internal/httpserver"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/flow"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
+	"github.com/anra-studio/anra/pkg/flow/grant"
 	peermodel "github.com/anra-studio/anra/pkg/model/peer"
 	"github.com/anra-studio/anra/pkg/model/view"
+	"github.com/scbizu/tape-go/pkg/tape"
+	"github.com/scbizu/tape-go/pkg/tape/owner"
+	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
+	viewRegistry "github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 // Serve advertises the bound listener, maintains its observed presence, and serves
 // A2A and TapeView until cancellation or a permanent registry rejection. It owns
-// the listener and grant record store. After it returns the caller must Close the node.
+// the listener and grant sidecar storage. After it returns the caller must Close the node.
 // ready is optional and runs once the Peer is registered and HTTP serving begins.
 func (n *Node) Serve(ctx context.Context, listener net.Listener, ready func(net.Addr) error) (serveErr error) {
 	a, settings := n.agent, n.settings
@@ -52,30 +59,71 @@ func (n *Node) Serve(ctx context.Context, listener net.Listener, ready func(net.
 		return err
 	}
 	n.card.Store(card)
-	executor, err := a2a.NewExecutor(a)
+
+	leases, err := bbolt.NewBboltStorage("lease/v1", filepath.Join(settings.DataDir, id+".lease.db"))
 	if err != nil {
 		return err
 	}
-
-	views, err := view.NewService(
-		view.Config{
-			Source:     a.Source(),
-			Owner:      id,
-			Tape:       a.Tape(),
-			RecordPath: filepath.Join(settings.DataDir, id+".grants.db"),
-			Views:      a,
-			Exporter:   view.ContextExporter{},
+	defer func() { serveErr = errors.Join(serveErr, leases.Close()) }()
+	if err := leases.Init(owner.WithOwnerId(ctx, id)); err != nil {
+		return err
+	}
+	journal, err := borrow.NewJournal(
+		ctx,
+		borrow.JournalConfig{
+			Source:  a.Source(),
+			Owner:   id,
+			Storage: leases,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	grants, err := grant.New(
+		grant.Config{
+			Source: a.Source(),
+			Owner:  id,
+			Leases: journal,
 		},
 	)
 	if err != nil {
 		return err
 	}
 
-	defer func() {
-		serveErr = errors.Join(serveErr, views.Close())
-	}()
+	registry := viewRegistry.NewRegistry()
+	if err := registry.Register(grants); err != nil {
+		return err
+	}
+	contextTape := &tape.Tape{
+		TapeStorage: a.Tape(),
+		OwnerID:     id,
+		Registry:    registry,
+	}
 
-	handler, err := a2a.NewPeerHandler(card, a2asrv.NewHandler(executor), views, a2a.TrustedPeerIdentity)
+	borrowing, err := borrow.New(
+		borrow.Config{
+			Source:   a.Source(),
+			Tape:     contextTape,
+			Views:    a,
+			Journal:  journal,
+			Grants:   grants,
+			Exporter: view.ContextExporter{},
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	flows := flow.Set{
+		Borrow: borrowing,
+		Grant:  grants,
+	}
+	executor, err := a2a.NewExecutor(a, &flows.Clbr)
+	if err != nil {
+		return err
+	}
+
+	handler, err := a2a.NewPeerHandler(card, a2asrv.NewHandler(executor), flows.Borrow, a2a.TrustedPeerIdentity)
 	if err != nil {
 		return err
 	}

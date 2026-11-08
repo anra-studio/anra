@@ -1,32 +1,14 @@
-// Package view owns committed-view borrowing and public quoted content.
+// Package view defines public Anra view content, provenance and codecs.
+// Approval and request state belong to flow/borrow; lease lifetimes to flow/grant.
 package view
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
-	"github.com/scbizu/tape-go/pkg/tape/storage"
-	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
-)
-
-var (
-	ErrInvalidParams = errors.New("invalid parameters")
-	ErrConflict      = errors.New("request ID conflict")
-	ErrUnavailable   = errors.New("view unavailable")
-	ErrStorage       = errors.New("tape storage failure")
-	ErrUnsupported   = errors.New("unsupported entry representation")
-)
-
-const (
-	Granted     = pb.DecisionStatus_DECISION_STATUS_GRANTED
-	Denied      = pb.DecisionStatus_DECISION_STATUS_DENIED
-	Pending     = pb.DecisionStatus_DECISION_STATUS_PENDING
-	MaxPageSize = 100
 )
 
 type Channel string
@@ -135,15 +117,3 @@ func FromProto(q *pb.Quote) *Quote {
 	}
 	return out
 }
-
-// TapeReader borrows an initialized Tape. The host owns writes and lifetime.
-type (
-	TapeReader interface {
-		Range(context.Context, tv.EntryRange, ...storage.RangeBy) (tv.EntryView, error)
-	}
-	// Views returns an exact, committed Ref, or nil when no view is eligible.
-	// Providers own commitment and canonical scope ordering; results stay immutable.
-	Views interface {
-		View(context.Context, string, *pb.Ref) (*pb.Ref, error)
-	}
-)

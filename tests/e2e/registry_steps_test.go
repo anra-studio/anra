@@ -13,13 +13,13 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
-	"github.com/cucumber/godog"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
 	"github.com/anra-studio/anra/gen/anra/registry/v1/registryv1connect"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/registry"
+	"github.com/cucumber/godog"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -503,6 +503,7 @@ func initializeRegistry(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^the operator attempts the earlier retirement$`, func() { _, r.lastError = r.client.Forget(s.ctx, r.forget) })
 }
+
 func (r *registryScenario) open() error {
 	store, err := registry.Open(registry.Config{Path: filepath.Join(r.s.root, "registry-contract.db"), HeartbeatTimeout: time.Second, Now: func() time.Time { return time.Unix(0, r.now.Load()) }})
 	if err != nil {
@@ -536,6 +537,7 @@ func (r *registryScenario) open() error {
 	r.client = registryv1connect.NewRegistryServiceClient(connect.NewClient(transport))
 	return nil
 }
+
 func (r *registryScenario) close() error {
 	if r.session != nil {
 		r.session.Close()
@@ -552,6 +554,7 @@ func (r *registryScenario) close() error {
 	}
 	return nil
 }
+
 func (r *registryScenario) lookup(id string) (*rv.Entry, error) {
 	response, err := r.client.Lookup(r.s.ctx, &rv.LookupRequest{Id: id})
 	if err != nil {

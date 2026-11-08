@@ -17,7 +17,8 @@ func newRegistryCommand() *cobra.Command {
 	var listen string
 	var heartbeatTimeout time.Duration
 	var dataDir string
-	command := &cobra.Command{Use: "registry", Short: "Run the team's persistent Peer directory", Args: cobra.NoArgs,
+	command := &cobra.Command{
+		Use: "registry", Short: "Run the team's persistent Peer directory", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			listener, err := net.Listen("tcp", listen)
 			if err != nil {

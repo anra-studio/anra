@@ -2,17 +2,16 @@ package mcp
 
 import (
 	"fmt"
-	"slices"
 
-	"github.com/anra-studio/anra/pkg/model/view"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 )
 
 type Config struct {
 	Roles RoleProvider `validate:"required,structonly"`
 
-	Grants GrantVerifier `validate:"required,structonly"`
+	Access AccessProvider `validate:"required,structonly"`
 
-	Views *view.Service `validate:"required,structonly"`
+	Borrowing *borrow.Service `validate:"required,structonly"`
 
 	// TrustedOrigins is an exact allowlist of browser origins (scheme + host,
 	// optional port). Empty disables Origin restrictions. When configured,
@@ -37,11 +36,4 @@ func NewService(c Config) (*Service, error) {
 	return &Service{
 		config: c,
 	}, nil
-}
-
-func resolve(g *Grant, input toolInput, permission string) error {
-	if input.AnchorSeq != g.AnchorSeq || !slices.Contains(g.Permissions, permission) {
-		return ErrPermissionDenied
-	}
-	return nil
 }

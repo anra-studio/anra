@@ -2,42 +2,46 @@
 
 MCP exposes `read_role(anchorSeq)` and `read_tape_view(anchorSeq)` through the
 official Go MCP SDK's stateless Streamable HTTP transport. It shares one
-`pkg/model/view.Service` with the peer borrowing adapter. MCP does not select
+`pkg/flow/borrow.Service` with the peer borrowing adapter. MCP does not select
 Tape ranges, open storage, issue leases, or maintain another authorization store.
 See the approved [shared View design](designs/shared-view-design.md).
 
 ## Hosting and ownership
 
-The host initializes the Agent and Tape, creates the shared view service, and
-injects it into both adapters:
+The host initializes the Agent's context storage and a separate grant sidecar,
+creates `borrow.NewJournal` and a `grant.New` handler backed by that Journal,
+and registers the handler in native `tape.Tape.Registry`.
+See the complete [lender setup](a2a-adapter.md#borrowing-lender-setup).
 
 ```go
-views, err := view.NewService(
-    view.Config{
-        Source:     a.Source(),
-        Owner:      "vesta",
-        Tape:       a.Tape(),
-        Views:      a,
-        RecordPath: "vesta.grants.db",
+// contextTape has initialized source storage and the registered grant handler.
+borrowing, err := borrow.New(
+    borrow.Config{
+        Source:  a.Source(),
+        Tape:    contextTape,
+        Views:   a,
+        Journal: journal,
+        Grants:  grants,
     },
 )
 // Handle err before constructing either adapter.
 contextService, err := mcp.NewService(
     mcp.Config{
-        Views:  views,
-        Roles:  roleProvider,
-        Grants: grantVerifier,
+        Borrowing: borrowing,
+        Roles:     roleProvider,
+        Access:    accessProvider,
     },
 )
 // Handle err before mounting contextService.Handler().
-peerHandler, err := a2a.NewViewHandler(views, authenticatePeer)
+peerHandler, err := a2a.NewViewHandler(borrowing, authenticatePeer)
 // Handle err before mounting the Connect and REST routes.
 ```
 
-`RecordPath` opens an owned `grantRecord.Store`; `Records` instead accepts an
-already open store that remains owned by its caller. Drain both HTTP adapters
-before closing the shared service or Tape. MCP owns none of these lifetimes.
-The runtime can use initialized bbolt or JSONL `storage.TapeStorage`.
+`borrow.JournalConfig.Storage` borrows initialized sidecar storage. Its file contains
+authorization state; it is not wrapped as a context Tape. The host owns opening,
+initialization and closing for both storage instances. Drain both HTTP adapters
+before closing them. MCP, the borrowing service and the handler own none of
+these lifetimes. Both bbolt and JSONL sidecar storage are supported.
 
 ## Ref, Lease, and Quote
 
@@ -54,19 +58,27 @@ The common protobuf values live in `gen/anra/model/view/v1`:
 - `view.Quote` contains the borrowed channel, provenance, and public entries.
   Provenance is `{caller, leaseId, ref}`. Entries do not repeat it individually.
 
-The controller resolves an exact committed Ref and calls the shared service's
-trusted local `Grant(ctx, caller, requestID, ref)` operation. The operation uses
-the same commitment resolver, durable decision records, and lease rules as peer
-borrowing, while the host supplies the approval. It requires an explicit Ref.
-A handoff's credential binds `{caller, leaseId, role, anchorSeq, permissions,
-expiresAt}`. The lease ID is public; it is never the bearer credential.
+The controller requests an exact committed Ref through the shared service's
+`Borrow(ctx, caller, request)` operation, supplying it as `BorrowRequest.View`.
+Every new request follows the configured `Review` policy, just like peer
+borrowing. A granted decision supplies the lease; denied and pending decisions
+do not. There is no separate preapproved lease issuance operation. With no
+`Review` configured, eligible committed views receive a one-hour lease.
+Recorded requests replay their original decision without approval or renewal.
 
-`GrantVerifier` owns credential validation, expiry, revocation, and the handoff's
-Caller/LeaseID/Role/AnchorSeq binding. Unknown or revoked credentials return
-`ErrPermissionDenied`, other errors indicate backend unavailability. Success
-requires a valid non-nil immutable Grant. MCP checks the exact anchor and tool
-permission; the shared service checks current lease ownership, expiry, and
-termination before reading any content.
+Handoff describes context transfer; it does not itself authorize a read. The host
+resolves credentials and handoff references to an existing lease and role revision.
+The lease ID is public; it is never the bearer credential.
+
+`AccessProvider` owns credential policy and handoff resolution. `Authenticate`
+checks validity, expiry and revocation on every HTTP request, including discovery.
+`Authorize(ctx, credential, anchorSeq, tool)` rechecks current credential validity
+and the exact anchor and tool permission, then returns a validated, immutable
+`ReadTarget` containing only Caller, LeaseID and Role. Unknown, expired or revoked
+credentials and unauthorized targets return `ErrPermissionDenied`; other errors
+indicate backend unavailability. MCP defines no separate Grant, permission list
+or credential lifetime. The shared borrowing flow checks current lease ownership,
+expiry and termination before reading any content.
 
 `RoleProvider` publishes complete immutable role revisions. A missing revision
 returns `ErrInvalidReference`; other failures become `unavailable`. Providers
@@ -76,14 +88,13 @@ termination does not remove independently valid role-tool permissions.
 ## Tool results
 
 Both tools accept only `{"anchorSeq":"21"}`. Unknown fields and JSON decoding
-errors return `invalid_reference`; a string that does not match the granted
-anchor returns `permission_denied`. The advertised schema describes positive
-canonical decimal strings; invocation uses exact comparison with the validated
-Grant rather than repeating input struct validation.
+errors return `invalid_reference`. The advertised schema describes positive
+canonical decimal strings; the host authorizes the exact anchor and tool through
+`AccessProvider.Authorize`. An unauthorized anchor returns `permission_denied`.
 
 `read_role` returns the bound typed RoleDefinition/Profile revision. It never
 selects a newer role definition. `read_tape_view` calls
-`views.ReadAll(ctx, grant.Caller, grant.LeaseID)` and returns the shared Quote:
+`borrowing.ReadAll(ctx, target.Caller, target.LeaseID)` and returns the shared Quote:
 
 ```json
 {
@@ -110,9 +121,9 @@ MCP and peer share the public exporter. It preserves multimodal Part order,
 authorized thought text and markers, and opaque tool JSON number lexemes.
 Empty Parts entries remain present. Execution state, arbitrary extensions,
 Part metadata and provider thought signatures are excluded without changing
-stored ADK events. Native anchors use `Record.Body()` without OwnerEpoch;
-foreign anchors keep their original body as text. The issuer owns the decision
-to share those bodies. Unsupported or undecodable content fails the whole read.
+stored ADK events. Native anchors use `BuiltIn.Export()` without OwnerEpoch;
+unknown anchor schemas yield `null` content while preserving the entry sequence.
+Unsupported or undecodable content fails the whole read.
 There is no Summary or intermediate Projection model.
 
 Peer pagination traverses each scope in order and skips unauthorized gaps.
@@ -129,7 +140,9 @@ Origin remains usable by native clients. Every HTTP request, including tool
 discovery, requires a credential. Repeated Authorization fields always fail,
 regardless of order or values. A single field accepts case-insensitive Bearer
 and multiple ASCII spaces; no token68 character restriction is added.
-Successful authentication places the Grant in that request's context only.
+Successful authentication places the credential in that request's context only.
+Each tool call asks the host to authorize its target again; HTTP authentication
+alone does not authorize context access.
 
 Authentication failure is HTTP 401 with a Bearer challenge and the public
 permission_denied error envelope. Authentication backend failure is HTTP 503

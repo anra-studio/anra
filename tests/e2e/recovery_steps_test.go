@@ -169,7 +169,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 				return err
 			}
 
-			_, err = tape.Store(ctx, ae.FromTape(entry.NewEntry(entry.WithEntryOwner("alice"), entry.WithEntryKind(entry.EntryToolCall))).WithExtension(ae.ADKEvent, string(encoded)))
+			_, err = tape.Store(ctx, ae.FromEntry(entry.NewEntry(entry.WithEntryOwner("alice"), entry.WithEntryKind(entry.EntryToolCall))).WithExtension(ae.ADKEvent, string(encoded)))
 
 			return err
 		},
@@ -251,7 +251,11 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 					return errors.New("BUSY CLI request entered the conversation")
 				}
 
-				r, err := anchor.Decode(e)
+				value, err := ae.FromTape(e)
+				if err != nil {
+					return err
+				}
+				r, err := anchor.Decode(value)
 				if err != nil {
 					return err
 				}
@@ -270,7 +274,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 
 				var payload json.RawMessage
 
-				exists, err := ae.FromTape(e).DecodeExtension(ae.ADKEvent, &payload)
+				exists, err := value.DecodeExtension(ae.ADKEvent, &payload)
 				if err != nil {
 					return err
 				}

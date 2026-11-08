@@ -26,7 +26,7 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			return err
 		}
 		configured := strings.Replace(string(text), "[agents.alice]", fmt.Sprintf("[agents.alice]\nmodel = %q", name), 1)
-		if err := os.WriteFile(path, []byte(configured), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(configured), 0o600); err != nil {
 			return err
 		}
 		c.env = map[string]string{"OPENAI_BASE_URL": c.s.modelServer.URL + basePath}
@@ -77,7 +77,10 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			return fmt.Errorf("legacy entries: %d", len(stored.Raw))
 		}
 		for _, raw := range stored.Raw {
-			value := ae.FromTape(raw)
+			value, err := ae.FromTape(raw)
+			if err != nil {
+				return err
+			}
 			if _, ok := value.Extension(ae.RunnerMessage); !ok {
 				return fmt.Errorf("legacy payload lost")
 			}
@@ -127,7 +130,10 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			if raw.GetKind().IsAnchor() {
 				continue
 			}
-			value := ae.FromTape(raw)
+			value, err := ae.FromTape(raw)
+			if err != nil {
+				return err
+			}
 			var event session.Event
 			exists, err := value.DecodeExtension(ae.ADKEvent, &event)
 			if err != nil {
@@ -173,13 +179,13 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			if problem == "removed deepseek provider" {
 				provider = "deepseek"
 			}
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \""+provider+"\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0600); err != nil {
+			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \""+provider+"\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0o600); err != nil {
 				return err
 			}
 		case "tool flag":
 			args = append(args, "--tools", "unknown")
 		case "tool config":
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ntools = [\"bash\"]\n"), 0600); err != nil {
+			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ntools = [\"bash\"]\n"), 0o600); err != nil {
 				return err
 			}
 		case "invalid API base":

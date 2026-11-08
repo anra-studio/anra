@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"connectrpc.com/connect/v2"
-	"github.com/google/uuid"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
 	peermodel "github.com/anra-studio/anra/pkg/model/peer"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -77,6 +77,7 @@ func (c *Client) Start(parent context.Context, value *pv.Peer, onChange ...func(
 	go s.maintain(timeout)
 	return s, nil
 }
+
 func (s *Registration) maintain(timeout time.Duration) {
 	defer close(s.done)
 	ticker := time.NewTicker(timeout / 3)
@@ -129,6 +130,7 @@ func (s *Registration) maintain(timeout time.Duration) {
 		}
 	}
 }
+
 func (s *Registration) Update(ctx context.Context, value *pv.Peer) error {
 	value, err := peermodel.Normalize(value)
 	if err != nil {

@@ -12,13 +12,13 @@ require (
 	github.com/cucumber/godog v0.15.1
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/google/uuid v1.6.0
+	github.com/looplab/fsm v1.0.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openai/openai-go/v3 v3.86.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/samber/lo v1.53.0
-	github.com/scbizu/tape-go v0.2.0-anra.3
+	github.com/scbizu/tape-go v0.2.0-anra.5
 	github.com/spf13/cobra v1.10.2
-	github.com/timshannon/bolthold v0.0.0-20240314194003-30aac6950928
 	go.etcd.io/bbolt v1.5.0
 	google.golang.org/adk v1.4.0
 	google.golang.org/genai v1.57.0

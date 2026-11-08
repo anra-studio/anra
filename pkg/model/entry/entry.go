@@ -28,24 +28,24 @@ type Entry struct {
 
 var _ te.EntryLike = Entry{}
 
+// FromEntry converts a tape-go entry without extensions.
+func FromEntry(raw te.Entry) Entry {
+	return Entry{base: raw}
+}
+
 // FromTape normalizes an entry at a foreign storage or SDK boundary. Only this
 // package knows the concrete types used by tape-go's persistence codecs.
-// raw must be a non-nil entry returned by Tape or the runtime adapter.
-func FromTape(raw te.EntryLike) Entry {
+// Only Anra entries and the value types emitted by tape-go are supported.
+func FromTape(raw te.EntryLike) (Entry, error) {
 	switch value := raw.(type) {
 	case Entry:
-		return value
-	case *Entry:
-		return *value
+		return value, nil
 	case te.CustomEntry:
-		return Entry{base: value.Entry, extensions: value.Extensions}
-	case *te.CustomEntry:
-		return Entry{base: value.Entry, extensions: value.Extensions}
+		return Entry{base: value.Entry, extensions: value.Extensions}, nil
+	case te.Entry:
+		return FromEntry(value), nil
 	default:
-		return Entry{base: te.Entry{
-			Seq: raw.GetID(), Ek: raw.GetKind(), Text: raw.GetSummary(),
-			Owner: raw.GetOwner(), Timestamp: raw.GetTimestamp(),
-		}}
+		return Entry{}, fmt.Errorf("entry: unsupported tape entry type %T", raw)
 	}
 }
 

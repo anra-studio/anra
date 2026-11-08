@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/anra-studio/anra/pkg/flow/clbr"
+
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -23,6 +25,7 @@ import (
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
 	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
 	bv "github.com/anra-studio/anra/pkg/model/view"
@@ -45,9 +48,10 @@ type collaborationNode struct {
 
 	a *agent.Anra
 
-	tape *bbolt.Bbolt
+	tape   *bbolt.Bbolt
+	grants *grantFixture
 
-	service *bv.Service
+	service *borrow.Service
 
 	server *httptest.Server
 
@@ -58,7 +62,7 @@ type collaborationNode struct {
 	requests atomic.Int32
 }
 type heldResult struct {
-	result a2a.CollaborationResult
+	result clbr.Result
 
 	err error
 }
@@ -81,7 +85,7 @@ type collaborationScenario struct {
 
 	heldCancel context.CancelFunc
 
-	busy a2a.CollaborationResult
+	busy clbr.Result
 
 	originalSource *pb.Source
 
@@ -163,8 +167,8 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 
 				}
 
-				if n.service != nil {
-					err = errors.Join(err, n.service.Close())
+				if n.grants != nil {
+					err = errors.Join(err, n.grants.close())
 				}
 
 				if n.tape != nil {
@@ -427,7 +431,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 
 			n.server.Close()
 
-			if err := n.service.Close(); err != nil {
+			if err := n.grants.close(); err != nil {
 				return err
 			}
 
@@ -605,7 +609,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 					Query:     "finding",
 					View:      changed,
 				},
-			); !errors.Is(err, a2a.ErrConflict) {
+			); !errors.Is(err, a2a.ErrInvalidParams) {
 				return fmt.Errorf("changed reference: %v", err)
 			}
 
@@ -715,7 +719,11 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 				return err
 			}
 
-			last, err := anchor.Decode(entries[len(entries)-1])
+			value, err := ae.FromTape(entries[len(entries)-1])
+			if err != nil {
+				return err
+			}
+			last, err := anchor.Decode(value)
 			if err != nil {
 				return err
 			}
@@ -768,7 +776,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	)
 
 	sc.Step(
-		`^startup rejects a tape containing (numeric v1 type|empty v1 type|unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|forbidden v1 field|oversized multibyte identity|oversized identity|malformed integration record|malformed record|overlapping starts|unmatched close|conflicting source)$`,
+		`^startup rejects a tape containing (numeric v1 type|empty v1 type|unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|forbidden v1 field|oversized multibyte identity|oversized identity|malformed integration record|malformed record|missing schema|malformed unknown schema|overlapping starts|unmatched close|conflicting source)$`,
 		func(problem string) error {
 			n := c.nodes["alice"]
 
@@ -778,7 +786,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 
 			n.server.Close()
 
-			if err := n.service.Close(); err != nil {
+			if err := n.grants.close(); err != nil {
 				return err
 			}
 
@@ -820,6 +828,12 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 
 			case "malformed record":
 				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":`}
+
+			case "missing schema":
+				payloads = []string{`{"type":"turn.started"}`}
+
+			case "malformed unknown schema":
+				payloads = []string{`{"schema":"example.org/anchor/v1","type":`}
 
 			case "overlapping starts":
 				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old"}`, `{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"two","ownerEpoch":"old"}`}
@@ -1009,17 +1023,26 @@ func (c *collaborationScenario) startNode(name string, m model.LLM) error {
 		return err
 	}
 
-	n.service, err = bv.NewService(
-		bv.Config{
-			Source:     n.a.Source(),
-			Owner:      name,
-			Tape:       n.tape,
-			RecordPath: filepath.Join(c.s.root, "collab-"+name+".grants.db"),
-			Views:      n.a,
-			Exporter:   bv.ContextExporter{},
-			Now: func() time.Time {
-				return time.Unix(0, c.now.Load())
-			},
+	n.grants, err = openGrantFixture(
+		c.s.ctx,
+		filepath.Join(c.s.root, "collab-"+name+".lease.db"),
+		n.a.Source(),
+		name,
+		n.tape,
+		func() time.Time {
+			return time.Unix(0, c.now.Load())
+		},
+		false,
+	)
+	if err != nil {
+		return err
+	}
+	n.service, err = n.grants.newService(
+		borrow.Config{
+			Source:   n.a.Source(),
+			Tape:     n.grants.tape,
+			Views:    n.a,
+			Exporter: bv.ContextExporter{},
 		},
 	)
 	if err != nil {
@@ -1041,7 +1064,7 @@ func (c *collaborationScenario) startNode(name string, m model.LLM) error {
 	if err = a2a.AdvertiseViews(n.card, base+a2a.ViewPath); err != nil {
 		return err
 	}
-	exec, err := a2a.NewExecutor(n.a)
+	exec, err := a2a.NewExecutor(n.a, &clbr.Service{})
 	if err != nil {
 		return err
 	}
@@ -1081,14 +1104,14 @@ func (c *collaborationScenario) startNode(name string, m model.LLM) error {
 	return err
 }
 
-func (c *collaborationScenario) send(from, to, input string) (a2a.CollaborationResult, error) {
+func (c *collaborationScenario) send(from, to, input string) (clbr.Result, error) {
 	return c.sendCtx(c.s.ctx, from, to, input)
 }
 
-func (c *collaborationScenario) sendCtx(ctx context.Context, from, to, input string) (a2a.CollaborationResult, error) {
+func (c *collaborationScenario) sendCtx(ctx context.Context, from, to, input string) (clbr.Result, error) {
 	client, err := messageClient(ctx, a2a.TrustedHTTPClient(from), c.nodes[to].server.URL)
 	if err != nil {
-		return a2a.CollaborationResult{}, err
+		return clbr.Result{}, err
 	}
 	return client.Send(ctx, input)
 }
@@ -1281,7 +1304,11 @@ func (c *collaborationScenario) cancelAndContinue() error {
 	}
 	cancelled, completed, calls := 0, 0, 0
 	for _, e := range entries {
-		r, err := anchor.Decode(e)
+		value, err := ae.FromTape(e)
+		if err != nil {
+			return err
+		}
+		r, err := anchor.Decode(value)
 		if err != nil {
 			return err
 		}
@@ -1332,7 +1359,7 @@ func (c *collaborationScenario) replaceAlice(m model.LLM) error {
 		n.registration.Close()
 	}
 	n.server.Close()
-	if err := n.service.Close(); err != nil {
+	if err := n.grants.close(); err != nil {
 		return err
 	}
 	n.service = nil
@@ -2067,11 +2094,14 @@ func (m thoughtCollaborationModel) GenerateContent(ctx context.Context, r *model
 	return func(yield func(*model.LLMResponse, error) bool) {
 		for response, err := range m.LLM.GenerateContent(ctx, r, stream) {
 			if response != nil && response.Content != nil {
-				response.Content.Parts = append([]*genai.Part{{
-					Text:             "shared-reasoning-marker",
-					Thought:          true,
-					ThoughtSignature: []byte("private-thought-signature"),
-				}}, response.Content.Parts...)
+				response.Content.Parts = append(
+					[]*genai.Part{{
+						Text:             "shared-reasoning-marker",
+						Thought:          true,
+						ThoughtSignature: []byte("private-thought-signature"),
+					}},
+					response.Content.Parts...,
+				)
 			}
 			if !yield(response, err) {
 				return

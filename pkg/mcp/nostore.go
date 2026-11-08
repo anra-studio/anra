@@ -18,6 +18,7 @@ func (w noStoreWriter) WriteHeader(status int) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.ResponseWriter.WriteHeader(status)
 }
+
 func (w noStoreWriter) Write(data []byte) (int, error) {
 	w.Header().Set("Cache-Control", "no-store")
 	return w.ResponseWriter.Write(data)

@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,10 +19,16 @@ var toolDescriptions = map[string]string{
 // Mount on a controlled listener; remote deployments must terminate TLS.
 func (s *Service) Handler() http.Handler {
 	server := s.newServer()
-	transport := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{
-		Stateless: true, JSONResponse: true,
-		MaxRequestBodyBytes: -1, // Zero restores the SDK's default body limit.
-	})
+	transport := sdk.NewStreamableHTTPHandler(
+		func(*http.Request) *sdk.Server {
+			return server
+		},
+		&sdk.StreamableHTTPOptions{
+			Stateless:           true,
+			JSONResponse:        true,
+			MaxRequestBodyBytes: -1, // Zero restores the SDK's default body limit.
+		},
+	)
 	return noStore(s.restrictOrigin(s.authenticateRequest(transport)))
 }
 
@@ -45,35 +50,28 @@ func (s *Service) newServer() *sdk.Server {
 
 func (s *Service) callTool(name string) sdk.ToolHandler {
 	return func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
-		g, _ := ctx.Value(grantContextKey{}).(*Grant)
+		credential, _ := ctx.Value(credentialContextKey{}).(string)
 		var input toolInput
 		if decode(req.Params.Arguments, &input) != nil {
 			return s.toolResult(nil, ErrInvalidReference), nil
 		}
-		if err := resolve(g, input, name); err != nil {
+		target, authErr := s.config.Access.Authorize(ctx, credential, input.AnchorSeq, name)
+		if err := accessError(authErr); err != nil {
 			return s.toolResult(nil, err), nil
 		}
 		if name == ReadRole {
-			result, err := s.role(ctx, g.Role)
+			result, err := s.role(ctx, target.Role)
 			return s.toolResult(result, err), nil
 		}
-		result, err := s.readTapeView(ctx, g)
+		result, err := s.readTapeView(ctx, target)
 		return s.toolResult(result, err), nil
 	}
 }
 
-func errorEnvelope(err error) ErrorResponse {
-	var public *Error
-	if !errors.As(err, &public) {
-		public = ErrUnavailable
-	}
-	return ErrorResponse{Error: public}
-}
-
 // toolResult encodes value once and shares it as text and structured content.
-func (s *Service) toolResult(value any, err error) *sdk.CallToolResult {
+func (s *Service) toolResult(value any, err *Error) *sdk.CallToolResult {
 	if err != nil {
-		value = errorEnvelope(err)
+		value = ErrorResponse{Error: err}
 	}
 	data, marshalErr := json.Marshal(value)
 	if marshalErr != nil {

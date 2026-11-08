@@ -45,7 +45,7 @@ func (m *mcpScenario) largeAudioWindow() (*pb.Ref, error) {
 
 func (m *mcpScenario) readWithLargeBody() error {
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
-		"name": anramcp.ReadTapeView, "arguments": map[string]string{"anchorSeq": m.grant.AnchorSeq},
+		"name": anramcp.ReadTapeView, "arguments": map[string]string{"anchorSeq": m.credential.AnchorSeq},
 	}})
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	"github.com/anra-studio/anra/pkg/model/entry"
@@ -27,7 +28,10 @@ type eventStorage struct {
 func (s *eventStorage) Unwrap() storage.TapeStorage { return s.TapeStorage }
 
 func (s *eventStorage) Store(ctx context.Context, raw te.EntryLike) (te.EntryLike, error) {
-	value := entry.FromTape(raw)
+	value, err := entry.FromTape(raw)
+	if err != nil {
+		return nil, err
+	}
 	var event session.Event
 	if _, err := value.DecodeExtension(entry.ADKEvent, &event); err != nil {
 		return nil, err
@@ -52,9 +56,13 @@ func (s *eventStorage) Range(ctx context.Context, r view.EntryRange, opts ...sto
 	}
 	filtered := result.Raw[:0]
 	for _, raw := range result.Raw {
-		if raw.GetKind().IsAnchor() && raw.GetKind() == "anchor:custom" {
-			record, err := anchor.Decode(raw)
-			if err != nil {
+		value, err := entry.FromTape(raw)
+		if err != nil {
+			return view.EntryView{}, err
+		}
+		if value.GetKind().IsAnchor() && value.GetKind() == "anchor:custom" {
+			record, err := anchor.Decode(value)
+			if err != nil && !errors.Is(err, anchor.ErrUnsupported) {
 				return view.EntryView{}, err
 			}
 			// Only native execution records are control metadata here.
@@ -76,7 +84,10 @@ func (s *eventStorage) Range(ctx context.Context, r view.EntryRange, opts ...sto
 	}
 	result.Raw = filtered
 	for i, raw := range result.Raw {
-		value := entry.FromTape(raw)
+		value, err := entry.FromTape(raw)
+		if err != nil {
+			return view.EntryView{}, err
+		}
 		if _, exists := value.Extension(entry.ADKEvent); exists {
 			result.Raw[i] = value.Tape()
 			continue

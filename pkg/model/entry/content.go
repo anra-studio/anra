@@ -19,6 +19,11 @@ type Content struct {
 	Parts []*Part `json:"parts,omitempty"`
 }
 
+// ADKEventContent extracts model content from an ADK event extension.
+type ADKEventContent struct {
+	Content *Content `json:"content"`
+}
+
 // Part preserves SDK content, including media and code, while excluding provider
 // signatures and execution metadata from its JSON representation. Tool payloads
 // override the SDK's maps to preserve opaque business JSON and number lexemes.
@@ -84,9 +89,7 @@ func (e Entry) Content() (*Content, error) {
 	default:
 		return nil, ErrUnsupported
 	}
-	var event struct {
-		Content *Content `json:"content"`
-	}
+	var event ADKEventContent
 	exists, err := e.DecodeExtension(ADKEvent, &event)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnsupported, err)
@@ -97,6 +100,8 @@ func (e Entry) Content() (*Content, error) {
 		}
 		return event.Content, nil
 	}
+	// Without an ADK event, only user and assistant entries fall back to plain text.
+	// Tool entries require structured content.
 	role := genai.RoleUser
 	switch e.GetKind() {
 	case te.EntryUser:

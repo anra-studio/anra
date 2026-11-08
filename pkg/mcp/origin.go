@@ -15,7 +15,7 @@ func (s *Service) restrictOrigin(next http.Handler) http.Handler {
 		if !s.trustsOrigin(r.Header.Values("Origin")) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			_ = json.NewEncoder(w).Encode(errorEnvelope(ErrPermissionDenied))
+			_ = json.NewEncoder(w).Encode(ErrorResponse{Error: ErrPermissionDenied})
 			return
 		}
 		next.ServeHTTP(w, r)

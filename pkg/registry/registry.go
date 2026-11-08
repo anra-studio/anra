@@ -14,10 +14,10 @@ import (
 
 	"buf.build/go/protovalidate"
 	"connectrpc.com/connect/v2"
-	"github.com/google/uuid"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
 	peermodel "github.com/anra-studio/anra/pkg/model/peer"
+	"github.com/google/uuid"
 	bolt "go.etcd.io/bbolt"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -101,9 +101,11 @@ func validateRequest(ctx context.Context, request proto.Message) error {
 	}
 	return nil
 }
+
 func (r *Registry) revision(record *storedPeer) string {
 	return fmt.Sprintf("%s/%d", r.epoch, record.Version)
 }
+
 func (r *Registry) read(id string) (*storedPeer, error) {
 	var record *storedPeer
 	err := r.db.View(func(tx *bolt.Tx) error {
@@ -119,6 +121,7 @@ func (r *Registry) read(id string) (*storedPeer, error) {
 	}
 	return record, nil
 }
+
 func (r *Registry) write(id string, record *storedPeer) error {
 	data, err := json.Marshal(record)
 	if err == nil {
@@ -129,6 +132,7 @@ func (r *Registry) write(id string, record *storedPeer) error {
 	}
 	return nil
 }
+
 func (r *Registry) presence(record *storedPeer) *rv.Presence {
 	observed := r.observations[record.Peer.Id]
 	if observed.state == rv.PresenceState_PRESENCE_STATE_ONLINE && !r.now().Before(observed.seen.Add(r.timeout)) {
@@ -141,9 +145,11 @@ func (r *Registry) presence(record *storedPeer) *rv.Presence {
 	}
 	return p
 }
+
 func (r *Registry) entry(record *storedPeer) *rv.Entry {
 	return &rv.Entry{Peer: proto.Clone(record.Peer).(*pv.Peer), Presence: r.presence(record), Revision: r.revision(record)}
 }
+
 func (r *Registry) known(id string) (*storedPeer, error) {
 	record, err := r.read(id)
 	if err != nil {
@@ -154,6 +160,7 @@ func (r *Registry) known(id string) (*storedPeer, error) {
 	}
 	return record, nil
 }
+
 func owned(record *storedPeer, runtimeID, token string) error {
 	if record.RuntimeID != runtimeID || record.TokenHash != sha256.Sum256([]byte(token)) {
 		return failure(connect.CodePermissionDenied, "registry: runtime ownership was replaced or credentials are invalid")
@@ -249,6 +256,7 @@ func (r *Registry) Heartbeat(ctx context.Context, req *rv.HeartbeatRequest) (*rv
 	r.observations[req.Id] = observation{state: rv.PresenceState_PRESENCE_STATE_ONLINE, seen: r.now()}
 	return &rv.HeartbeatResponse{Entry: r.entry(record), HeartbeatTimeout: durationpb.New(r.timeout)}, nil
 }
+
 func (r *Registry) Disconnect(ctx context.Context, req *rv.DisconnectRequest) (*rv.DisconnectResponse, error) {
 	if err := validateRequest(ctx, req); err != nil {
 		return nil, err
@@ -272,6 +280,7 @@ func (r *Registry) Disconnect(ctx context.Context, req *rv.DisconnectRequest) (*
 	r.observations[req.Id] = observation{state: rv.PresenceState_PRESENCE_STATE_OFFLINE, seen: r.now()}
 	return &rv.DisconnectResponse{}, nil
 }
+
 func (r *Registry) Lookup(ctx context.Context, req *rv.LookupRequest) (*rv.LookupResponse, error) {
 	if err := validateRequest(ctx, req); err != nil {
 		return nil, err
@@ -284,6 +293,7 @@ func (r *Registry) Lookup(ctx context.Context, req *rv.LookupRequest) (*rv.Looku
 	}
 	return &rv.LookupResponse{Entry: r.entry(record)}, nil
 }
+
 func (r *Registry) List(ctx context.Context, req *rv.ListRequest) (*rv.ListResponse, error) {
 	if err := validateRequest(ctx, req); err != nil {
 		return nil, err
@@ -316,6 +326,7 @@ func (r *Registry) List(ctx context.Context, req *rv.ListRequest) (*rv.ListRespo
 	}
 	return result, nil
 }
+
 func (r *Registry) Forget(ctx context.Context, req *rv.ForgetRequest) (*rv.ForgetResponse, error) {
 	if err := validateRequest(ctx, req); err != nil {
 		return nil, err

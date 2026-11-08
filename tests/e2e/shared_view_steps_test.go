@@ -16,6 +16,7 @@ import (
 	"github.com/cucumber/godog"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/genai"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -56,6 +57,39 @@ func initializeSharedView(sc *godog.ScenarioContext, m *mcpScenario) {
 			return m.setup("multi-scope")
 		},
 	)
+	sc.Step(
+		`^原生多段 View 只持久化一条完整授权记录$`,
+		func() error {
+			records, _, err := m.grants.decisions(m.s.ctx)
+			if err != nil {
+				return err
+			}
+			grants := 0
+			for _, record := range records {
+				var stored struct {
+					Decision json.RawMessage `json:"decision"`
+				}
+				if err := json.Unmarshal([]byte(record.GetSummary()), &stored); err != nil {
+					return err
+				}
+				var decision pb.Decision
+				if err := protojson.Unmarshal(stored.Decision, &decision); err != nil {
+					return err
+				}
+				if decision.GetLease().GetId() != m.lease.Id {
+					continue
+				}
+				grants++
+				if !proto.Equal(decision.Lease.Ref, m.lease.Ref) || len(decision.Lease.Ref.Scopes) != 2 {
+					return errors.New("native multi-view grant lost part of the committed Ref")
+				}
+			}
+			if grants != 1 {
+				return fmt.Errorf("native multi-view operation persisted %d grants, want 1", grants)
+			}
+			return nil
+		},
+	)
 	sc.Step(`^Quote 完整保留两段内容且不包含间隙$`, m.checkMultiScopeQuote)
 	sc.Step(`^其他调用方均不能通过 MCP 或 peer 读取该 lease$`, m.checkSharedIntruder)
 	sc.Step(`^peer 拒绝改写完整 Scopes 的借阅请求$`, m.checkAlteredScopes)
@@ -94,7 +128,7 @@ func (m *mcpScenario) checkMultiScopeQuote() error {
 }
 
 func (m *mcpScenario) peerREST() (restClient, func(), error) {
-	handler, err := a2a.NewViewHandler(m.views, a2a.TrustedPeerIdentity)
+	handler, err := a2a.NewViewHandler(m.borrowing, a2a.TrustedPeerIdentity)
 	if err != nil {
 		return restClient{}, nil, err
 	}
@@ -102,13 +136,13 @@ func (m *mcpScenario) peerREST() (restClient, func(), error) {
 	return restClient{
 		ctx:       m.s.ctx,
 		base:      server.URL,
-		identity:  m.grant.Caller,
+		identity:  m.credential.Caller,
 		extension: true,
 	}, server.Close, nil
 }
 
 func (m *mcpScenario) checkSharedIntruder() error {
-	grant := m.grant
+	grant := m.credential
 	grant.Caller = "intruder"
 	if err := m.call(anramcp.ReadTapeView, m.authorize(grant), grant.AnchorSeq, nil); err != nil {
 		return err
@@ -179,7 +213,7 @@ func (m *mcpScenario) endSharedLease(method string) error {
 		}
 		return nil
 	case "本地撤销":
-		return m.views.Revoke(m.s.ctx, m.grant.Caller, m.lease.Id)
+		return m.borrowing.Revoke(m.s.ctx, m.credential.Caller, m.lease.Id)
 	case "lease到期":
 		m.clock.Add(int64(2 * time.Hour))
 		return nil

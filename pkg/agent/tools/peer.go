@@ -12,6 +12,7 @@ import (
 	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/flow/clbr"
 	"github.com/anra-studio/anra/pkg/model/delegator"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
@@ -88,7 +89,7 @@ type sendResult struct {
 
 // NewPeerTools creates native ADK tools backed by the team's Peer directory and
 // official A2A SDK. Tool calls and responses are persisted by the ADK runtime.
-func NewPeerTools(directory *discovery.Client, h *http.Client, self string) (map[string]tool.Tool, error) {
+func NewPeerTools(directory *discovery.Client, h *http.Client, self string, collaboration *clbr.Service) (map[string]tool.Tool, error) {
 	discover, err := functiontool.New(
 		functiontool.Config{
 			Name:        "discover_peers",
@@ -156,57 +157,41 @@ func NewPeerTools(directory *discovery.Client, h *http.Client, self string) (map
 				return sendResult{}, errors.New("peer messaging requires a configured registry")
 			}
 
-			if args.Peer == self || strings.TrimSpace(args.Message) == "" {
-				return sendResult{}, errors.New("a different peer and a non-empty message are required")
-			}
-			// The current Agent Turn owns the path and shared BUSY progress.
-
-			d := delegator.FromContext(ctx)
-
 			refs := make([]*pb.Ref, len(args.Context))
-
 			for i, ref := range args.Context {
 				refs[i] = ref.message()
 			}
-
-			outgoing, err := d.Next(ctx, self, args.Peer, refs)
-
-			switch {
-
-			case errors.Is(err, delegator.ErrNoNewContext):
+			result, err := collaboration.Send(
+				ctx,
+				clbr.Request{
+					Self:    self,
+					Peer:    args.Peer,
+					Message: args.Message,
+					Context: refs,
+				},
+				func(outgoing context.Context, peer string) (clbr.Sender, error) {
+					record, err := directory.Lookup(outgoing, peer)
+					if err != nil {
+						return nil, err
+					}
+					if err := discovery.RequireOnline(record); err != nil {
+						return nil, err
+					}
+					return a2a.NewMessageClient(outgoing, h, record.Peer)
+				},
+			)
+			if errors.Is(err, clbr.ErrInvalidParams) {
+				return sendResult{}, fmt.Errorf("%w: %w", a2a.ErrInvalidParams, err)
+			}
+			if err != nil {
+				return sendResult{}, err
+			}
+			if result.Suppressed {
 				return sendResult{
 					Peer:   args.Peer,
 					Status: "no_new_context",
 				}, nil
-
-			case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-				return sendResult{}, err
-
-			case err != nil:
-				return sendResult{}, fmt.Errorf("%w: %w", a2a.ErrInvalidParams, err)
-
 			}
-
-			record, err := directory.Lookup(outgoing, args.Peer)
-			if err != nil {
-				return sendResult{}, err
-			}
-
-			if err := discovery.RequireOnline(record); err != nil {
-				return sendResult{}, err
-			}
-
-			client, err := a2a.NewMessageClient(ctx, h, record.Peer)
-			if err != nil {
-				return sendResult{}, err
-			}
-
-			result, err := client.Send(outgoing, args.Message)
-			if err != nil {
-				return sendResult{}, err
-			}
-
-			d.Observe(args.Peer, result.ResponseMetadata)
 
 			var view map[string]any
 

@@ -18,7 +18,8 @@ func Card(value *pv.Peer) (*sdk.AgentCard, error) {
 	if err != nil {
 		return nil, err
 	}
-	card := &sdk.AgentCard{Name: value.Id, Description: value.Description, Version: "0.1.0",
+	card := &sdk.AgentCard{
+		Name: value.Id, Description: value.Description, Version: "0.1.0",
 		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(value.Address+CorePath, sdk.TransportProtocolJSONRPC)},
 		DefaultInputModes:   []string{"text/plain"}, DefaultOutputModes: []string{"text/plain"},
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect/v2"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 
 	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
@@ -57,7 +58,7 @@ func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^Connect 和 REST 接受超过默认消息大小的合法借阅请求$`, p.sendLargeBodies)
 	sc.Step(`^两种 Peer 客户端的大请求到达服务端字段校验$`, p.sendLargeClientRequests)
 	sc.Step(`^Connect、REST 和直接 Peer 客户端读取相同的完整多模态条目且游标位于读取响应$`, p.readTransports)
-	sc.Step(`^其余分页保留原生锚点公开 Body 和第三方锚点原文$`, p.readAnchors)
+	sc.Step(`^其余分页保留原生锚点公开内容并隐藏未知锚点内容$`, p.readAnchors)
 	sc.Step(`^借出节点的存储和服务重建$`, p.restart)
 	sc.Step(`^原 lease 仍可读取完整多模态条目$`, p.readRecovered)
 
@@ -87,7 +88,7 @@ func (p *peerContentScenario) setup() error {
 	// also detects accidentally falling back to Connect's default response cap.
 	p.media = make([]byte, (3<<20)+2)
 
-	value, err := ae.FromTape(te.NewEntry(te.WithEntryKind(te.EntryUser), te.WithEntryOwner("researcher-local"))).WithJSONExtension(
+	value, err := ae.FromEntry(te.NewEntry(te.WithEntryKind(te.EntryUser), te.WithEntryOwner("researcher-local"))).WithJSONExtension(
 		ae.ADKEvent,
 		session.Event{
 			LLMResponse: model.LLMResponse{
@@ -167,23 +168,30 @@ func (p *peerContentScenario) start() error {
 	s := p.s
 	var err error
 
-	s.service, err = bv.NewService(
-		bv.Config{
-			Source: p.ref.Source,
-			Owner:  "researcher-local",
-			Tape:   s.peerTape,
-
-			RecordPath: filepath.Join(s.root, "large-grants.db"),
-			Exporter:   bv.ContextExporter{},
+	s.grants, err = openGrantFixture(
+		s.ctx,
+		filepath.Join(s.root, "large.lease.db"),
+		p.ref.Source,
+		"researcher-local",
+		s.peerTape,
+		func() time.Time {
+			return time.Unix(0, s.clock.Load())
+		},
+		false,
+	)
+	if err != nil {
+		return err
+	}
+	s.service, err = s.grants.newService(
+		borrow.Config{
+			Source:   p.ref.Source,
+			Tape:     s.grants.tape,
+			Exporter: bv.ContextExporter{},
 
 			Views: recoveredViews{
 				Tape:     s.peerTape,
 				Owner:    "researcher-local",
 				Selected: p.ref,
-			},
-
-			Now: func() time.Time {
-				return time.Unix(0, s.clock.Load())
 			},
 		},
 	)
@@ -388,12 +396,12 @@ func (p *peerContentScenario) readAnchors() error {
 
 		if index == 0 {
 
-			var record anchor.Record
+			var record anchor.BuiltIn
 			if err := json.Unmarshal(e.Payload.JsonData, &record); err != nil {
 				return err
 			}
 
-			if e.Payload.MediaType != a2a.AnchorMediaType || record.Schema != anchor.Schema || record.Type != anchor.TurnClosed || record.Outcome != "completed" || record.TurnID == "" || bytes.Contains(e.Payload.JsonData, []byte("ownerEpoch")) {
+			if e.Payload.MediaType != a2a.AnchorMediaType || record.Schema != anchor.BuiltInSchema || record.Type != anchor.TurnClosed || record.Outcome != "completed" || record.TurnID == "" || bytes.Contains(e.Payload.JsonData, []byte("ownerEpoch")) {
 				return errors.New("native anchor lost public fields or disclosed its ownership epoch")
 			}
 
@@ -410,31 +418,30 @@ func (p *peerContentScenario) readAnchors() error {
 			if len(stored.Raw) != 1 {
 				return errors.New("native anchor disappeared from storage")
 			}
-			native, err := anchor.Decode(stored.Raw[0])
+			value, err := ae.FromTape(stored.Raw[0])
+			if err != nil {
+				return err
+			}
+			native, err := anchor.Decode(value)
 			if err != nil {
 				return err
 			}
 			if native == nil {
 				return errors.New("stored native anchor no longer decodes")
 			}
-			body := native.Body()
+			body := native.Export()
 			encoded, err := json.Marshal(body)
 			if err != nil {
 				return err
 			}
 			if body.OwnerEpoch != "" || native.OwnerEpoch != "PRIVATE-EPOCH" || !bytes.Equal(encoded, e.Payload.JsonData) {
-				return errors.New("native Body changed the source record or differs from the peer export")
+				return errors.New("native export changed the source record or differs from the peer export")
 			}
 		}
 
 		if index == 1 {
-
-			var body string
-			if err := json.Unmarshal(e.Payload.JsonData, &body); err != nil {
-				return err
-			}
-			if e.Payload.MediaType != a2a.AnchorMediaType || body != foreignContextAnchor {
-				return errors.New("foreign anchor body was changed by native redaction")
+			if e.Payload.MediaType != a2a.AnchorMediaType || string(e.Payload.JsonData) != "null" {
+				return errors.New("unknown anchor content must be empty")
 			}
 		}
 

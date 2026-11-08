@@ -25,9 +25,12 @@ Protocol paths, SDK types, extension URIs, and wire encoding belong at this
 boundary. Reusable runtime and context-sharing rules should be callable by
 other hosts or adapters, including a web UI.
 
-Borrowing, committed-view resolution, quoted content and lease lifecycle belong
-to `pkg/model/view`. A2A and MCP use the same service and grant record store;
-`pkg/a2a` owns only protocol handling and clients.
+Borrowing and committed-view selection belong to `pkg/flow/borrow`; lease
+issuance and lifetime belong to `pkg/flow/grant`. Collaboration orchestration
+lives in `pkg/flow/clbr`, and root `flow.Set` groups these flows for the host.
+Public content, exporters and codecs live in `pkg/model/view`. A2A and MCP use
+the same borrowing journal and grant handler; `pkg/a2a` owns only protocol
+handling and clients.
 
 `pkg/a2a` uses the official `a2a-go/v2 v2.5.0` SDK for core A2A JSON-RPC. The
 optional `urn:anra:a2a:tape-view:v1` extension uses a generated Connect service
@@ -42,7 +45,7 @@ use `NewMessageClient(ctx, httpClient, peer)` to construct that client from
 canonical Peer metadata; external callers holding an Agent Card use
 `NewMessageClientFromCard`.
 
-`NewExecutor` bridges text-only user messages to `Anra.Run` and emits direct
+`NewExecutor(runtime, &flows.Clbr)` bridges text-only user messages to `Anra.Run` and emits direct
 agent Messages; non-text input and task continuation are rejected. Task-based
 executors and custom task stores can be supplied directly to `NewPeerHandler`
 through SDK interfaces. The historical tape-backed task persistence profile is
@@ -56,32 +59,65 @@ service or grant journal. The CLI mounts both messaging and borrowing with
 
 ## Borrowing: lender setup
 
-Create one `view.Service` for each source Tape and inject it into every adapter.
-`Views` resolves only committed Refs; the native Agent implements it. `Tape`
-accepts the existing read-only range interface. `RecordPath` opens an owned
-`grantRecord.Store`; `Records` supplies a caller-owned store instead. It binds
-persisted decisions to the configured source incarnation.
+Create one grant handler for each source Tape and inject a borrowing service
+into both adapters. `Views` resolves only committed Refs; the native Agent
+implements it. The host initializes separate context and lease-sidecar storage.
+Only context storage is wrapped as a Tape; `.lease.db` holds auxiliary grant
+state, not another context Tape.
 
 ```go
-views, err := view.NewService(
-    view.Config{
-        Source:     researcher.Source(),
-        Owner:      "researcher-local",
-        Tape:       researcher.Tape(),
-        Views:      researcher,
-        RecordPath: "researcher.grants.db",
+// Imports: tape and tapeview are tape-go's pkg/tape and pkg/tape/view.
+// ctx, researcher and leaseStorage are initialized by the host.
+journal, err := borrow.NewJournal(
+    ctx,
+    borrow.JournalConfig{
+        Source:  researcher.Source(),
+        Owner:   "researcher-local",
+        Storage: leaseStorage,
+    },
+)
+// Handle err before constructing the grant flow.
+grants, err := grant.New(
+    grant.Config{
+        Source: researcher.Source(),
+        Owner:  "researcher-local",
+        Leases: journal,
+    },
+)
+// Handle err. The host retains ownership of leaseStorage.
+handlers := tapeview.NewRegistry()
+if err := handlers.Register(grants); err != nil {
+    return err
+}
+contextTape := &tape.Tape{
+    TapeStorage: researcher.Tape(),
+    OwnerID:     "researcher-local",
+    Registry:    handlers,
+}
+// Handle err before constructing the service.
+borrowing, err := borrow.New(
+    borrow.Config{
+        Source:  researcher.Source(),
+        Tape:    contextTape,
+        Views:   researcher,
+        Journal: journal,
+        Grants:  grants,
     },
 )
 // Handle err before mounting adapters.
-handler, err := a2a.NewViewHandler(views, a2a.TrustedPeerIdentity)
+handler, err := a2a.NewViewHandler(borrowing, a2a.TrustedPeerIdentity)
 // Handle err, then mount handler at a2a.ViewPath + "/" and a2a.ViewRESTPath.
 ```
 
-The host drains handlers before closing the service and source Tape. The same
-service can be passed to `mcp.Config.Views`; see the [MCP contract](mcp.md).
-A local controller's `views.Grant` supplies approval for an explicit committed
-Ref. Remote Borrow uses the configured approval function or the default grant
-selection. Approval cannot supply an arbitrary Tape range; commitment remains
+The host drains both HTTP adapters before closing sidecar and context storage.
+Neither flow opens or closes storage. Multiple services for the same source
+share the Journal and registered grant service.
+The same service can be passed to `mcp.Config.Borrowing`; see the
+[MCP contract](mcp.md).
+Local controllers and remote peers use `Borrow` with the configured `Review`
+policy or the default one-hour grant selection. Controllers can request an
+explicit committed Ref through `BorrowRequest.View`; there is no preapproved
+issuance bypass. Approval cannot supply an arbitrary Tape range; commitment remains
 owned by Views. Missing eligible views are denied and never yield empty leases.
 
 ## Borrowing: borrower setup and model consumption
@@ -123,7 +159,16 @@ extension uses generated Connect RPCs plus Vanguard REST:
 `a2a.ViewPath` is the generated TapeViewService path; `a2a.ViewRESTPath` is
 `/v1/tape/`. Each request activates the extension and receives an acknowledgement.
 Identity comes from authentication, never request body fields. Release and local
-Revoke share the same terminal record. Resolve and Revoke have no remote RPC.
+Revoke share the same terminal record. Approve, Reject and Revoke have no remote RPC. `borrow.Service.Approve` completes
+an existing pending request with a lease; `Reject` commits denial. Neither calls
+Review again. Invalid TTL, unavailable committed context and failed issuance leave
+the request pending. Completed requests cannot be approved or rejected again.
+
+`borrow.Journal` owns request transitions and their sidecar records. Its shared
+lock protects state checks and one append, including approvals from different
+services. The grant flow has no pending-request state or nullable expected mode;
+it derives a candidate lease from explicit native views. Borrow commits that
+candidate with the request decision before exposing it to the caller.
 
 Public values live under `gen/anra/model/view/v1`. Ref is `source + scopes`,
 Lease is `id + caller + ref + expiresAt`, and Quote is channel, provenance and
@@ -153,18 +198,44 @@ size policy remain in effect. See the [protobuf contract](../proto/README.md).
 
 ## Persistence and operations
 
-`pkg/model/grantRecord` owns the bolthold/bbolt authorization database. It keeps
-source binding, one request state indexed by lease ID, immutable grants,
-terminal release records and an append-only audit trail. Request IDs are scoped
-by caller; replaying identical input returns the same decision without renewal,
-while changed input conflicts. Pending resolution and release compare the old
-state inside their transaction. There is no second in-memory grant projection.
+`github.com/scbizu/tape-go v0.2.0-anra.5` provides native `Tape.OverView`,
+`view.Registry` and `view.Handler`; see the [integration model](designs/tape-view-handlers-design.md).
+The `pkg/flow/grant` handler implements the native Handle contract and owns lease
+issuance and validity checks. `pkg/flow/borrow.Journal` is the sole persistence
+owner for request decisions, leases and release state. The host injects sidecar
+storage through `borrow.JournalConfig.Storage`; bbolt and JSONL use the same
+journal implementation. The grant authorizer consumes the Journal through its
+small `grant.Leases` contract.
 
-`view.Service` orders Read authorization with Release/Revoke. Reads authorized
+Native `OverView` loads every selected scope in order and dispatches the complete
+view collection once. The grant handler derives the lease Ref from that collection,
+checking owner, session and scope ordering. All scopes remain one lease and one
+sidecar decision; gaps are never included in an enclosing range. The command carries only caller and TTL. Issuance returns a candidate lease;
+only the borrowing journal can make it readable by atomically recording the
+request outcome.
+
+The sidecar's first record binds the Source. Subsequent `anra:lease-decision/v1`
+records preserve the request, decision and release state. One append supplies
+both the new state and its audit record. It uses tape-go storage operations
+without constructing a second Tape, exposing context views, or changing source
+sequences. The journal checks the entire recovered tail before publishing its
+request and lease indexes.
+
+Request IDs are scoped by caller. Reusing a valid request returns its original
+decision without renewal, even when inputs change. The client still rejects a
+granted response whose view differs from an explicitly requested view. Pending
+approval and release check the previous outcome inside the shared journal's
+critical section. Competing approvals cannot overwrite a completed outcome.
+
+Use `.lease.db` for the new sidecar format. Historical `.grants.db` and the
+superseded `.crops.db` format are not read or migrated; their leases must be
+reissued. Context Tape data remains unchanged.
+
+The shared journal orders lease snapshots with Release/Revoke. Reads authorized
 after termination fail; a request already authorized may finish. Expiry is
-checked against the shared clock on every read. Source identity and complete
+checked against the grant flow's clock on every read. Source identity and complete
 Scopes stay stable across restart and later Tape appends. Already delivered
-content cannot be recalled. Historical schema/storage migration is not supplied.
+content cannot be recalled.
 
 ## Nonblocking collaboration
 

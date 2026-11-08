@@ -12,7 +12,7 @@ import (
 )
 
 func eventEntry(content string) entry.Entry {
-	return entry.FromTape(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("PRIVATE-CONTENT"))).
+	return entry.FromEntry(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryContent("PRIVATE-CONTENT"))).
 		WithExtension(entry.ADKEvent, `{"content":`+content+`,"stateDelta":{"secret":"PRIVATE-STATE"},"author":"PRIVATE-AUTHOR"}`).
 		WithExtension("secret", "PRIVATE-EXTENSION")
 }

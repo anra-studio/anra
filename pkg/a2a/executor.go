@@ -2,7 +2,6 @@ package a2a
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -10,29 +9,14 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
-	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
+	"github.com/anra-studio/anra/pkg/flow/clbr"
 	"github.com/anra-studio/anra/pkg/model/delegator"
 )
 
-// Runtime is satisfied by *agent.Anra. The peer owns its runtime and tape;
-// incoming A2A IDs never select a local owner.
-type Runtime interface {
-	Run(context.Context, string) (string, error)
-}
-
-// BusyError is the error a Runtime returns when it declines a request because
-// another Agent Turn is active. The executor reports it as a BUSY outcome rather
-// than a failure. BusyView is the latest committed TapeView the caller
-// may ask to borrow, or nil.
-type BusyError interface {
-	error
-	BusyView() *pb.Ref
-}
-
 // NewExecutor bridges text-only A2A messages to Anra's tape-backed runtime and
 // emits a direct Message. It does not synthesize a task for context borrowing.
-func NewExecutor(runtime Runtime) (a2asrv.AgentExecutor, error) {
-	if runtime == nil {
+func NewExecutor(runtime clbr.Runtime, collaboration *clbr.Service) (a2asrv.AgentExecutor, error) {
+	if runtime == nil || collaboration == nil {
 		return nil, ErrInvalidParams
 	}
 
@@ -65,7 +49,7 @@ func NewExecutor(runtime Runtime) (a2asrv.AgentExecutor, error) {
 
 				}
 
-				result, output, err := runLocal(ctx, runtime, input)
+				result, err := collaboration.Run(ctx, runtime, input)
 				if err != nil {
 
 					yield(nil, fmt.Errorf("anra execution failed: %w", err))
@@ -74,7 +58,7 @@ func NewExecutor(runtime Runtime) (a2asrv.AgentExecutor, error) {
 
 				}
 
-				reply := sdk.NewMessage(sdk.MessageRoleAgent, sdk.NewTextPart(output))
+				reply := sdk.NewMessage(sdk.MessageRoleAgent, sdk.NewTextPart(result.Answer))
 
 				reply.ContextID = exec.ContextID
 
@@ -88,7 +72,7 @@ func NewExecutor(runtime Runtime) (a2asrv.AgentExecutor, error) {
 
 				}
 
-				meta, err := encodeCollaborationMetadata(result)
+				meta, err := encodeCollaborationMetadata(result.ResponseMetadata)
 				if err != nil {
 
 					yield(nil, err)
@@ -143,28 +127,4 @@ func requestDelegation(ctx context.Context, m *sdk.Message) (context.Context, bo
 		return ctx, false, sdk.ErrInvalidParams
 	}
 	return ctx, true, nil
-}
-
-// runLocal runs the request and describes the outcome. A busy agent is not an
-// error: it answers with text saying the request was not accepted and a
-// view hint, which the caller decides whether to expose.
-func runLocal(ctx context.Context, runtime Runtime, input string) (*cp.ResponseMetadata, string, error) {
-	output, err := runtime.Run(ctx, input)
-	var busy BusyError
-	if errors.As(err, &busy) {
-		return &cp.ResponseMetadata{
-			Status: cp.Status_STATUS_BUSY,
-
-			Retry: cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW,
-
-			View: busy.BusyView(),
-		}, "Agent is busy; request was not accepted.", nil
-	}
-	if err != nil {
-		return nil, "", err
-	}
-
-	return &cp.ResponseMetadata{
-		Status: cp.Status_STATUS_COMPLETED,
-	}, output, nil
 }

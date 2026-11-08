@@ -65,7 +65,7 @@ Dependencies and generated reports are ignored by Git. Delete `reports/e2e/`
 when you no longer need its run history. Routine `mise run test` and `mise run e2e`
 continue to work with Go alone; Node is used only for HTML reporting.
 
-Scenarios use real Anra agents, tape-go bbolt storage, the grant journal,
+Scenarios use real Anra agents, tape-go bbolt storage, the grant sidecar and View Handler,
 discovery, the official A2A SDK, and Connect over localhost HTTP. Each scenario
 gets its own temporary files and servers, with cleanup after success or failure.
 Reporting runs preserve a copy of failed scenarios' files before cleanup.

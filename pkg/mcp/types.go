@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"time"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -17,58 +16,15 @@ const (
 	ReadTapeView = "read_tape_view"
 )
 
-// Error contains only public, non-identifying diagnostics. Storage errors and
-// credentials must never be embedded in it.
-type Error struct {
-	Code string `json:"code"`
-
-	Message string `json:"message"`
-}
-
-func (e *Error) Error() string {
-	return e.Code + ": " + e.Message
-}
-
-// ErrorResponse is the public error envelope for HTTP and MCP tool responses.
-type ErrorResponse struct {
-	Error *Error `json:"error"`
-}
-
-var (
-	ErrPermissionDenied = &Error{
-		Code:    "permission_denied",
-		Message: "unauthorized connection or missing grant for target handoff anchor",
-	}
-	ErrInvalidReference = &Error{
-		Code:    "invalid_reference",
-		Message: "invalid handoff reference or missing role revision",
-	}
-	ErrFailedPrecondition = &Error{
-		Code:    "failed_precondition",
-		Message: "committed context cannot be encoded",
-	}
-	ErrUnavailable = &Error{
-		Code:    "unavailable",
-		Message: "context service temporarily unavailable",
-	}
-)
-
-// Grant is a credential verifier's immutable binding to one handoff and role
-// revision. LeaseID refers to the shared view service's caller-bound lease;
-// it carries no independent Tape range. Tool arguments cannot establish these
-// identities. Lease termination and credential revocation are independent.
-type Grant struct {
+// ReadTarget identifies the caller-bound lease and immutable role revision
+// selected by the host for an authorized tool call. It carries no authorization
+// policy or lifetime; the shared borrowing flow owns the lease lifecycle.
+type ReadTarget struct {
 	LeaseID string `json:"leaseId" validate:"required,max=256"`
 
 	Caller string `json:"caller" validate:"required,max=256"`
 
 	Role RoleRef `json:"role"`
-
-	AnchorSeq string `json:"anchorSeq" validate:"required,number,startsnotwith=0"`
-
-	Permissions []string `json:"permissions" validate:"min=1,max=2,unique,dive,oneof=read_role read_tape_view"`
-
-	ExpiresAt time.Time `json:"expiresAt" validate:"required"`
 }
 
 type toolInput struct {

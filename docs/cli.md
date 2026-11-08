@@ -224,6 +224,6 @@ commits. On restart, an open turn receives one abandoned close; its
 unfinished ADK events and state deltas stay on disk but are excluded from the
 next model context. An uncertain storage append fences new reasoning.
 
-`serve` also opens `<data-dir>/<agent>.grants.db` and exposes the TapeView Connect
+`serve` also opens `<data-dir>/<agent>.lease.db` and exposes the TapeView Connect
 service advertised in its card. Grants retain their original source, exact range,
 head, requester, expiry, and release/revocation state across restart.

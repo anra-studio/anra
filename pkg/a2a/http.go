@@ -5,10 +5,9 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/anra-studio/anra/pkg/model/view"
-
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 )
 
 // Authenticate resolves a stable peer identity. Use credential verification for
@@ -52,7 +51,7 @@ func Advertise(card *sdk.AgentCard, endpoint string) error {
 // NewPeerHandler serves the public card and independently authenticated core
 // and extension endpoints. SDK handler options still control task lifecycle,
 // streaming and custom task stores. Card URLs must match these mount paths.
-func NewPeerHandler(card *sdk.AgentCard, core a2asrv.RequestHandler, s *view.Service, auth Authenticate) (http.Handler, error) {
+func NewPeerHandler(card *sdk.AgentCard, core a2asrv.RequestHandler, s *borrow.Service, auth Authenticate) (http.Handler, error) {
 	if card == nil || core == nil || auth == nil {
 		return nil, ErrInvalidParams
 	}

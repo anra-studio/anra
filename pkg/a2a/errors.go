@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 	"github.com/anra-studio/anra/pkg/model/view"
 
 	"connectrpc.com/connect/v2"
@@ -12,10 +13,10 @@ import (
 
 // Errors returned by this package. Use errors.Is to test for them.
 var (
-	ErrInvalidParams = view.ErrInvalidParams
-	ErrConflict      = view.ErrConflict
-	ErrUnavailable   = view.ErrUnavailable
-	ErrStorage       = view.ErrStorage
+	ErrInvalidParams = borrow.ErrInvalidParams
+	ErrConflict      = borrow.ErrConflict
+	ErrUnavailable   = borrow.ErrUnavailable
+	ErrStorage       = borrow.ErrStorage
 	ErrInactive      = errors.New("tape-view extension inactive")
 	ErrUnsupported   = view.ErrUnsupported
 )

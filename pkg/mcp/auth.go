@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-type grantContextKey struct{}
+type credentialContextKey struct{}
 
 func bearerToken(header http.Header) string {
 	values := header.Values("Authorization")
@@ -25,24 +25,27 @@ func bearerToken(header http.Header) string {
 	return strings.TrimSpace(value)
 }
 
-func (s *Service) authenticate(ctx context.Context, token string) (*Grant, error) {
+func (s *Service) authenticate(ctx context.Context, token string) *Error {
 	if token == "" {
-		return nil, ErrPermissionDenied
+		return ErrPermissionDenied
 	}
-	g, err := s.config.Grants.VerifyGrant(ctx, token)
+	return accessError(s.config.Access.Authenticate(ctx, token))
+}
+
+func accessError(err error) *Error {
 	if errors.Is(err, ErrPermissionDenied) {
-		return nil, ErrPermissionDenied
+		return ErrPermissionDenied
 	}
 	if err != nil {
-		return nil, ErrUnavailable
+		return ErrUnavailable
 	}
-	return g, nil
+	return nil
 }
 
 func (s *Service) authenticateRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header)
-		g, err := s.authenticate(r.Context(), token)
+		err := s.authenticate(r.Context(), token)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			status := http.StatusUnauthorized
@@ -52,10 +55,10 @@ func (s *Service) authenticateRequest(next http.Handler) http.Handler {
 				w.Header().Set("WWW-Authenticate", "Bearer")
 			}
 			w.WriteHeader(status)
-			_ = json.NewEncoder(w).Encode(errorEnvelope(err))
+			_ = json.NewEncoder(w).Encode(ErrorResponse{Error: err})
 			return
 		}
-		ctx := context.WithValue(r.Context(), grantContextKey{}, g)
+		ctx := context.WithValue(r.Context(), credentialContextKey{}, token)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

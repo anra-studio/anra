@@ -4,14 +4,13 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/anra-studio/anra/pkg/model/view"
-
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/validate"
 	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	"github.com/anra-studio/anra/gen/anra/a2a/tape/v1/tapev1connect"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/internal/httpserver"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 )
 
 const (
@@ -21,7 +20,7 @@ const (
 
 // NewViewHandler serves the generated Connect and REST tape-view APIs.
 // Mount it at ViewPath + "/" and ViewRESTPath. Identity comes only from Authenticate.
-func NewViewHandler(s *view.Service, auth Authenticate) (http.Handler, error) {
+func NewViewHandler(s *borrow.Service, auth Authenticate) (http.Handler, error) {
 	if s == nil || auth == nil {
 		return nil, ErrInvalidParams
 	}
@@ -72,7 +71,7 @@ func viewAccess(next connect.ServerFunc) connect.ServerFunc {
 }
 
 type connectViews struct {
-	service *view.Service
+	service *borrow.Service
 }
 
 var _ tapev1connect.TapeViewServiceHandler = (*connectViews)(nil)

@@ -10,20 +10,25 @@ such as a web UI, can use it without importing Cobra or launching a subprocess.
 | `config` | Strict TOML decoding, named-agent selection, resolved startup settings and validation | `Load`, `File.Agent`, `Settings.Validate` |
 | `model` | Model provider construction and provider environment settings | `New` |
 | `agent` | Tape-backed ADK reasoning, built-in tool registration, admission, recovery and committed context windows | `New`, `Anra.Run`, `Anra.Shutdown` |
-| `agent/tools` | Built-in ADK tool schemas, argument handling, delegation transitions and model-facing results | `NewPeerTools`, `NewPeerBorrowTool`, `NewBorrowTool` |
+| `agent/tools` | Built-in ADK tool schemas, argument handling, transport construction and model-facing results | `NewPeerTools`, `NewPeerBorrowTool`, `NewBorrowTool` |
 | `peer` | Compose the configured model, agent and disk storage; serve A2A/TapeView; call a running agent | `Open`, `Node.Run`, `Node.Serve`, `Node.Close`, `Ask` |
 | `discovery` | Typed registry client, presence checks, heartbeat maintenance and owned metadata updates | `NewClient`, `Client.Lookup`, `Client.List`, `Client.Start`, `Registration.Update` |
 | `registry` | Persistent Peer directory, runtime ownership, presence and retirement | `Open`, `NewHandler`, `Serve` |
 | `a2a` | A2A / Connect / REST protocol adapters and clients | `NewExecutor`, `NewPeerHandler`, `NewMessageClient`, `Client.BorrowContext` |
-| `model/view` | Committed multi-scope references, caller-bound borrowing, quoted content and provenance | `NewService`, `Service.Borrow`, `Service.Grant`, `Service.ReadAll` |
+| `model/view` | Public view content, provenance, exporters and codecs | `Quote`, `Entry`, `FromProto` |
+| tape-go `pkg/tape` / `pkg/tape/view` | Native context Tape, OverView and handler registry | `Tape.OverView`, `view.Registry`, `view.Handler` |
+| `flow` | Explicit host composition of concrete flows | `Set` |
+| `flow/borrow` | Request admission, Review policy, Approve/Reject, shared Journal, authorized reads and pagination | `New`, `NewJournal`, `Service.Borrow`, `Service.Approve`, `Service.Reject` |
+| `flow/grant` | View handler, candidate lease issuance, validity and release | `New`, `Service.Handle`, `Service.Authorize` |
+| `flow/clbr` | Delegation, BUSY suppression and progress after complete borrowing | `Service.Send`, `Service.Borrow`, `Service.Run`, `Result` |
 | `mcp` | Bearer authentication, handoff/role permissions and shared Quote reads | `NewService`, `Service.Handler` |
-| `model/anchor`, `model/delegator`, `model/grantRecord` | Durable execution records, delegation state and grant records | Protocol and storage types |
+| `model/anchor`, `model/delegator` | Durable execution records and delegation state | Protocol and storage types |
 
 `peer` is the composition layer. `agent` knows neither configuration files nor
 process lifecycle. `discovery` knows the directory's HTTP contract but does not
 host its server; `registry` implements that contract. `a2a` adapts the runtime
-through its `Runtime` interface. No package under `pkg/` imports `cmd/` or Cobra.
-`agent/tools` calls discovery, Delegator, and the reusable A2A clients. `a2a`
+through `clbr.Runtime` and delegates collaboration orchestration to `clbr.Service`. No package under `pkg/` imports `cmd/` or Cobra.
+`agent/tools` constructs discovery and A2A clients; `flow/clbr` owns delegation transitions. `a2a`
 does not depend on ADK tool definitions. `Client.BorrowContext` composes grant
 selection and validated view reads; the tool layer only formats their results
 as canonical ProtoJSON objects for the model.
@@ -31,10 +36,22 @@ The private `internal/httpserver` helper shares cancellation and HTTP shutdown
 between peer and registry servers; it has no terminal output.
 
 The approved [shared View architecture](designs/shared-view-design.md) puts MCP
-and peer borrowing behind the same `pkg/model/view.Service`. It resolves only
+and peer borrowing behind the same `pkg/flow/borrow.Service`. It resolves only
 committed Ref values (`Source + Scopes`), binds each lease to its caller and
 complete Ref, and returns one shared Quote content/provenance model. Durable
-request decisions and lease termination live in `pkg/model/grantRecord`.
+request decisions, issued leases and release state belong to one
+`borrow.Journal`. `grant` consumes its lease access contract without importing
+borrow. Sidecar state is not another context Tape. See the
+[View Handler model](designs/tape-view-handlers-design.md) and
+[flow boundaries](designs/flow-boundaries-design.md).
+
+The request transition table in `pkg/flow/borrow/lifecycle.go` uses looplab/fsm;
+lease lifetime is handled in `flow/grant`. The journal lock spans the expected
+request check and append, so splitting packages does not split the commit.
+`flow/clbr` calls transport and borrowing capabilities through interfaces defined
+where consumed. A2A owns wire encoding; `agent` owns native Turn execution and
+`model/delegator` owns immutable paths and turn-local BUSY memory. Child packages
+do not import root `flow`, which has no operation dispatcher or error reexports.
 MCP role authorization remains independent of the Tape lease.
 
 The [registry contract](registry.md) uses canonical Peer metadata with `address`
@@ -85,11 +102,11 @@ Bind a listener and pass it to `node.Serve(ctx, listener, ready)`. The bound
 address, including an OS-selected port, is advertised in the Agent Card.
 `ready` is an optional `func(net.Addr) error` callback; a host can use it to
 update its own UI. Returning an error aborts startup, disconnects established
-presence, and closes HTTP and the grant record store. The committed Peer remains known
+presence, and closes HTTP and the grant sidecar storage. The committed Peer remains known
 and offline. The library prints nothing.
 
 Cancel the serving context and wait for `Serve` to return before calling
-`node.Close`. `Serve` owns its listener and grant record store; the host owns the
+`node.Close`. `Serve` owns its listener and grant sidecar storage; the host owns the
 node. Heartbeats continue until cancellation, transient outages are retried,
 and permanent ownership rejection stops serving with its cause.
 

@@ -29,13 +29,30 @@ func TestTapeMetadataAndCodecPreserveExtensions(t *testing.T) {
 	if err := json.Unmarshal(encoded, &legacy); err != nil {
 		t.Fatal(err)
 	}
-	restored := entry.FromTape(legacy)
+	restored, err := entry.FromTape(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
 	value, exists := restored.Extension(entry.ADKEvent)
 	if !exists || value != payload || restored.GetID() != id || !restored.GetTimestamp().Equal(timestamp) {
 		t.Fatalf("Tape round trip changed entry metadata or event: %s", encoded)
 	}
 	if value, exists := restored.Extension("opaque:reference"); !exists || value != "retained" {
 		t.Fatal("Tape round trip dropped an unknown extension")
+	}
+}
+
+func TestFromTapeRejectsUnsupportedTypes(t *testing.T) {
+	raw := &te.CustomEntry{
+		Extensions: map[string]any{
+			entry.ADKEvent: "event",
+		},
+	}
+	if _, err := entry.FromTape(raw); err == nil {
+		t.Fatal("unsupported entry type must not silently lose extensions")
+	}
+	if _, err := entry.FromTape(nil); err == nil {
+		t.Fatal("nil entry must be rejected")
 	}
 }
 

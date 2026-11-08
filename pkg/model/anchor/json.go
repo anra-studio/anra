@@ -19,8 +19,8 @@ func ProtoJSON(m proto.Message) json.RawMessage {
 	return data
 }
 
-func (r Record) MarshalJSON() ([]byte, error) {
-	type record Record
+func (r BuiltIn) MarshalJSON() ([]byte, error) {
+	type record BuiltIn
 	data, err := json.Marshal(record(r))
 	if err != nil {
 		return nil, err
@@ -36,7 +36,7 @@ func (r Record) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fields)
 }
 
-func (r *Record) UnmarshalJSON(data []byte) error {
+func (r *BuiltIn) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
@@ -45,7 +45,7 @@ func (r *Record) UnmarshalJSON(data []byte) error {
 	delete(fields, "source")
 	delete(fields, "baseView")
 	rest, _ := json.Marshal(fields)
-	type record Record
+	type record BuiltIn
 	decoder := json.NewDecoder(bytes.NewReader(rest))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode((*record)(r)); err != nil {

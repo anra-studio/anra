@@ -17,6 +17,7 @@ import (
 // Body size policy belongs to the application, not this shared transport.
 func NewHandler(server *connect.Server) (http.Handler, error) {
 	mux := http.NewServeMux()
+	// Zero disables transport message size limits; applications set their own policy.
 	connecthttp.Mount(mux, server, connecthttp.WithReadMaxBytes(0), connecthttp.WithSendMaxBytes(0))
 	if err := vanguard.Mount(mux, server, vanguard.WithMaxReadBytes(0)); err != nil {
 		return nil, err

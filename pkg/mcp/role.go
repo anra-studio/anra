@@ -53,7 +53,7 @@ func (p Profile) String() string {
 	return b.String()
 }
 
-func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, error) {
+func (s *Service) role(ctx context.Context, ref RoleRef) (*RoleDefinition, *Error) {
 	d, err := s.config.Roles.GetRole(ctx, ref)
 	if errors.Is(err, ErrInvalidReference) {
 		return nil, ErrInvalidReference

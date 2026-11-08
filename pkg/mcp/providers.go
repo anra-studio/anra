@@ -12,14 +12,20 @@ type RoleProvider interface {
 	GetRole(context.Context, RoleRef) (*RoleDefinition, error)
 }
 
-// GrantVerifier validates a bearer credential using caller-owned authorization.
-// Implementations support concurrent calls and check credential expiry and
-// revocation on every request. Unknown or revoked credentials return
-// ErrPermissionDenied; other errors indicate backend unavailability. A nil error
-// requires a valid, non-nil Grant whose Caller, LeaseID, Role and AnchorSeq are
-// exactly those committed by the handoff. The lease ID is public, never the
-// credential. MCP checks the handoff and tool permission; the shared view service
-// checks lease ownership, expiry and termination on every content read.
-type GrantVerifier interface {
-	VerifyGrant(ctx context.Context, credential string) (*Grant, error)
+// AccessProvider owns credential verification and tool authorization. Methods
+// must support concurrent calls. Unknown, expired or revoked credentials and
+// unauthorized targets return ErrPermissionDenied; other errors indicate backend
+// unavailability. Neither method issues or renews a view lease.
+type AccessProvider interface {
+	// Authenticate checks credential validity on every HTTP request, including
+	// initialization and discovery requests that name no tool or handoff.
+	Authenticate(ctx context.Context, credential string) error
+
+	// Authorize checks current credential validity, the exact handoff anchor and
+	// tool permission, returning a non-nil, validated, immutable target on success.
+	// The host resolves the handoff's binding; tool arguments cannot choose the
+	// caller, lease or role revision. The shared borrowing flow checks lease
+	// ownership, expiry and termination on every content read. Role authorization
+	// remains independent of the view lease's lifetime.
+	Authorize(ctx context.Context, credential, anchorSeq, tool string) (*ReadTarget, error)
 }

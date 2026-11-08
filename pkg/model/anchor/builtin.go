@@ -10,11 +10,12 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
-// Schema identifies native execution records in the custom anchor envelope.
-const Schema = "anra.dev/anchor/v1"
+// BuiltInSchema identifies Anra's native execution anchors.
+const BuiltInSchema = "anra.dev/anchor/v1"
 
 // Type identifies the native execution transition represented by a record.
 // Its string values are part of the persisted anchor format.
@@ -26,8 +27,8 @@ const (
 	TurnClosed      Type = "turn.closed"
 )
 
-// Record describes tape initialization or an execution turn transition.
-type Record struct {
+// BuiltIn describes tape initialization or an execution turn transition.
+type BuiltIn struct {
 	Schema string `json:"schema" validate:"eq=anra.dev/anchor/v1"`
 
 	Type Type `json:"type" validate:"oneof=tape.initialized turn.started turn.closed"`
@@ -45,13 +46,13 @@ type Record struct {
 	Outcome string `json:"outcome,omitempty" validate:"required_if=Type turn.closed,excluded_unless=Type turn.closed,omitempty,oneof=completed failed cancelled abandoned"`
 }
 
-// Body returns the public record value without the private ownership epoch.
+// Export returns the public record value without the private ownership epoch.
 // It leaves r unchanged. Nested Source and BaseView references are borrowed
 // read-only, as with the record itself; the body is for public encoding.
-func (r *Record) Body() Record {
+func (r *BuiltIn) Export() *BuiltIn {
 	body := *r
 	body.OwnerEpoch = ""
-	return body
+	return &body
 }
 
 var recordValidator = func() *validator.Validate {
@@ -75,8 +76,8 @@ var recordValidator = func() *validator.Validate {
 	return v
 }()
 
-func decodeRecord(e te.EntryLike, raw []byte) (*Record, error) {
-	var r Record
+func decodeBuiltIn(e entry.Entry, raw []byte) (*BuiltIn, error) {
+	var r BuiltIn
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return nil, err
 	}

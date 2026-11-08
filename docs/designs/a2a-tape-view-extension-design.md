@@ -235,15 +235,13 @@ The extension identifier is `urn:anra:a2a:tape-view:v1`. The native Agent Card
 advertises `/anra.a2a.tape.v1.TapeViewService` as its single Connect service
 endpoint; `/a2a` remains the SDK's core endpoint. The integration pins the official Go SDK at v2.5.0.
 
-Grants and decisions are persisted in a dedicated indexed bbolt journal, separate from
-source context. Source identity is provisioned by the application; a grant
-references the tape by that identity, snapshot head and range. The tape is
-append-only, so the reference identifies the content and grants carry no
-session, exporter or content fingerprints. The journal holds three record kinds:
-a grant (immutable), request state (pending or denied) and a release. The
-default exporter shares only
-original user/assistant text; other payloads require a deterministic typed exporter.
-Limits and error codes are fixed in the integration contract linked above.
+The current implementation binds a grant handler to native Tape views; see
+[the View Handler model](tape-view-handlers-design.md). The handler persists
+request decisions and lease state in a separate sidecar. The sidecar reuses
+tape-go storage interfaces without becoming a second context Tape. References
+retain the complete `Source + Scopes`; source sequence and context stay unchanged.
+The current exporter and protocol contract are documented in
+[the A2A adapter guide](../a2a-adapter.md).
 
 Configured card discovery, best-peer ranking, permissioned best-range ranking,
 borrowing RPCs, and Anra tool-result consumption are implemented. Network

@@ -2,7 +2,7 @@
 
 状态：approved。按本文决议实现共享 View、Lease 和 Quote；实现验收结果另行记录。
 
-MCP 和 peer 读取同一类已提交上下文，统一使用 `pkg/model/view` 的借阅服务、内容表示和来源信封。peer 也只允许借阅已提交的 View，去掉空范围授权和自由选段能力。
+MCP 和 peer 读取同一类已提交上下文，统一使用 `pkg/flow` 的借阅流程与 `pkg/model/view` 的内容表示和来源信封。peer 也只允许借阅已提交的 View，去掉空范围授权和自由选段能力。
 
 本次允许直接调整类型、协议和存储格式。不设计历史数据迁移、兼容解码、旧字段、过渡别名或双入口回退。
 
@@ -45,7 +45,7 @@ peer 的全部借阅路径都经过这个解析入口。按 purpose/query 选择
 
 Lease 精确绑定 `Caller + Ref`，包含公开 ID 和有效期。ID 用于引用授权，不是 Bearer secret。其 Ref 在签发后不变，后续推理、追加数据或新窗口都不改变已有 lease。
 
-状态由 grantRecord 持久化：
+请求决策由 `borrow.Journal` 原子持久化，lease 的签发与有效期由 `grant.Service` 管理，状态存入独立 sidecar，详见 [View Handler 模型](tape-view-handlers-design.md)：
 
 ```mermaid
 stateDiagram-v2
@@ -56,9 +56,17 @@ stateDiagram-v2
     pending --> active: 本地批准已提交 View
     active --> released: 调用方释放或本地撤销
     active --> expired: 到达有效期
+    expired --> released: 显式释放
+    released --> released: 幂等释放
 ```
 
-expired 由有效期判定，不要求额外写一份过期状态。借阅请求以调用方和 request ID 实现幂等；同一请求的重放不延长有效期，改写请求内容产生冲突。释放保持幂等，终止后的 lease 不重新激活。
+expired 由有效期判定，不要求额外写一份过期状态。借阅请求以调用方和 request ID 实现幂等；重用 request ID 返回原决定，不因输入变化重新审批或延长有效期。释放保持幂等，终止后的 lease 不重新激活。
+
+请求转换规则集中声明在 `pkg/flow/borrow/lifecycle.go`，使用 looplab/fsm。新请求可进入 pending、granted 或 denied，pending 只能完成为 granted 或 denied。grant 根据已提交 lease 的释放标记和时钟判断有效期；释放后的 lease 不重新激活。状态机回调不执行 I/O，只有 sidecar 追加成功后结果才对调用方可见。
+
+`Borrow` 负责新请求的 Review 策略与首次记录；`Approve` 批准已有 pending 请求，`Reject` 拒绝已有 pending 请求，均不重新执行 Review。已完成请求再次审批返回冲突；Approve 无合格 View 时返回不可用并保留 pending。Approve 在提交锁内重新比较此前读取的 pending 快照，竞争审批不能覆盖已提交结果。
+
+`tape-go v0.2.0-anra.5` 原生提供 Tape、OverView 与 handler Registry，Anra 已删除本地 `pkg/tape` 包装。`grant.Service` 从完整原生视图签发候选 lease，`borrow.Journal` 将其与请求决策一次追加为 `anra:lease-decision/v1` 记录，恢复请求及 lease 索引。直接调用 handler 得到的候选 lease 不能读取或释放。共享 Journal 的锁覆盖预期状态比较、lease ID 唯一性与提交。sidecar 借用 tape-go storage 实现，不构造第二个 Tape，也不提供上下文 View。详见 [flow 边界](flow-boundaries-design.md)。
 
 每次读取按 Caller 和 Lease ID 解析当前授权，检查释放、撤销和到期状态，然后读取固定 Ref。读取不调用 Borrow、不续租、不重新选择 View，也不进入推理 Admission。
 
@@ -88,35 +96,39 @@ Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。�
 
 ## 模块职责与依赖
 
-`pkg/model/view` 拥有借阅规则和公共模型。根包 `pkg/model` 继续负责 LLM provider 初始化。共享服务从现有 A2A 服务抽取，直接复用 Tape 和 grantRecord，不调用本进程的 HTTP 接口，也不增加第二套状态。
+`pkg/model/view` 只拥有公共内容模型、导出和编解码；`pkg/flow/borrow` 拥有借阅审批、请求状态机、Journal、授权读取和分页，`pkg/flow/grant` 拥有 lease 签发与有效期。根包 `pkg/model` 继续负责 LLM provider 初始化。flow 直接复用原生 View、grant handler 和 sidecar，不调用本进程的 HTTP 接口，也不增加第二套持久化状态。
 
 | 模块 | 目标职责 |
 | --- | --- |
 | `agent` | 提交和恢复 Turn，维护已提交窗口索引，解析或选择准确的 Ref |
-| `model/view` | 借阅决策、lease 签发和读取、固定快照读取、公开内容、分页、来源信封和领域错误 |
+| `model/view` | Quote、Entry、Provenance、Channel、公开内容导出及编解码 |
+| `flow` | 通过 Set 组合具体流程 |
+| `flow/borrow` | 借阅策略、请求决策、共享 Journal、授权读取及分页 |
+| `flow/grant` | 原生 view handler、候选 lease 签发、有效期与释放 |
+| `flow/clbr` | 委托、BUSY 抑制、完整借阅后的进度更新 |
 | `model/entry` | 存储条目、扩展访问、SDK-backed 模型内容 |
 | `model/anchor` | 原生执行记录及公开 Body |
-| `model/grantRecord` | 持久化幂等决策、lease 和终止状态，保证原子写入 |
+| tape-go `tape` / `view` | 原生 Tape、OverView 和 handler 注册与分发 |
 | `mcp` | Bearer 认证、请求上下文、交接与角色权限、MCP 编解码和公开错误映射 |
 | `a2a` | peer 身份、extension 协商、Connect/REST 与 A2A 编解码、领域服务调用和错误映射 |
 | `agent/tools` | 发现 peer、发起借阅、完整读取、把共享 Quote 转为 ADK 工具结果 |
 | host / `peer` | 创建和注入同一个借阅服务，拥有依赖初始化、关闭及凭证发行 |
 
-共享服务只定义已经有调用方的能力：Borrow、Get、Read、Release 和本地 Resolve / Revoke。控制器可通过受信任的本地操作，为准确的已提交 Ref 签发调用方 lease；它与 peer Borrow 使用相同的签发及 grantRecord 写入规则。本地操作不成为新的远程管理接口。
+共享服务只定义已经有调用方的能力：Borrow、Get、Read、Release 和本地 Approve / Reject / Revoke。控制器和 peer 均通过 Borrow 申请 lease，控制器在 BorrowRequest.View 中指定准确的已提交 Ref。新请求统一执行 borrow.Config.Review，没有额外传入预批准 Selection 或绕过审批的签发入口；未配置 Review 时沿用一小时的默认授权策略。已记录请求直接重放原决策，不重复审批或续租。Approve / Reject 只完成已有 pending 决策，不成为新的远程管理接口。
 
-现有 Exporter 有文本和结构化内容两种实际实现，可以保留这个策略边界并迁到共享服务。每个部署为两个协议注入同一个内容策略；MCP 不再有独立的 `exportEntry`。不为测试新增 Provider 框架、通用 middleware 框架或一组仅转发字段的接口。
+现有 Exporter 有文本和结构化内容两种实际实现，具体导出器保留在 model/view，消费接口定义在 flow/borrow。每个部署为两个协议注入同一个内容策略；MCP 不再有独立的 `exportEntry`。不为测试新增 Provider 框架、通用 middleware 框架或一组仅转发字段的接口。
 
 ### 类型与 Protobuf
 
 将 Source、EntryRange、Ref 和 Lease 等公共数据声明从 A2A 命名空间抽到中立的 `proto/anra/model/view/v1/view.proto`，生成到 `gen/anra/model/view/v1`。原 `TapeView` 命名为 Ref，只包含 Source 和 `repeated EntryRange scopes`，不保留单段 scope 字段、独立末端字段或 `max_items = 1` 限制。原授权 `View` 命名为 Lease，Lease 直接引用单个完整 Ref，不重复声明其中的来源和范围；一个 Ref 内可以有多段。
 
-借阅业务请求和 Decision 同样由公共 schema 声明，供共享服务和 grantRecord 使用，避免 grantRecord.State 继续通过 A2A 请求类型反向耦合协议。RPC 专有的响应封装及 HTTP annotations 继续位于各协议 schema 中。
+借阅业务请求和 Decision 同样由公共 schema 声明，供共享服务及 grant sidecar 编解码使用，避免通过 A2A 请求类型反向耦合协议。RPC 专有的响应封装及 HTTP annotations 继续位于各协议 schema 中。
 
-Source、EntryRange、Ref、Lease 和决策直接复用公共生成消息，不另写同字段 Go 副本或旧名 alias。Quote 的 JSON 表示使用 RawMessage 内容，协议转换负责将其映射为 protobuf 的精确保真 Payload。`pkg/model/view` 拥有消费模型和行为。JSON / ProtoJSON 编码属于边界，统一使用明确的字段名。
+Source、EntryRange、Ref、Lease 和决策直接复用公共生成消息，不另写同字段 Go 副本或旧名 alias。Quote 的 JSON 表示使用 RawMessage 内容，协议转换负责将其映射为 protobuf 的精确保真 Payload。`pkg/model/view` 拥有内容模型和导出行为，`pkg/flow` 拥有借阅生命周期。JSON / ProtoJSON 编码属于边界，统一使用明确的字段名。
 
 Protobuf 的字段约束使用 Protovalidate，非 Protobuf 的构建约束使用 validator 标签。在外部输入或对象构建边界完成格式验证；共享服务执行真实的提交解析、授权和状态转换规则，消费方不递归重复验证受信任结果。
 
-这样 anchor 和 grantRecord 可以依赖公共生成值，而不依赖 `pkg/model/view` 的服务；共享服务可以使用 anchor 公开内容，不形成 `view -> anchor -> view` 的包循环。A2A 的客户端、生成消息和错误类型不会反向进入共享业务服务。
+这样 anchor 依赖公共生成值而不依赖 `pkg/flow`，grant handler 同样直接使用公共生成消息；共享服务可以使用 anchor 公开内容，不形成 `view -> anchor -> view` 的包循环。A2A 的客户端、生成消息和错误类型不会反向进入共享业务服务。
 
 修改 `.proto` 后重新生成，禁止直接编辑 `tape.pb.go`。直接删除旧的重复声明，不保留兼容字段或历史存储读取路径。
 
@@ -124,13 +136,17 @@ Protobuf 的字段约束使用 Protovalidate，非 Protobuf 的构建约束使�
 
 ```mermaid
 flowchart TD
-    Controller[控制器 / host] -->|受信任的已提交 Ref 授权| Service[model/view.Service]
+    Controller[控制器 / host] -->|Borrow 指定的已提交 Ref| Service[borrow.Service]
     Peer[peer 身份 + Borrow / Read] --> A2A[A2A 适配器]
     A2A --> Service
-    Token[Bearer 凭证] --> MCP[MCP middleware + resolve]
+    Token[Bearer 凭证] --> MCP[MCP middleware + 宿主授权]
     MCP -->|Caller + Lease ID| Service
     Service -->|选择和解析 Ref| Agent[Agent 已提交窗口索引]
-    Service --> GrantRecord[grantRecord 授权状态]
+    Service --> Binding[tape-go 原生 OverView]
+    Binding --> Grant[grant handler]
+    Service --> Journal[borrow.Journal]
+    Grant -->|授权检查与释放| Journal
+    Journal --> Sidecar[授权 sidecar 与状态投影]
     Service --> Tape[固定 Ref 的 Tape 内容]
     Service --> Quote[统一的 borrowed Quote]
     Quote --> MCPResponse[MCP 结果编码]
@@ -138,7 +154,7 @@ flowchart TD
     PeerResponse --> Tool[ADK borrowed_context]
 ```
 
-MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工具权限。凭证本身的有效期、撤销和交接绑定仍由 issuer / GrantVerifier 负责；lease 的有效期、撤销和来源由共享服务负责。不再携带一份可绕过 grantRecord 直接读取的独立 TapeView 授权。
+宿主通过 AccessProvider 验证凭证并解析目标：每次 HTTP 请求执行 Authenticate，每次工具调用执行 Authorize，检查当前凭证、精确的 AnchorSeq 和工具权限，返回仅包含 Caller、Lease ID 和 RoleRef 的 ReadTarget。MCP 不再定义 Grant、凭证有效期或权限列表。凭证策略与交接绑定由宿主负责；lease 的有效期、撤销和来源由共享服务负责。不再携带一份可绕过借阅流程直接读取的独立 TapeView 授权。
 
 `read_tape_view` 先执行现有交接和工具权限检查，再通过共享服务读取绑定 lease。`read_role` 仍读取绑定的角色 revision；Tape lease 不提供角色权限。若交接承诺了 Ref，控制器签发时必须确保它与绑定 lease 完全相同，不能在读取时重借一个新 View 来代替。
 
@@ -148,13 +164,13 @@ MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工�
 
 ## 实现与验收
 
-1. 建立公共 Ref / Lease schema 和 `pkg/model/view`，明确上面的约束及字段名，重新生成协议绑定。
-2. 将 A2A 借阅业务和 grantRecord 接入共享服务；所有借阅改为解析已提交 View，删除自由范围 Policy 和空 lease 分支。原生 anchor、委托提示和 grantRecord 使用公共 Ref / Lease。
+1. 建立公共 Ref / Lease schema、`pkg/model/view` 和 `pkg/flow`，明确上面的约束及字段名，重新生成协议绑定。
+2. 将 A2A 借阅业务和 grant sidecar 接入共享服务；所有借阅改为解析已提交 View，删除自由范围 Policy 和空 lease 分支。原生 anchor、委托提示和 grant sidecar 使用公共 Ref / Lease。
 3. 将公开条目出口、Channel 和 Provenance 收到共享服务，删除 MCP 与 peer 各自的来源组装及内容分支。
 4. MCP 凭证改为绑定同一服务的 lease，删除直接 TapeReader 旁路；host 注入同一个实例。同步更新协议与运行文档。
-5. 通过真实 HTTP、Tape 和 grantRecord 完成验收，再提交实现。
+5. 通过真实 HTTP、Tape 和 grant sidecar 完成验收，再提交实现。
 
-实现位置：公共 schema 位于 `proto/anra/model/view/v1/view.proto`；共享服务、Quote 和 Exporter 位于 `pkg/model/view`；原授权存储已重命名为 `pkg/model/grantRecord`。MCP 和 A2A 注入同一服务实例，MCP 已移除直接 TapeReader 路径。
+实现位置：公共 schema 位于 `proto/anra/model/view/v1/view.proto`；共享借阅服务和请求状态机位于 `pkg/flow/borrow`，Quote 和内容导出位于 `pkg/model/view`；原授权专用存储已替换为 tape-go 原生 OverView 与 flow 内的 grant handler / sidecar。MCP 和 A2A 注入同一服务实例，MCP 已移除直接 TapeReader 路径。
 
 复用并调整现有中文 E2E，重点覆盖：
 
@@ -166,6 +182,6 @@ MCP 的凭证验证结果绑定 Caller、Lease ID、RoleRef、AnchorSeq 和工�
 
 纯算法与编解码边界才增加单测，不为字段搬运添加 mock 或测试接口。实现验收运行 `GOFLAGS=-race mise run test`，结果随实现提交记录。
 
-## 验收结果
+## 拆分 flow 前的验收记录
 
-实现已完成。`GOFLAGS=-race mise run test` 全量通过：244 个场景、1128 个步骤，包括公共协议生成一致性、构建、纯逻辑与真实网络/持久化 E2E。Go 修改已执行 gofumpt，`git diff --check` 和文档链接检查通过。
+View Handler 与授权 sidecar 接入后，`mise run test` 全量通过：252 个场景、1218 个步骤，包括公共协议生成一致性、构建、纯逻辑测试和启用 race 检测的真实网络/持久化 E2E。新增场景覆盖 bbolt 与 JSONL sidecar、注册与绑定约束、跨 Source 拒绝、取消无追加，以及共享 handler 的竞争审批。Go 修改已执行 gofumpt。

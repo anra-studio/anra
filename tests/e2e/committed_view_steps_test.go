@@ -9,6 +9,7 @@ import (
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/pkg/agent"
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
@@ -63,7 +64,11 @@ func (v recoveredViews) View(ctx context.Context, caller string, ref *pb.Ref) (r
 			Source: a.Source(),
 		}
 		for _, raw := range entries.Raw {
-			record, e := anchor.Decode(raw)
+			value, e := ae.FromTape(raw)
+			if e != nil {
+				return nil, e
+			}
+			record, e := anchor.Decode(value)
 			if e != nil {
 				return nil, e
 			}
@@ -102,8 +107,8 @@ func beginFixtureTurn(ctx context.Context, tape storage.TapeStorage, identity st
 		ctx,
 		tape,
 		identity,
-		anchor.Record{
-			Schema:     anchor.Schema,
+		anchor.BuiltIn{
+			Schema:     anchor.BuiltInSchema,
 			Type:       anchor.TurnStarted,
 			TurnID:     turn.ID,
 			OwnerEpoch: "PRIVATE-EPOCH",
@@ -119,8 +124,8 @@ func finishFixtureTurn(ctx context.Context, tape storage.TapeStorage, identity s
 		ctx,
 		tape,
 		identity,
-		anchor.Record{
-			Schema:     anchor.Schema,
+		anchor.BuiltIn{
+			Schema:     anchor.BuiltInSchema,
 			Type:       anchor.TurnClosed,
 			TurnID:     turn.ID,
 			StartSeq:   turn.Start.String(),
@@ -140,7 +145,7 @@ func finishFixtureTurn(ctx context.Context, tape storage.TapeStorage, identity s
 	}, nil
 }
 
-func storeFixtureAnchor(ctx context.Context, tape storage.TapeStorage, identity string, record anchor.Record) (te.Seq, error) {
+func storeFixtureAnchor(ctx context.Context, tape storage.TapeStorage, identity string, record anchor.BuiltIn) (te.Seq, error) {
 	data, err := json.Marshal(record)
 	if err != nil {
 		return te.Seq{}, err

@@ -34,6 +34,7 @@ func (c *Client) Lookup(ctx context.Context, id string) (*rv.Entry, error) {
 	}
 	return response.Entry, nil
 }
+
 func (c *Client) List(ctx context.Context, filter ...*rv.ListRequest) ([]*rv.Entry, error) {
 	req := &rv.ListRequest{}
 	if len(filter) > 0 && filter[0] != nil {

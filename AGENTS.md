@@ -27,9 +27,36 @@ variable change.
 [proverbs]: https://go-proverbs.github.io/
 [eg]: https://go.dev/doc/effective_go
 
+## Formatting and readability
+
+- Use [gofumpt](https://github.com/mvdan/gofumpt) as the Go formatter. Run
+  `gofumpt -w <changed Go files>` before submitting changes.
+- In non-empty struct declarations and struct literals, put each field on its
+  own line, with the opening and closing braces on separate lines. Declare each
+  field separately rather than grouping names (for example, `X, Y int`). Apply
+  this layout explicitly before running gofumpt.
+- For multiline calls with function literals or configuration structs, put each
+  argument on its own line, expand function bodies, and put each struct field on
+  its own line. Keep the closing parenthesis on a separate line with a trailing
+  comma after the last argument. Apply this layout explicitly before running
+  gofumpt; the formatter does not introduce all of these line breaks.
+
+  ```go
+  transport := sdk.NewStreamableHTTPHandler(
+      func(*http.Request) *sdk.Server {
+          return server
+      },
+      &sdk.StreamableHTTPOptions{
+          Stateless:           true,
+          JSONResponse:        true,
+          MaxRequestBodyBytes: -1, // Zero restores the SDK's default body limit.
+      },
+  )
+  ```
+
 ## Classify every finding before reporting it
 
-- Language convention: naming, formatting, comment shape. Let `gofmt`,
+- Language convention: naming, formatting, comment shape. Let `gofumpt`,
   `go vet`, and `buf lint` own it, leave the rest as a nit, and never block on
   it.
 - Design tradeoff: two options with real costs that depend on this repository's
@@ -48,6 +75,12 @@ variable change.
 - Prefer replacing a component over making it flexible in advance. Add
   interfaces, hooks, or type parameters when a second implementation or caller
   already exists, not because one might appear.
+- Use [samber/lo](https://github.com/samber/lo) to simplify type conversions and
+  data assembly, especially collection mapping, filtering, and indexing. Prefer
+  its existing helpers over repetitive loops or custom generic utilities when
+  they make the intent clearer. Keep domain mapping rules and error handling
+  explicit, and use a plain loop when callbacks or nested transformations would
+  obscure the logic.
 - Keep the zero value usable. Require a constructor only when initialization
   carries an invariant.
 - Avoid package-level mutable state. Test the design with three questions: can

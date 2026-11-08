@@ -60,9 +60,9 @@ package for incompatible wire or semantic changes.
 
 TapeViewService supports Borrow, Get, Read and Release over Connect and generated
 Vanguard REST routes. Identity and extension negotiation precede schema validation
-and dispatch. Local Resolve/Revoke and controller Grant are shared-service
+and dispatch. Local Approve/Reject/Revoke and controller borrowing are shared-flow
 operations, not remotely exposed management RPCs. Public types import only the
-neutral model schema; `pkg/model/grantRecord` does not depend on A2A requests.
+neutral model schema; tape-go View bindings and the `pkg/flow/grant` handler do not depend on A2A requests.
 
 Sequences are nonzero canonical ASCII decimal strings of arbitrary precision.
 EntryRange uses `[seqS,seqE)` and its CEL rule compares length and lexical order,

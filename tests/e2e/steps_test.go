@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/anra-studio/anra/pkg/flow/clbr"
+
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -22,6 +24,7 @@ import (
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	a2a "github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
 	bv "github.com/anra-studio/anra/pkg/model/view"
 	"github.com/cucumber/godog"
@@ -48,7 +51,7 @@ type scenario struct {
 
 	coreTape *bbolt.Bbolt
 
-	service *bv.Service
+	service *borrow.Service
 
 	server *httptest.Server
 
@@ -65,6 +68,11 @@ type scenario struct {
 	request *pb.BorrowRequest
 
 	decision *pb.Decision
+
+	grants       *grantFixture
+	jsonlSidecar bool
+
+	pendingWriter *borrow.Service
 
 	firstPage *rpcpb.ReadResponse
 
@@ -142,6 +150,8 @@ func initializeScenario(sc *godog.ScenarioContext) {
 		},
 	)
 
+	initializeGrantSidecar(sc, s)
+
 	sc.Step(`^an agent with its own tape$`, s.openLocalTape)
 
 	sc.Step(
@@ -202,14 +212,8 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^调用方分页读完原有授权视图$`, s.finishSnapshot)
 	sc.Step(`^研究节点已提交 (\d+) 条发现$`, s.addFindings)
 	sc.Step(`^调用方跨页读完全部 (\d+) 条发现$`, s.readAll)
-	sc.Step(`^调用方保持请求 ID 但修改查询$`, s.conflictingBorrow)
-
-	sc.Step(
-		`^借阅请求返回冲突$`,
-		func() error {
-			return expectError(s.lastError, a2a.ErrConflict)
-		},
-	)
+	sc.Step(`^调用方保持请求 ID 但修改用途、查询和范围$`, s.retryChangedBorrow)
+	sc.Step(`^返回原有借阅决定且 lease 仍可读取$`, s.readFirst)
 
 	sc.Step(`^其他调用方不能查询读取或释放该 lease$`, s.checkIntruder)
 	sc.Step(`^其他调用方自己的请求被拒绝且不返回内容$`, s.checkDenied)
@@ -225,8 +229,16 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	)
 
 	sc.Step(`^恢复后的决策仍为 "([^"]*)"$`, s.recoverDecision)
-	sc.Step(`^研究节点将请求处理为 "([^"]*)"$`, s.resolve)
+	sc.Step(`^研究节点将请求处理为 "([^"]*)"$`, s.completePending)
 	sc.Step(`^读取结果符合 "([^"]*)" 决策$`, s.checkAccess)
+	sc.Step(`^另一借阅服务读取当前待审批决策$`, s.rememberPendingDecision)
+	sc.Step(`^另一服务的审批和重复借阅均不能改写结果$`, s.rejectStaleDecision)
+	sc.Step(`^审批租期无效时原待审批决策不变$`, func() error {
+		return s.rejectApproval(0, borrow.ErrInvalidParams)
+	})
+	sc.Step(`^已完成的请求不能再次审批且原决策不变$`, func() error {
+		return s.rejectApproval(time.Hour, borrow.ErrConflict)
+	})
 	sc.Step(`^节点提交包含 "([^"]*)" 的协议请求$`, s.wireRequest)
 
 	sc.Step(
@@ -396,8 +408,8 @@ func (s *scenario) appendFinding(text string) error {
 	return nil
 }
 
-func (s *scenario) selection() bv.Selection {
-	return bv.Selection{
+func (s *scenario) selection() borrow.Selection {
+	return borrow.Selection{
 		Status: a2a.Granted,
 		TTL:    time.Hour,
 	}
@@ -415,13 +427,17 @@ func (s *scenario) startPeer() error {
 	if err := sourceAgent.Shutdown(s.ctx); err != nil {
 		return err
 	}
+	s.grants, err = openGrantFixture(s.ctx, filepath.Join(s.root, "peer.lease.db"), source, "researcher-local", s.peerTape, func() time.Time {
+		return time.Unix(0, s.clock.Load())
+	}, s.jsonlSidecar)
+	if err != nil {
+		return err
+	}
 
-	s.service, err = bv.NewService(
-		bv.Config{
-			Source:     source,
-			Owner:      "researcher-local",
-			Tape:       s.peerTape,
-			RecordPath: filepath.Join(s.root, "grants.db"),
+	s.service, err = s.grants.newService(
+		borrow.Config{
+			Source: source,
+			Tape:   s.grants.tape,
 
 			Views: recoveredViews{
 				Tape:  s.peerTape,
@@ -430,18 +446,14 @@ func (s *scenario) startPeer() error {
 			},
 			Exporter: bv.TextExporter{},
 
-			Now: func() time.Time {
-				return time.Unix(0, s.clock.Load())
-			},
-
-			Approve: func(_ context.Context, peer string, _ *pb.BorrowRequest) (bv.Selection, error) {
+			Review: func(_ context.Context, peer string, _ *pb.BorrowRequest) (borrow.Selection, error) {
 				if peer != "borrower" {
-					return bv.Selection{
+					return borrow.Selection{
 						Status: a2a.Denied,
 					}, nil
 				}
 				if s.pending.Load() {
-					return bv.Selection{
+					return borrow.Selection{
 						Status: a2a.Pending,
 					}, nil
 				}
@@ -468,7 +480,7 @@ func (s *scenario) startPeer() error {
 	if err != nil {
 		return err
 	}
-	executor, err := a2a.NewExecutor(lender)
+	executor, err := a2a.NewExecutor(lender, &clbr.Service{})
 	if err != nil {
 		return err
 	}
@@ -520,9 +532,10 @@ func (s *scenario) stopPeer() error {
 		s.server = nil
 	}
 	var err error
-	if s.service != nil {
-		err = s.service.Close()
-		s.service = nil
+	s.service = nil
+	if s.grants != nil {
+		err = errors.Join(err, s.grants.close())
+		s.grants = nil
 	}
 	if s.peerTape != nil {
 		err = errors.Join(err, s.peerTape.Close())
@@ -738,10 +751,22 @@ func (s *scenario) readAll(count int) error {
 	return nil
 }
 
-func (s *scenario) conflictingBorrow() {
+func (s *scenario) retryChangedBorrow() error {
 	changed := proto.Clone(s.request).(*pb.BorrowRequest)
+	changed.Purpose = "a different purpose"
 	changed.Query = "a different query"
-	_, s.lastError = s.client.Borrow(s.ctx, changed)
+	changed.Bounds = &pb.EntryRange{
+		SeqS: "1",
+		SeqE: "2",
+	}
+	got, err := s.client.Borrow(s.ctx, changed)
+	if err != nil {
+		return err
+	}
+	if !proto.Equal(got, s.decision) {
+		return fmt.Errorf("retry changed decision: got %v, want %v", got, s.decision)
+	}
+	return nil
 }
 
 func expectError(got, want error) error {
@@ -850,16 +875,97 @@ func (s *scenario) recoverDecision(want string) error {
 	return s.retryGrant()
 }
 
-func (s *scenario) resolve(outcome string) error {
-	sel := bv.Selection{
-		Status: a2a.Denied,
-	}
-
+func (s *scenario) completePending(outcome string) error {
 	if outcome == "granted" {
-		sel = s.selection()
+		_, err := s.service.Approve(s.ctx, "borrower", s.request.RequestId, time.Hour)
+		return err
 	}
-	_, err := s.service.Resolve(s.ctx, "borrower", s.request.RequestId, sel)
+	_, err := s.service.Reject(s.ctx, "borrower", s.request.RequestId)
 	return err
+}
+
+func (s *scenario) rejectApproval(ttl time.Duration, want error) error {
+	before, err := s.client.Get(s.ctx, s.request.RequestId)
+	if err != nil {
+		return err
+	}
+	if _, err := s.service.Approve(s.ctx, "borrower", s.request.RequestId, ttl); !errors.Is(err, want) {
+		return fmt.Errorf("Approve returned %v, want %v", err, want)
+	}
+	after, err := s.client.Get(s.ctx, s.request.RequestId)
+	if err != nil {
+		return err
+	}
+	if !proto.Equal(before, after) {
+		return errors.New("failed approval changed the request outcome")
+	}
+	return nil
+}
+
+func (s *scenario) rememberPendingDecision() error {
+	var err error
+	s.pendingWriter, err = s.grants.newService(
+		borrow.Config{
+			Source: s.grants.source,
+			Tape:   s.grants.tape,
+			Views: recoveredViews{
+				Tape:  s.peerTape,
+				Owner: "researcher-local",
+				All:   true,
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	d, err := s.pendingWriter.Get(s.ctx, "borrower", s.request.RequestId)
+	if err != nil {
+		return err
+	}
+	if d.Status != borrow.Pending {
+		return errors.New("expected a persisted pending decision")
+	}
+	return nil
+}
+
+func (s *scenario) rejectStaleDecision() error {
+	before, err := s.client.Get(s.ctx, s.request.RequestId)
+	if err != nil {
+		return err
+	}
+	if s.pendingWriter == nil {
+		return errors.New("missing competing borrowing service")
+	}
+	_, head, err := s.grants.decisions(s.ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.pendingWriter.Reject(s.ctx, "borrower", s.request.RequestId)
+	if !errors.Is(err, borrow.ErrConflict) {
+		return fmt.Errorf("competing resolution returned %v, want conflict", err)
+	}
+	replay, err := s.pendingWriter.Borrow(s.ctx, "borrower", s.request)
+	if err != nil {
+		return err
+	}
+	if !proto.Equal(replay, before) {
+		return errors.New("duplicate borrowing changed the completed decision")
+	}
+	_, afterHead, err := s.grants.decisions(s.ctx)
+	if err != nil {
+		return err
+	}
+	if afterHead != head {
+		return errors.New("rejected and duplicate operations appended sidecar records")
+	}
+	after, err := s.client.Get(s.ctx, s.request.RequestId)
+	if err != nil {
+		return err
+	}
+	if !proto.Equal(before, after) {
+		return fmt.Errorf("conflicting writes changed decision: %v -> %v", before, after)
+	}
+	return nil
 }
 
 func (s *scenario) checkAccess(outcome string) error {

@@ -3,15 +3,18 @@ package e2e_test
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"sync"
 	"time"
 
+	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
-	bv "github.com/anra-studio/anra/pkg/model/view"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
@@ -20,14 +23,28 @@ import (
 
 // The embedding runtime owns these fixtures across MCP service lifetimes.
 // Values are replaced under the lock and never mutated after publication.
+// Credential policy belongs to this host fixture, not to the MCP adapter.
+type mcpCredential struct {
+	Caller      string `validate:"required,max=256"`
+	LeaseID     string `validate:"required,max=256"`
+	Role        anramcp.RoleRef
+	AnchorSeq   string    `validate:"required,number,startsnotwith=0"`
+	Permissions []string  `validate:"min=1,max=2,unique,dive,oneof=read_role read_tape_view"`
+	ExpiresAt   time.Time `validate:"required"`
+}
+
 type mcpProviders struct {
 	mu sync.RWMutex
 
 	roles map[anramcp.RoleRef]anramcp.RoleDefinition
 
-	grants map[string]anramcp.Grant
+	credentials map[string]mcpCredential
 
-	grantErr error
+	accessErr error
+
+	revokeAfterAuthentication bool
+
+	selection borrow.Selection
 }
 
 func (p *mcpProviders) GetRole(ctx context.Context, ref anramcp.RoleRef) (*anramcp.RoleDefinition, error) {
@@ -43,16 +60,16 @@ func (p *mcpProviders) GetRole(ctx context.Context, ref anramcp.RoleRef) (*anram
 	return &r, nil
 }
 
-func (p *mcpProviders) VerifyGrant(ctx context.Context, credential string) (*anramcp.Grant, error) {
+func (p *mcpProviders) credential(ctx context.Context, credential string) (*mcpCredential, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.grantErr != nil {
-		return nil, p.grantErr
+	if p.accessErr != nil {
+		return nil, p.accessErr
 	}
-	g, ok := p.grants[credential]
+	g, ok := p.credentials[credential]
 	if !ok {
 		return nil, anramcp.ErrPermissionDenied
 	}
@@ -69,7 +86,22 @@ func (p *mcpProviders) setRole(r anramcp.RoleDefinition) {
 func (p *mcpProviders) revoke(credential string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.grants, credential)
+	delete(p.credentials, credential)
+}
+
+func (p *mcpProviders) review(ctx context.Context, _ string, _ *pb.BorrowRequest) (borrow.Selection, error) {
+	if err := ctx.Err(); err != nil {
+		return borrow.Selection{}, err
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.selection, nil
+}
+
+func (p *mcpProviders) setApproval(sel borrow.Selection) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.selection = sel
 }
 
 func (m *mcpScenario) viewStorage() storage.TapeStorage {
@@ -103,7 +135,11 @@ func (m *mcpScenario) useJSONLTape() error {
 		return err
 	}
 	for _, raw := range entries.Raw {
-		if _, err := tape.Store(m.tapeContext(), ae.FromTape(raw)); err != nil {
+		value, err := ae.FromTape(raw)
+		if err != nil {
+			return err
+		}
+		if _, err := tape.Store(m.tapeContext(), value); err != nil {
 			return err
 		}
 	}
@@ -157,16 +193,16 @@ func (m *mcpScenario) restartService() error {
 	return nil
 }
 
-// scopedGrants enforces what a GrantVerifier owes the service it is wired to.
-type scopedGrants struct {
+// scopedAccess owns the host's credential policy and handoff resolution.
+type scopedAccess struct {
 	*mcpProviders
 	source *pb.Source
 
 	now func() time.Time
 }
 
-func (m *mcpScenario) grantsFor(source *pb.Source) anramcp.GrantVerifier {
-	return scopedGrants{
+func (m *mcpScenario) accessFor(source *pb.Source) anramcp.AccessProvider {
+	return scopedAccess{
 		mcpProviders: m.providers,
 		source:       source,
 		now: func() time.Time {
@@ -175,8 +211,8 @@ func (m *mcpScenario) grantsFor(source *pb.Source) anramcp.GrantVerifier {
 	}
 }
 
-func (v scopedGrants) VerifyGrant(ctx context.Context, credential string) (*anramcp.Grant, error) {
-	g, err := v.mcpProviders.VerifyGrant(ctx, credential)
+func (v scopedAccess) credential(ctx context.Context, credential string) (*mcpCredential, error) {
+	g, err := v.mcpProviders.credential(ctx, credential)
 	if err != nil {
 		return nil, err
 	}
@@ -187,28 +223,67 @@ func (v scopedGrants) VerifyGrant(ctx context.Context, credential string) (*anra
 	return g, nil
 }
 
+func (v scopedAccess) Authenticate(ctx context.Context, credential string) error {
+	_, err := v.credential(ctx, credential)
+	if err != nil {
+		return err
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.revokeAfterAuthentication {
+		delete(v.credentials, credential)
+		v.revokeAfterAuthentication = false
+	}
+	return nil
+}
+
+func (v scopedAccess) Authorize(ctx context.Context, credential, anchorSeq, tool string) (*anramcp.ReadTarget, error) {
+	g, err := v.credential(ctx, credential)
+	if err != nil {
+		return nil, err
+	}
+	if anchorSeq != g.AnchorSeq || !slices.Contains(g.Permissions, tool) {
+		return nil, anramcp.ErrPermissionDenied
+	}
+	return &anramcp.ReadTarget{
+		Caller:  g.Caller,
+		LeaseID: g.LeaseID,
+		Role:    g.Role,
+	}, nil
+}
+
 func (m *mcpScenario) configureViews(tape storage.TapeStorage) error {
-	if m.views != nil {
-		if err := m.views.Close(); err != nil {
+	if m.grants != nil {
+		if err := m.grants.close(); err != nil {
 			return err
 		}
 	}
 
 	var err error
 
-	m.views, err = bv.NewService(
-		bv.Config{
-			Source:     m.agent.Source(),
-			Owner:      "vesta",
-			Tape:       tape,
-			RecordPath: filepath.Join(m.s.root, "mcp.grants.db"),
+	m.grants, err = openGrantFixture(
+		m.s.ctx,
+		filepath.Join(m.s.root, "mcp.lease.db"),
+		m.agent.Source(),
+		"vesta",
+		tape,
+		func() time.Time {
+			return time.Unix(0, m.clock.Load())
+		},
+		false,
+	)
+	if err != nil {
+		return err
+	}
+	m.borrowing, err = m.grants.newService(
+		borrow.Config{
+			Source: m.agent.Source(),
+			Tape:   m.grants.tape,
 			Views: recoveredViews{
 				Tape:  tape,
 				Owner: "vesta",
 			},
-			Now: func() time.Time {
-				return time.Unix(0, m.clock.Load())
-			},
+			Review: m.providers.review,
 		},
 	)
 	if err != nil {
@@ -217,9 +292,9 @@ func (m *mcpScenario) configureViews(tape storage.TapeStorage) error {
 
 	m.service, err = anramcp.NewService(
 		anramcp.Config{
-			Views:  m.views,
-			Roles:  m.providers,
-			Grants: m.grantsFor(m.agent.Source()),
+			Borrowing: m.borrowing,
+			Roles:     m.providers,
+			Access:    m.accessFor(m.agent.Source()),
 		},
 	)
 
@@ -227,14 +302,63 @@ func (m *mcpScenario) configureViews(tape storage.TapeStorage) error {
 }
 
 func (m *mcpScenario) issueLease(caller string, ref *pb.Ref) error {
-	lease, err := m.views.Grant(m.s.ctx, caller, rand.Text(), ref)
+	decision, err := m.borrowing.Borrow(
+		m.s.ctx,
+		caller,
+		&pb.BorrowRequest{
+			RequestId: rand.Text(),
+			Purpose:   "read shared context",
+			Query:     "committed view",
+			View:      ref,
+		},
+	)
 	if err != nil {
 		return err
 	}
+	if decision.Status != borrow.Granted || decision.Lease == nil {
+		return fmt.Errorf("context borrowing returned %s without a lease", decision.Status)
+	}
 
-	m.lease = lease
+	m.lease = decision.Lease
 
-	m.grant.LeaseID = lease.Id
+	m.credential.LeaseID = decision.Lease.Id
 
+	return nil
+}
+
+func (m *mcpScenario) borrowHandoffView() error {
+	client, closeServer, err := m.peerREST()
+	if err != nil {
+		return err
+	}
+	defer closeServer()
+	var response rpcpb.BorrowResponse
+	err = client.message(
+		http.MethodPost,
+		"/v1/tape/borrows",
+		&pb.BorrowRequest{
+			RequestId: rand.Text(),
+			Purpose:   "read shared context",
+			Query:     "committed view",
+			View:      m.handoff.Context.View,
+		},
+		&response,
+	)
+	if err != nil {
+		return err
+	}
+	m.borrowDecision = response.Decision
+	if m.borrowDecision == nil {
+		return fmt.Errorf("borrowing response has no decision")
+	}
+	if m.borrowDecision.Status != borrow.Granted {
+		return nil
+	}
+	if m.borrowDecision.Lease == nil {
+		return fmt.Errorf("granted borrowing has no lease")
+	}
+	m.lease = m.borrowDecision.Lease
+	m.credential.LeaseID = m.lease.Id
+	m.token = m.authorize(m.credential)
 	return nil
 }

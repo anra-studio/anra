@@ -10,7 +10,7 @@ import (
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/discovery"
-	"github.com/anra-studio/anra/pkg/model/delegator"
+	"github.com/anra-studio/anra/pkg/flow/clbr"
 	"github.com/anra-studio/anra/pkg/model/view"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
@@ -82,7 +82,7 @@ type borrowPeerArgs struct {
 
 // NewPeerBorrowTool resolves the lender's current Peer and lets the lender select
 // context. Every request uses this agent's own HTTP client identity.
-func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string) (tool.Tool, error) {
+func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string, collaboration *clbr.Service) (tool.Tool, error) {
 	return functiontool.New(
 		functiontool.Config{
 			Name:        "borrow_peer_context",
@@ -113,17 +113,14 @@ func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string)
 				Query:     args.Query,
 			}
 
-			result, decision, err := borrowContext(ctx, client, req)
+			decision, pages, err := collaboration.Borrow(ctx, args.Peer, client, req)
 			if err != nil {
 				return nil, err
 			}
-			// A newly borrowed view is evidence of progress, unlike a changed prompt.
-
-			if decision.Status != a2a.Granted || decision.Lease == nil {
-				return result, nil
+			result, err := formatBorrowContext(decision, pages)
+			if err != nil {
+				return nil, err
 			}
-
-			delegator.FromContext(ctx).Borrowed(args.Peer, decision.Lease)
 
 			return result, nil
 		},
@@ -137,9 +134,14 @@ func borrowContext(ctx context.Context, client *a2a.Client, req *pb.BorrowReques
 	if err != nil {
 		return nil, nil, err
 	}
+	result, err := formatBorrowContext(decision, pages)
+	return result, decision, err
+}
+
+func formatBorrowContext(decision *pb.Decision, pages []*pb.Quote) (map[string]any, error) {
 	value, err := messageObject(decision)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	result := map[string]any{"decision": value}
 	if len(pages) > 0 {
@@ -165,13 +167,13 @@ func borrowContext(ctx context.Context, client *a2a.Client, req *pb.BorrowReques
 
 		provenance, err := messageObject(pages[0].Provenance)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		result["borrowed_context"] = map[string]any{"channel": quote.Channel, "provenance": provenance, "entries": entries}
 
 	}
-	return result, decision, nil
+	return result, nil
 }
 
 // messageObject keeps the decision's canonical ProtoJSON representation.

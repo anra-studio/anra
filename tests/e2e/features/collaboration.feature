@@ -163,6 +163,15 @@ Feature: Anchor-backed nonblocking peer collaboration
       | unmatched close              |
       | conflicting source           |
 
+  Scenario Outline: 缺少 schema 或格式损坏的 Anchor 不能用于恢复
+    Given a collaboration agent
+    Then startup rejects a tape containing <problem>
+
+    Examples:
+      | problem                  |
+      | missing schema           |
+      | malformed unknown schema |
+
   Scenario Outline: Other anchor schemas coexist with native execution history
     Given a collaboration agent
     And Alice's tape contains a custom anchor with schema "<schema>"

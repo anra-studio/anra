@@ -6,21 +6,14 @@ import (
 	"slices"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
-const CollaborationURI = "urn:anra:a2a:collaboration:v1"
-const maxCollaborationMetadataBytes = 8192
-
-// CollaborationResult combines generated response metadata with answer text
-// extracted from standard A2A message parts. It is not a wire message.
-type CollaborationResult struct {
-	*cp.ResponseMetadata
-	// Answer is the text of the A2A message parts, not a metadata field.
-	Answer string
-}
+const (
+	CollaborationURI              = "urn:anra:a2a:collaboration:v1"
+	maxCollaborationMetadataBytes = 8192
+)
 
 // Requester is the transport-authenticated identity, never a message body field.
 func Requester(ctx context.Context) string { p, _ := ctx.Value(peerKey{}).(string); return p }
@@ -61,11 +54,13 @@ func advertisesCollaboration(card *sdk.AgentCard) bool {
 	}
 	return false
 }
+
 func AdvertiseCollaboration(card *sdk.AgentCard) {
 	if !advertisesCollaboration(card) {
 		card.Capabilities.Extensions = append(card.Capabilities.Extensions, sdk.AgentExtension{URI: CollaborationURI, Description: "Nonblocking reasoning admission and bounded peer collaboration"})
 	}
 }
+
 func collaborationEnabled(m *sdk.Message) bool {
 	return slices.Contains(m.Extensions, CollaborationURI)
 }

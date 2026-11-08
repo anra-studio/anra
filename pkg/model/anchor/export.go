@@ -1,21 +1,20 @@
 package anchor
 
 import (
+	"fmt"
+
 	"github.com/anra-studio/anra/pkg/model/entry"
-	te "github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
-// Export returns the public content of a custom anchor selected by its caller.
-// Native execution records omit the private ownership epoch. Other schemas
-// retain their original body as text; no schema-independent redaction is done.
-// The original stored record remains unchanged.
-func Export(e te.EntryLike) (any, error) {
+// Export returns the public native record. Unsupported schemas and non-anchor
+// entries return ErrUnsupported.
+func Export(e entry.Entry) (*BuiltIn, error) {
+	if e.GetKind() != Kind {
+		return nil, fmt.Errorf("%w: entry kind %q", ErrUnsupported, e.GetKind())
+	}
 	record, err := Decode(e)
 	if err != nil {
 		return nil, err
 	}
-	if record == nil {
-		return entry.FromTape(e).Body(), nil
-	}
-	return record.Body(), nil
+	return record.Export(), nil
 }

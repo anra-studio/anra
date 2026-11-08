@@ -22,6 +22,7 @@ import (
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
+	"github.com/anra-studio/anra/pkg/flow/borrow"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	"github.com/anra-studio/anra/pkg/model/anchor"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
@@ -47,14 +48,17 @@ type mcpScenario struct {
 	tape *bbolt.Bbolt
 
 	handoffTape storage.TapeStorage
+	grants      *grantFixture
 
 	agent *agent.Anra
 
 	service *anramcp.Service
 
-	views *bv.Service
+	borrowing *borrow.Service
 
 	lease *pb.Lease
+
+	borrowDecision *pb.Decision
 
 	providers *mcpProviders
 
@@ -68,7 +72,7 @@ type mcpScenario struct {
 
 	handoff mcpHandoff
 
-	grant anramcp.Grant
+	credential mcpCredential
 
 	token string
 
@@ -195,13 +199,13 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(
 		`^控制器为同一视图签发另一调用方的凭证$`,
 		func() error {
-			m.grant.Caller = "another-runtime"
+			m.credential.Caller = "another-runtime"
 
-			if err := m.issueLease(m.grant.Caller, m.handoff.Context.View); err != nil {
+			if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
 				return err
 			}
 
-			m.token = m.authorize(m.grant)
+			m.token = m.authorize(m.credential)
 
 			return nil
 		},
@@ -216,8 +220,8 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 				return fmt.Errorf("validate published role: %w", err)
 			}
 
-			if err := v.Struct(m.grant); err != nil {
-				return fmt.Errorf("validate issued grant: %w", err)
+			if err := v.Struct(m.credential); err != nil {
+				return fmt.Errorf("validate issued credential: %w", err)
 			}
 
 			return nil
@@ -234,15 +238,48 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^JSONL 存储和 MCP 服务重建$`, m.restartJSONLTape)
 	sc.Step(`^控制器向 Tape 提交另一份交接$`, m.commitTapeOnly)
 	sc.Step(`^使用原凭证读取新交接$`, m.readWindow)
+	sc.Step(`^宿主拒绝后续上下文借阅$`, func() {
+		m.providers.setApproval(borrow.Selection{
+			Status: borrow.Denied,
+		})
+	})
+	sc.Step(`^宿主批准后续上下文借阅且租期为十五分钟$`, func() {
+		m.providers.setApproval(borrow.Selection{
+			Status: borrow.Granted,
+			TTL:    15 * time.Minute,
+		})
+	})
+	sc.Step(`^控制器通过 peer API 借阅交接视图$`, m.borrowHandoffView)
+	sc.Step(`^本次借阅被拒绝且未签发 lease$`, func() error {
+		if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Denied || m.borrowDecision.Lease != nil {
+			return fmt.Errorf("expected denied borrowing without a lease, got %v", m.borrowDecision)
+		}
+		return nil
+	})
+	sc.Step(`^新 lease 使用审批指定的十五分钟租期$`, func() error {
+		expiresAt := time.Unix(0, m.clock.Load()).Add(15 * time.Minute)
+		if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Granted || m.borrowDecision.Lease == nil || !m.borrowDecision.Lease.ExpiresAt.AsTime().Equal(expiresAt) {
+			return fmt.Errorf("expected granted lease expiring at %s, got %v", expiresAt, m.borrowDecision)
+		}
+		return nil
+	})
+	sc.Step(`^共享时钟前进十六分钟$`, func() {
+		m.clock.Add(int64(16 * time.Minute))
+	})
+	sc.Step(`^宿主在下一次 HTTP 认证通过后撤销凭证$`, func() {
+		m.providers.mu.Lock()
+		defer m.providers.mu.Unlock()
+		m.providers.revokeAfterAuthentication = true
+	})
 
 	sc.Step(
 		`^控制器为新交接签发凭证$`,
 		func() error {
-			if err := m.issueLease(m.grant.Caller, m.handoff.Context.View); err != nil {
+			if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
 				return err
 			}
 
-			m.token = m.authorize(m.grant)
+			m.token = m.authorize(m.credential)
 
 			return nil
 		},
@@ -251,7 +288,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(
 		`^未携带凭证读取上下文$`,
 		func() error {
-			return m.call(anramcp.ReadTapeView, "", m.grant.AnchorSeq, nil)
+			return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, nil)
 		},
 	)
 
@@ -264,7 +301,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 				headers.Add("Authorization", strings.ReplaceAll(row.Cells[0].Value, "{token}", m.token))
 			}
 
-			args, err := json.Marshal(map[string]string{"anchorSeq": m.grant.AnchorSeq})
+			args, err := json.Marshal(map[string]string{"anchorSeq": m.credential.AnchorSeq})
 			if err != nil {
 				return err
 			}
@@ -280,7 +317,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 
 			defer m.providers.mu.Unlock()
 
-			m.providers.grantErr = errors.New("PRIVATE-grant-provider unavailable")
+			m.providers.accessErr = errors.New("PRIVATE-access-provider unavailable")
 		},
 	)
 
@@ -306,7 +343,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(
 		`^读取 MCP 角色$`,
 		func() error {
-			return m.call(anramcp.ReadRole, m.token, m.grant.AnchorSeq, nil)
+			return m.call(anramcp.ReadRole, m.token, m.credential.AnchorSeq, nil)
 		},
 	)
 
@@ -341,7 +378,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(
 		`^从 Origin "([^"]+)" 不带凭证读取上下文$`,
 		func(origin string) error {
-			return m.call(anramcp.ReadTapeView, "", m.grant.AnchorSeq, map[string]string{"Origin": origin})
+			return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, map[string]string{"Origin": origin})
 		},
 	)
 
@@ -356,7 +393,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 }
 
 func (m *mcpScenario) readWindow() error {
-	return m.call(anramcp.ReadTapeView, m.token, m.grant.AnchorSeq, nil)
+	return m.call(anramcp.ReadTapeView, m.token, m.credential.AnchorSeq, nil)
 }
 
 func (m *mcpScenario) tapePath() string {
@@ -371,8 +408,12 @@ func (m *mcpScenario) open() error {
 	var err error
 	if m.providers == nil {
 		m.providers = &mcpProviders{
-			roles:  make(map[anramcp.RoleRef]anramcp.RoleDefinition),
-			grants: make(map[string]anramcp.Grant),
+			roles:       make(map[anramcp.RoleRef]anramcp.RoleDefinition),
+			credentials: make(map[string]mcpCredential),
+			selection: borrow.Selection{
+				Status: borrow.Granted,
+				TTL:    time.Hour,
+			},
 		}
 	}
 	m.tape, err = bbolt.NewBboltStorage("mcp-session", m.tapePath())
@@ -435,9 +476,10 @@ func (m *mcpScenario) close() error {
 		m.agent = nil
 	}
 
-	if m.views != nil {
-		err = errors.Join(err, m.views.Close())
-		m.views = nil
+	if m.grants != nil {
+		err = errors.Join(err, m.grants.close())
+		m.grants = nil
+		m.borrowing = nil
 	}
 
 	m.service = nil
@@ -562,7 +604,7 @@ func (m *mcpScenario) setup(kind string) error {
 		return err
 	}
 
-	m.grant = anramcp.Grant{
+	m.credential = mcpCredential{
 		Caller:      "external-runtime",
 		Role:        m.role.RoleRef,
 		AnchorSeq:   seq,
@@ -570,14 +612,14 @@ func (m *mcpScenario) setup(kind string) error {
 		ExpiresAt:   time.Unix(0, m.clock.Load()).Add(time.Hour),
 	}
 	if kind == "multi-scope" {
-		m.grant.ExpiresAt = time.Unix(0, m.clock.Load()).Add(24 * time.Hour)
+		m.credential.ExpiresAt = time.Unix(0, m.clock.Load()).Add(24 * time.Hour)
 	}
 
-	if err := m.issueLease(m.grant.Caller, ref); err != nil {
+	if err := m.issueLease(m.credential.Caller, ref); err != nil {
 		return err
 	}
 
-	m.token = m.authorize(m.grant)
+	m.token = m.authorize(m.credential)
 	m.serve()
 	return nil
 }
@@ -587,7 +629,7 @@ func (m *mcpScenario) append(kind te.EntryKind, text string) (te.EntryLike, erro
 }
 
 func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
-	value := ae.FromTape(te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
+	value := ae.FromEntry(te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
 		WithExtension(ae.ADKEvent, `{"content":`+content+`,"stateDelta":{"private":"PRIVATE-STATE"}}`)
 	_, err := m.viewStorage().Store(m.tapeContext(), value)
 	return err
@@ -617,7 +659,7 @@ func (m *mcpScenario) appendOwnedView() error {
 		return err
 	}
 
-	value := ae.FromTape(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
+	value := ae.FromEntry(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
 		WithExtension("opaque:reference", "opaque-entry-marker")
 
 	value, err = value.WithJSONExtension(
@@ -658,13 +700,13 @@ func (m *mcpScenario) appendOwnedView() error {
 		return err
 	}
 
-	if err := m.issueLease(m.grant.Caller, m.handoff.Context.View); err != nil {
+	if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
 		return err
 	}
 
-	m.grant.AnchorSeq = seq
+	m.credential.AnchorSeq = seq
 
-	m.token = m.authorize(m.grant)
+	m.token = m.authorize(m.credential)
 	return nil
 }
 
@@ -700,7 +742,10 @@ func (m *mcpScenario) checkOwnedView() error {
 	if len(batch.Raw) != 1 {
 		return errors.New("owned entry was not retained in storage")
 	}
-	value := ae.FromTape(batch.Raw[0])
+	value, err := ae.FromTape(batch.Raw[0])
+	if err != nil {
+		return err
+	}
 	structured, err := value.Content()
 	if err != nil {
 		return err
@@ -952,7 +997,7 @@ func (m *mcpScenario) success(tool string) (json.RawMessage, error) {
 			m.s.ctx,
 			&sdk.CallToolParams{
 				Name:      tool,
-				Arguments: map[string]any{"anchorSeq": m.grant.AnchorSeq},
+				Arguments: map[string]any{"anchorSeq": m.credential.AnchorSeq},
 			},
 		)
 		if err != nil {
@@ -963,7 +1008,7 @@ func (m *mcpScenario) success(tool string) (json.RawMessage, error) {
 		}
 		return json.Marshal(r.StructuredContent)
 	}
-	if err := m.call(tool, m.token, m.grant.AnchorSeq, nil); err != nil {
+	if err := m.call(tool, m.token, m.credential.AnchorSeq, nil); err != nil {
 		return nil, err
 	}
 	var e struct {
@@ -1047,7 +1092,7 @@ func (m *mcpScenario) restart() error {
 		return err
 	}
 	m.serve()
-	return m.call(anramcp.ReadTapeView, m.token, m.grant.AnchorSeq, nil)
+	return m.call(anramcp.ReadTapeView, m.token, m.credential.AnchorSeq, nil)
 }
 
 func (m *mcpScenario) hold() error {
@@ -1084,7 +1129,7 @@ func (m *mcpScenario) commitTapeOnly() error {
 	if err != nil {
 		return err
 	}
-	m.grant.AnchorSeq = seq
+	m.credential.AnchorSeq = seq
 	return nil
 }
 
@@ -1109,9 +1154,9 @@ func (m *mcpScenario) readOtherRole() (err error) {
 
 	service, err := anramcp.NewService(
 		anramcp.Config{
-			Views:  m.views,
-			Roles:  m.providers,
-			Grants: m.grantsFor(a.Source()),
+			Borrowing: m.borrowing,
+			Roles:     m.providers,
+			Access:    m.accessFor(a.Source()),
 		},
 	)
 	if err != nil {
@@ -1167,7 +1212,7 @@ func (m *mcpScenario) rejected(code string) error {
 }
 
 func (m *mcpScenario) roleOnly() error {
-	g := m.grant
+	g := m.credential
 	g.Permissions = []string{anramcp.ReadRole}
 	m.token = m.authorize(g)
 	return nil
@@ -1177,7 +1222,7 @@ func (m *mcpScenario) checkRoleOnly() error {
 	if _, err := m.success(anramcp.ReadRole); err != nil {
 		return err
 	}
-	if err := m.call(anramcp.ReadTapeView, m.token, m.grant.AnchorSeq, nil); err != nil {
+	if err := m.call(anramcp.ReadTapeView, m.token, m.credential.AnchorSeq, nil); err != nil {
 		return err
 	}
 	return m.rejected("permission_denied")
@@ -1195,7 +1240,7 @@ func (m *mcpScenario) checkWindowResponse() error {
 func (m *mcpScenario) checkProvenance(window mcpWindow) error {
 	p := window.Provenance
 
-	if window.Channel != bv.Borrowed || p.LeaseID != m.grant.LeaseID || p.Caller != m.grant.Caller || !proto.Equal(p.Ref, m.lease.Ref) {
+	if window.Channel != bv.Borrowed || p.LeaseID != m.credential.LeaseID || p.Caller != m.credential.Caller || !proto.Equal(p.Ref, m.lease.Ref) {
 		return errors.New("view lost its authenticated borrowed provenance")
 	}
 
@@ -1260,9 +1305,9 @@ func (m *mcpScenario) configureTrustedOrigins(origins []string) error {
 
 	m.service, err = anramcp.NewService(
 		anramcp.Config{
-			Views:  m.views,
-			Roles:  m.providers,
-			Grants: m.grantsFor(m.agent.Source()),
+			Borrowing: m.borrowing,
+			Roles:     m.providers,
+			Access:    m.accessFor(m.agent.Source()),
 
 			TrustedOrigins: origins,
 		},
@@ -1275,7 +1320,7 @@ func (m *mcpScenario) configureTrustedOrigins(origins []string) error {
 }
 
 func (m *mcpScenario) originRequest(origin string) error {
-	return m.call(anramcp.ReadTapeView, m.token, m.grant.AnchorSeq, map[string]string{
+	return m.call(anramcp.ReadTapeView, m.token, m.credential.AnchorSeq, map[string]string{
 		"Origin": origin, "X-Forwarded-Host": "trusted.example", "X-Forwarded-Proto": "https", "Forwarded": "host=trusted.example;proto=https",
 	})
 }
@@ -1341,12 +1386,12 @@ func (m *mcpScenario) commitHandoff(h mcpHandoff) (string, error) {
 	return raw.GetID().String(), nil
 }
 
-func (m *mcpScenario) authorize(g anramcp.Grant) string {
+func (m *mcpScenario) authorize(g mcpCredential) string {
 	token := rand.Text()
 
 	g.Permissions = append([]string(nil), g.Permissions...)
 	m.providers.mu.Lock()
-	m.providers.grants[token] = g
+	m.providers.credentials[token] = g
 	m.providers.mu.Unlock()
 	return token
 }
@@ -1361,7 +1406,7 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 		return err
 	}
 
-	service := m.views
+	service := m.borrowing
 
 	handler, err := a2a.NewViewHandler(service, a2a.TrustedPeerIdentity)
 	if err != nil {
@@ -1373,7 +1418,7 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 	client := restClient{
 		ctx:       m.s.ctx,
 		base:      server.URL,
-		identity:  m.grant.Caller,
+		identity:  m.credential.Caller,
 		extension: true,
 	}
 
@@ -1418,7 +1463,7 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 }
 
 // mcpHandoff is the controller's third-party handoff payload stored in an
-// anchor. The MCP service never parses it; the verifier fixture binds grants to it.
+// anchor. The MCP service never parses it; the host resolves credentials to it.
 type mcpHandoff struct {
 	Schema string `json:"schema"`
 
