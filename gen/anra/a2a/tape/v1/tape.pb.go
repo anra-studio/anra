@@ -157,11 +157,8 @@ func (x *GetResponse) GetDecision() *v1.Decision {
 }
 
 type ReadRequest struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	LeaseId string                 `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
-	// Opaque continuation is decoded and bounded by the view service.
-	Cursor        string `protobuf:"bytes,2,opt,name=cursor,proto3" json:"cursor,omitempty"`
-	PageSize      int32  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	LeaseId       string                 `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -203,24 +200,9 @@ func (x *ReadRequest) GetLeaseId() string {
 	return ""
 }
 
-func (x *ReadRequest) GetCursor() string {
-	if x != nil {
-		return x.Cursor
-	}
-	return ""
-}
-
-func (x *ReadRequest) GetPageSize() int32 {
-	if x != nil {
-		return x.PageSize
-	}
-	return 0
-}
-
 type ReadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Quote         *v1.Quote              `protobuf:"bytes,1,opt,name=quote,proto3" json:"quote,omitempty"`
-	NextCursor    string                 `protobuf:"bytes,2,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -260,13 +242,6 @@ func (x *ReadResponse) GetQuote() *v1.Quote {
 		return x.Quote
 	}
 	return nil
-}
-
-func (x *ReadResponse) GetNextCursor() string {
-	if x != nil {
-		return x.NextCursor
-	}
-	return ""
 }
 
 type ReleaseRequest struct {
@@ -370,15 +345,11 @@ const file_anra_a2a_tape_v1_tape_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tB\n" +
 	"\xbaH\ar\x05 \x01(\x80\x02R\trequestId\"O\n" +
 	"\vGetResponse\x12@\n" +
-	"\bdecision\x18\x01 \x01(\v2\x1c.anra.model.view.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"q\n" +
+	"\bdecision\x18\x01 \x01(\v2\x1c.anra.model.view.v1.DecisionB\x06\xbaH\x03\xc8\x01\x01R\bdecision\"P\n" +
 	"\vReadRequest\x12\"\n" +
-	"\blease_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\aleaseId\x12\x16\n" +
-	"\x06cursor\x18\x02 \x01(\tR\x06cursor\x12&\n" +
-	"\tpage_size\x18\x03 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x00R\bpageSize\"h\n" +
+	"\blease_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\aleaseIdJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\x06cursorR\tpage_size\"Z\n" +
 	"\fReadResponse\x127\n" +
-	"\x05quote\x18\x01 \x01(\v2\x19.anra.model.view.v1.QuoteB\x06\xbaH\x03\xc8\x01\x01R\x05quote\x12\x1f\n" +
-	"\vnext_cursor\x18\x02 \x01(\tR\n" +
-	"nextCursor\"4\n" +
+	"\x05quote\x18\x01 \x01(\v2\x19.anra.model.view.v1.QuoteB\x06\xbaH\x03\xc8\x01\x01R\x05quoteJ\x04\b\x02\x10\x03R\vnext_cursor\"4\n" +
 	"\x0eReleaseRequest\x12\"\n" +
 	"\blease_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02 \x01R\aleaseId\"-\n" +
 	"\x0fReleaseResponse\x12\x1a\n" +

@@ -11,6 +11,7 @@ import (
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/internal/httpserver"
 	"github.com/anra-studio/anra/pkg/flow/borrow"
+	"github.com/anra-studio/anra/pkg/model/view"
 )
 
 const (
@@ -107,14 +108,17 @@ func (h *connectViews) Get(ctx context.Context, req *rpcpb.GetRequest) (*rpcpb.G
 }
 
 func (h *connectViews) Read(ctx context.Context, req *rpcpb.ReadRequest) (*rpcpb.ReadResponse, error) {
-	p, err := h.service.Read(ctx, connectPeer(ctx), req.LeaseId, req.Cursor, req.PageSize)
+	stream, err := h.service.Read(ctx, connectPeer(ctx), req.LeaseId)
 	if err != nil {
 		return nil, connectError(err)
 	}
 
+	quote, err := view.Decode(stream)
+	if err != nil {
+		return nil, connectError(err)
+	}
 	return &rpcpb.ReadResponse{
-		Quote:      p.Quote.Proto(),
-		NextCursor: p.NextCursor,
+		Quote: quote.Proto(),
 	}, nil
 }
 

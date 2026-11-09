@@ -3,7 +3,11 @@ package view
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
+	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"buf.build/go/protovalidate"
@@ -60,8 +64,8 @@ func TestQuoteCodecsPreserveScopesAndOpaqueNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result Quote
-	if err := json.Unmarshal(encoded, &result); err != nil {
+	result, err := Decode(iotest.OneByteReader(bytes.NewReader(encoded)))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Channel != original.Channel || !proto.Equal(result.Provenance.Ref, ref) || !bytes.Equal(result.Entries[0].Content, content) {
@@ -94,6 +98,20 @@ func TestRefRequiresNonemptyCanonicalDecimalScopes(t *testing.T) {
 		}
 		if err := protovalidate.Validate(ref); err == nil {
 			t.Errorf("accepted %s scopes", problem)
+		}
+	}
+}
+
+func TestQuoteDecodeRejectsIncompleteOrTrailingInput(t *testing.T) {
+	t.Parallel()
+	failure := errors.New("read failed after JSON")
+	complete := `{"channel":"borrowed","entries":[]}`
+	if quote, err := Decode(io.MultiReader(strings.NewReader(complete), iotest.ErrReader(failure))); quote != nil || !errors.Is(err, failure) {
+		t.Fatalf("source error after a value returned %v, %v", quote, err)
+	}
+	for _, wire := range []string{`{"channel":"borrowed","entries":[`, complete + `{}`} {
+		if quote, err := Decode(strings.NewReader(wire)); quote != nil || err == nil {
+			t.Fatalf("incomplete or trailing input returned %v, %v", quote, err)
 		}
 	}
 }

@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1423,28 +1422,15 @@ func (m *mcpScenario) checkA2AProjection() (err error) {
 	}
 
 	var read rpcpb.ReadResponse
-	entries := []*pb.ExportedEntry{}
-	cursor := ""
-	for {
-		path := "/v1/tape/views/" + m.lease.Id + "/entries?cursor=" + url.QueryEscape(cursor)
-		if len(m.lease.Ref.Scopes) > 1 {
-			path += "&pageSize=1"
-		}
-		if err := client.message(http.MethodGet, path, nil, &read); err != nil {
-			return err
-		}
-		if read.Quote == nil || read.Quote.Channel != string(window.Channel) || read.Quote.Provenance.Caller != window.Provenance.Caller || read.Quote.Provenance.LeaseId != window.Provenance.LeaseID || !proto.Equal(read.Quote.Provenance.Ref, window.Provenance.Ref) {
-			return errors.New("MCP and peer quote provenance differ")
-		}
-		entries = append(entries, read.Quote.Entries...)
-		cursor = read.NextCursor
-		if cursor == "" {
-			break
-		}
-		if len(read.Quote.Entries) == 0 || len(entries) >= len(window.Entries) {
-			return errors.New("peer pagination failed to progress within the quote")
-		}
+	path := "/v1/tape/views/" + m.lease.Id + "/entries"
+	if err := client.message(http.MethodGet, path, nil, &read); err != nil {
+		return err
 	}
+	if read.Quote == nil || read.Quote.Channel != string(window.Channel) || read.Quote.Provenance.Caller != window.Provenance.Caller || read.Quote.Provenance.LeaseId != window.Provenance.LeaseID || !proto.Equal(read.Quote.Provenance.Ref, window.Provenance.Ref) {
+		return errors.New("MCP and peer quote provenance differ")
+	}
+	entries := read.Quote.Entries
+
 	if len(entries) != len(window.Entries) {
 		return errors.New("MCP and peer quote lengths differ")
 	}

@@ -175,9 +175,9 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 }
 
 // BorrowContext requests a grant and reads its complete permitted view. Denied
-// and pending decisions return without reads. Snapshot validation and ordered
-// pagination are shared with every other protocol caller through Borrow/ReadView.
-func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.Decision, []*pb.Quote, error) {
+// and pending decisions return without reads. Snapshot and scope-completeness
+// validation are shared with every other protocol caller through Borrow/ReadView.
+func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.Decision, *pb.Quote, error) {
 	decision, err := c.Borrow(ctx, req)
 	if err != nil {
 		return nil, nil, err
@@ -186,11 +186,11 @@ func (c *Client) BorrowContext(ctx context.Context, req *pb.BorrowRequest) (*pb.
 		return decision, nil, nil
 	}
 
-	pages, err := c.ReadView(ctx, decision.Lease)
+	quote, err := c.ReadView(ctx, decision.Lease)
 	if err != nil {
 		return nil, nil, err
 	}
-	return decision, pages, nil
+	return decision, quote, nil
 }
 
 func (c *Client) Get(ctx context.Context, id string) (*pb.Decision, error) {
@@ -223,68 +223,43 @@ func (c *Client) Read(ctx context.Context, r *rpcpb.ReadRequest) (*rpcpb.ReadRes
 	return res, validateMessage(res)
 }
 
-// ReadView reads every page of a granted view. A view that fits in one page
-// costs one Read call. Every Quote must match the granted caller, lease and Ref;
-// together the pages must cover the granted scopes exactly once, in order.
-func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) ([]*pb.Quote, error) {
+// ReadView reads the complete authorized Quote. Its provenance and every entry
+// must match the granted caller, lease and ordered scopes exactly once.
+func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) (*pb.Quote, error) {
 	if err := validateMessage(lease); err != nil {
 		return nil, err
 	}
-
-	var pages []*pb.Quote
-
-	var cursor string
-
-	scopeIndex := 0
-
-	expected := te.MustParseSeq(lease.Ref.Scopes[0].SeqS)
-
-	for {
-
-		page, err := c.Read(
-			ctx,
-			&rpcpb.ReadRequest{
-				LeaseId:  lease.Id,
-				Cursor:   cursor,
-				PageSize: MaxPageSize,
-			},
-		)
-		if err != nil {
-			return nil, err
-		}
-		p := page.Quote
-
-		if p.Provenance.LeaseId != lease.Id || p.Provenance.Caller != lease.Caller || !proto.Equal(p.Provenance.Ref, lease.Ref) {
-			return nil, ErrInvalidParams
-		}
-		for _, e := range p.Entries {
-
-			if scopeIndex >= len(lease.Ref.Scopes) || e.Seq != expected.String() {
-				return nil, ErrInvalidParams
-			}
-			expected = expected.Next()
-
-			if expected.String() == lease.Ref.Scopes[scopeIndex].SeqE {
-				scopeIndex++
-				if scopeIndex < len(lease.Ref.Scopes) {
-					expected = te.MustParseSeq(lease.Ref.Scopes[scopeIndex].SeqS)
-				}
-			}
-
-		}
-		pages = append(pages, p)
-		if page.NextCursor == "" {
-			if scopeIndex != len(lease.Ref.Scopes) {
-				return nil, ErrInvalidParams
-			}
-			return pages, nil
-		}
-
-		if len(p.Entries) == 0 || scopeIndex == len(lease.Ref.Scopes) {
-			return nil, ErrInvalidParams
-		}
-		cursor = page.NextCursor
+	response, err := c.Read(
+		ctx,
+		&rpcpb.ReadRequest{
+			LeaseId: lease.Id,
+		},
+	)
+	if err != nil {
+		return nil, err
 	}
+	quote := response.Quote
+	if quote.Provenance.LeaseId != lease.Id || quote.Provenance.Caller != lease.Caller || !proto.Equal(quote.Provenance.Ref, lease.Ref) {
+		return nil, ErrInvalidParams
+	}
+	scopeIndex := 0
+	expected := te.MustParseSeq(lease.Ref.Scopes[0].SeqS)
+	for _, e := range quote.Entries {
+		if scopeIndex >= len(lease.Ref.Scopes) || e.Seq != expected.String() {
+			return nil, ErrInvalidParams
+		}
+		expected = expected.Next()
+		if expected.String() == lease.Ref.Scopes[scopeIndex].SeqE {
+			scopeIndex++
+			if scopeIndex < len(lease.Ref.Scopes) {
+				expected = te.MustParseSeq(lease.Ref.Scopes[scopeIndex].SeqS)
+			}
+		}
+	}
+	if scopeIndex != len(lease.Ref.Scopes) {
+		return nil, ErrInvalidParams
+	}
+	return quote, nil
 }
 
 func (c *Client) Release(ctx context.Context, id string) error {

@@ -294,39 +294,22 @@ func initializeHTTP(sc *godog.ScenarioContext, a *applicationScenario) {
 				return fmt.Errorf("Connect Get disagrees with REST: %v %v", decision, err)
 			}
 
-			pages, err := client.ReadView(a.cli.s.ctx, grant.Lease)
+			quote, err := client.ReadView(a.cli.s.ctx, grant.Lease)
 			if err != nil {
 				return err
 			}
 
-			if len(pages) != 1 || len(pages[0].Entries) != 2 {
-				return fmt.Errorf("unexpected committed conversation: %v", pages)
+			if len(quote.Entries) != 2 {
+				return fmt.Errorf("unexpected committed conversation: %v", quote)
 			}
 
-			cursor := ""
-
-			for i, expected := range []string{"hello", "alice: hello"} {
-
-				var response rpcpb.ReadResponse
-
-				path := "/v1/tape/views/" + grant.Lease.Id + "/entries?pageSize=1&cursor=" + url.QueryEscape(cursor)
-
-				if err := rest.message(http.MethodGet, path, nil, &response); err != nil {
-					return err
-				}
-
-				page := response.Quote
-
-				if page == nil || page.Provenance.LeaseId != grant.Lease.Id || !proto.Equal(page.Provenance.Ref, grant.Lease.Ref) || len(page.Entries) != 1 || !exportedTextIs(page.Entries[0], expected) || !proto.Equal(page.Entries[0], pages[0].Entries[i]) {
-					return fmt.Errorf("REST pagination disagrees with granted context: %v", page)
-				}
-
-				cursor = response.NextCursor
-
-				if (i == 0) != (cursor != "") {
-					return errors.New("incorrect REST page cursor")
-				}
-
+			var readResponse rpcpb.ReadResponse
+			path := "/v1/tape/views/" + grant.Lease.Id + "/entries"
+			if err := rest.message(http.MethodGet, path, nil, &readResponse); err != nil {
+				return err
+			}
+			if !proto.Equal(readResponse.Quote, quote) || !exportedTextIs(quote.Entries[0], "hello") || !exportedTextIs(quote.Entries[1], "alice: hello") {
+				return fmt.Errorf("REST content disagrees with Connect: %v", readResponse.Quote)
 			}
 
 			return nil
@@ -387,14 +370,7 @@ func initializeHTTP(sc *godog.ScenarioContext, a *applicationScenario) {
 				return err
 			}
 
-			rest.identity = "bob"
-
-			status, body, err = rest.call(http.MethodGet, path+"?pageSize=101", nil)
-			if err != nil {
-				return err
-			}
-
-			return checkRESTError(status, body, http.StatusBadRequest, connect.CodeInvalidArgument)
+			return nil
 		},
 	)
 

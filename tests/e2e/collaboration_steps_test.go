@@ -482,7 +482,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 				return fmt.Errorf("missing separate requester-bound grant: %v %v", own, err)
 			}
 
-			pages, err := client.ReadView(s.ctx, own.Lease)
+			quote, err := client.ReadView(s.ctx, own.Lease)
 			if err != nil {
 				return err
 			}
@@ -497,7 +497,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 				return err
 			}
 
-			if len(pages) != 1 || len(original) != 1 || len(pages[0].Entries) != 2 || len(original[0].Entries) != 2 || !proto.Equal(pages[0].Entries[0], original[0].Entries[0]) || !proto.Equal(pages[0].Entries[1], original[0].Entries[1]) {
+			if len(quote.Entries) != 2 || len(original.Entries) != 2 || !proto.Equal(quote.Entries[0], original.Entries[0]) || !proto.Equal(quote.Entries[1], original.Entries[1]) {
 				return errors.New("separate grants did not return the same immutable view")
 			}
 
@@ -1180,11 +1180,11 @@ func (c *collaborationScenario) checkView(client *a2a.Client, v *pb.Lease) error
 	if ref == nil || !proto.Equal(v.Ref, ref) {
 		return fmt.Errorf("incorrect context window: %v", v)
 	}
-	pages, err := client.ReadView(c.s.ctx, v)
+	quote, err := client.ReadView(c.s.ctx, v)
 	if err != nil {
 		return err
 	}
-	if len(pages) != 1 || len(pages[0].Entries) != 2 {
+	if len(quote.Entries) != 2 {
 		return errors.New("view did not yield the completed user/assistant exchange")
 	}
 
@@ -1193,12 +1193,12 @@ func (c *collaborationScenario) checkView(client *a2a.Client, v *pb.Lease) error
 		text string
 	}{{"user", "publish"}, {"assistant", "published finding"}} {
 
-		e := pages[0].Entries[i]
+		e := quote.Entries[i]
 		if e.Kind != expected.kind || !exportedTextIs(e, expected.text) || e.Payload.MediaType != a2a.ContextMediaType {
 			return fmt.Errorf("wrong context entry: %v", e)
 		}
 	}
-	raw, _ := json.Marshal(pages[0])
+	raw, _ := json.Marshal(quote)
 	if strings.Contains(string(raw), "ownerEpoch") || strings.Contains(string(raw), "turnId") || strings.Contains(string(raw), "adk:event") {
 		return errors.New("private execution metadata leaked")
 	}
@@ -1976,34 +1976,34 @@ func (c *collaborationScenario) toolWindow() error {
 		return fmt.Errorf("incorrect lender-selected TapeView: %v %v", d, err)
 	}
 
-	pages, err := client.ReadView(c.s.ctx, d.Lease)
+	quote, err := client.ReadView(c.s.ctx, d.Lease)
 	if err != nil {
 		return err
 	}
-	if len(pages) != 1 || len(pages[0].Entries) != 4 {
-		return fmt.Errorf("view must contain user, tool call, tool result, assistant: %v", pages)
+	if len(quote.Entries) != 4 {
+		return fmt.Errorf("view must contain user, tool call, tool result, assistant: %v", quote)
 	}
 	for i, kind := range []string{"user", "tool_call", "tool_result", "assistant"} {
-		e := pages[0].Entries[i]
+		e := quote.Entries[i]
 		if e.Kind != kind || e.Payload == nil || e.Payload.MediaType != a2a.ContextMediaType {
 			return fmt.Errorf("incorrect context entry %d: %v", i, e)
 		}
 	}
-	if !exportedTextIs(pages[0].Entries[0], "research with tools") {
+	if !exportedTextIs(quote.Entries[0], "research with tools") {
 		return errors.New("view lost its prompt, authorized reasoning or long answer")
 	}
-	exported, _ := json.Marshal(pages[0])
+	exported, _ := json.Marshal(quote)
 	if strings.Contains(string(exported), "adk:event") {
 		return errors.New("view leaked event metadata")
 	}
-	for _, e := range pages[0].Entries {
+	for _, e := range quote.Entries {
 		if strings.Contains(string(e.Payload.JsonData), "thoughtSignature") || strings.Contains(string(e.Payload.JsonData), "adk:event") {
 			return errors.New("view leaked provider thought signatures or event metadata")
 		}
 	}
 	for _, index := range []int{1, 3} {
 		var event ae.Content
-		if err := json.Unmarshal(pages[0].Entries[index].Payload.JsonData, &event); err != nil {
+		if err := json.Unmarshal(quote.Entries[index].Payload.JsonData, &event); err != nil {
 			return err
 		}
 		if len(event.Parts) == 0 || !event.Parts[0].Thought || event.Parts[0].Text != "shared-reasoning-marker" {
@@ -2011,7 +2011,7 @@ func (c *collaborationScenario) toolWindow() error {
 		}
 	}
 	var finalContent ae.Content
-	if err := json.Unmarshal(pages[0].Entries[3].Payload.JsonData, &finalContent); err != nil {
+	if err := json.Unmarshal(quote.Entries[3].Payload.JsonData, &finalContent); err != nil {
 		return err
 	}
 	if len(finalContent.Parts) != 2 || finalContent.Parts[1].Thought || finalContent.Parts[1].Text != answer {
@@ -2019,39 +2019,20 @@ func (c *collaborationScenario) toolWindow() error {
 	}
 
 	for _, index := range []int{1, 2} {
-		if !strings.Contains(string(pages[0].Entries[index].Payload.JsonData), "context-tool-finding") {
-			return fmt.Errorf("structured tool content missing: %v", pages[0].Entries[index])
+		if !strings.Contains(string(quote.Entries[index].Payload.JsonData), "context-tool-finding") {
+			return fmt.Errorf("structured tool content missing: %v", quote.Entries[index])
 		}
 	}
-	for cursor, count := "", 0; ; {
-
-		page, err := client.Read(
-			c.s.ctx,
-			&rpcpb.ReadRequest{
-				LeaseId:  d.Lease.Id,
-				Cursor:   cursor,
-				PageSize: 1,
-			},
-		)
-		if err != nil {
-			return err
-		}
-
-		if !proto.Equal(page.Quote.Provenance.Ref, ref) || len(page.Quote.Entries) != 1 || !proto.Equal(page.Quote.Entries[0], pages[0].Entries[count]) {
-			return errors.New("pagination changed the committed context")
-		}
-		count++
-		if page.NextCursor == "" {
-			if count != 4 {
-				return fmt.Errorf("only read %d context entries", count)
-			}
-			break
-		}
-		if count >= 4 {
-			return errors.New("context page escaped its scope")
-		}
-		cursor = page.NextCursor
+	response, err := client.Read(c.s.ctx, &rpcpb.ReadRequest{
+		LeaseId: d.Lease.Id,
+	})
+	if err != nil {
+		return err
 	}
+	if !proto.Equal(response.Quote, quote) || len(response.Quote.Entries) != 4 {
+		return errors.New("complete read changed the committed context")
+	}
+
 	physical, err := c.readEntries(n)
 	if err != nil {
 		return err

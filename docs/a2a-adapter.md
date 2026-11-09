@@ -128,12 +128,12 @@ A2A clients can discover the Agent Card and use `NewClient`. HTTP client identit
 endpoint trust and timeouts remain caller-owned. `TrustedPeerIdentity` is only
 for trusted networks; authenticated deployments supply their credential verifier.
 
-`Client.BorrowContext` composes Borrow and ReadView. It verifies decision request
-correlation and an explicitly requested Ref, then reads every page in scope order.
-Every page must retain the lease ID, caller and exact Ref. Each authorized
-sequence occurs exactly once, gaps between scopes are skipped, and incomplete
-or non-progressing pagination fails. These checks are shared by direct clients
-and the native `borrow_peer_context` tool.
+`Client.BorrowContext` composes Borrow and ReadView and returns a decision and
+one complete Quote. It verifies decision request correlation and an explicitly
+requested Ref. ReadView checks the lease ID, caller, exact Ref and complete
+ordered sequence coverage. Gaps are skipped; missing, reordered or duplicate
+entries fail. These checks are shared by direct clients and the native
+`borrow_peer_context` tool.
 
 The tool accepts peer/requestId/purpose/query, retains the decision in ProtoJSON,
 and presents the shared borrowed Quote as a tool result. Content is JSON text
@@ -153,7 +153,7 @@ extension uses generated Connect RPCs plus Vanguard REST:
 | --- | --- |
 | Borrow | Select a complete committed Ref and record granted, denied or pending |
 | Get | Retrieve the authenticated requester's recorded decision |
-| Read | Read a page of the requester's currently active lease |
+| Read | Read the complete Quote of the requester's currently active lease |
 | Release | Persist terminal lease release for the authenticated requester |
 
 `a2a.ViewPath` is the generated TapeViewService path; `a2a.ViewRESTPath` is
@@ -173,8 +173,11 @@ candidate with the request decision before exposing it to the caller.
 Public values live under `gen/anra/model/view/v1`. Ref is `source + scopes`,
 Lease is `id + caller + ref + expiresAt`, and Quote is channel, provenance and
 entries. Quote supports collaboration channels beyond borrowing; the borrowing
-service assigns `borrowed` to its own quotes. ReadResponse carries the Quote and
-nextCursor separately, since continuation belongs to the read operation.
+service assigns `borrowed` to its own quotes. ReadRequest contains only lease_id;
+ReadResponse contains one complete Quote. There are no pagination inputs or
+continuation outputs. The borrowing flow opens a public JSON stream with
+`Read(ctx, caller, leaseID)`; this unary adapter consumes it through `view.Decode`
+before responding, so failures cannot produce a successful partial Quote.
 There is no independent snapshot-head/end field or
 one-range limit. All sequences are arbitrary-precision canonical decimal strings.
 `Ref.Scopes` is nonempty and uses ordered, non-overlapping half-open ranges.
@@ -183,17 +186,17 @@ reordering. Bounds may reject an entire candidate, never trim its scopes.
 
 The shared ContextExporter preserves SDK-backed model content, all multimodal
 Parts, thought text/markers, and opaque business JSON precision. Empty Parts
-entries remain present. Native anchors expose Body without OwnerEpoch; foreign
-anchor bodies remain verbatim text. Execution state, arbitrary extensions and
+entries remain present. Native anchors expose their public body without OwnerEpoch; unknown
+anchor schemas produce null public content while retaining entry positions. Execution state, arbitrary extensions and
 provider signatures are excluded without changing stored events. The explicit
 TextExporter remains usable for text-only services. There is no Summary or
 Projection pass. Both adapters use the same configured exporter.
 
 Payload bytes retain their exact JSON encoding; ProtoJSON represents those
 bytes as base64. MCP's JSON Quote exposes content as raw structured JSON.
-Entry pagination never splits or truncates media. Requests and responses have
+Complete reads preserve media without splitting or truncation. Requests and responses have
 no fixed body cap, including both Peer clients and shared HTTP transports.
-Field constraints, lease checks, cursor binding and registry-specific metadata
+Field constraints, lease checks, complete scope coverage and registry-specific metadata
 size policy remain in effect. See the [protobuf contract](../proto/README.md).
 
 ## Persistence and operations

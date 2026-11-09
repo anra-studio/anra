@@ -41,17 +41,15 @@ message GetResponse {
 }
 message ReadRequest {
   string lease_id = 1 [(buf.validate.field).string.min_bytes = 1];
-  // Opaque continuation is decoded and bounded by the view service.
-  string cursor = 2;
-  int32 page_size = 3 [(buf.validate.field).int32 = {
-    gte: 0
-    lte: 100
-  }];
+  reserved 2, 3;
+  reserved "cursor", "page_size";
 }
 message ReadResponse {
   anra.model.view.v1.Quote quote = 1 [(buf.validate.field).required = true];
-  string next_cursor = 2;
+  reserved 2;
+  reserved "next_cursor";
 }
+
 message ReleaseRequest {
   string lease_id = 1 [(buf.validate.field).string.min_bytes = 1];
 }

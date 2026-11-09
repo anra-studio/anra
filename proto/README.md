@@ -73,12 +73,12 @@ not proof of permission. Lease binds its caller and Ref with ID and expiry.
 
 A decision contains a lease exactly when granted. Empty/uncommitted views are
 not granted. Borrow request IDs are caller-scoped and idempotent; changed input
-conflicts. Reads check lease ownership, expiry, release/revocation and complete
-scope contents. Multiple scopes are read in order, skipping gaps. Each Quote
-page retains the same borrowed channel, caller, lease ID and Ref. Quote itself
-does not restrict channel to borrowed. ReadResponse carries nextCursor alongside
-Quote; pagination state is not part of the collaboration content. ReadView
-requires progress and exact complete sequence coverage across all scopes.
+replays its original decision. Reads check lease ownership, expiry, release/revocation and complete
+scope contents. Multiple scopes are read in order, skipping gaps. Each complete
+Quote retains its channel, caller, lease ID and Ref. Quote itself does not
+restrict channel to borrowed. ReadRequest carries only lease_id; ReadResponse
+contains one complete Quote. The removed pagination field numbers and names are
+reserved. ReadView validates exact complete sequence coverage across all scopes.
 
 Protobuf field constraints use Protovalidate; non-Protobuf construction inputs
 use validator tags. Network adapters validate messages at their boundary; the
@@ -90,8 +90,8 @@ Payload carries mediaType and exact JSON bytes rather than Struct/Value, keeping
 opaque business number lexemes intact. ProtoJSON encodes bytes as base64. The
 shared JSON Quote uses raw content JSON; the ADK tool keeps content as text to
 avoid its map conversion coercing numbers. No Summary or Projection schema is
-present. There is no fixed peer/MCP body cap or per-entry cap. Pagination retains
-entire media entries; field limits, page size 0..100 and registry's own metadata
+present. There is no fixed peer/MCP body cap or per-entry cap. Complete reads
+retain entire media entries; field constraints and the registry's metadata
 message limit remain independent policies.
 
 ## Collaboration metadata

@@ -30,7 +30,7 @@ type Sender interface {
 }
 
 type Borrower interface {
-	BorrowContext(context.Context, *pb.BorrowRequest) (*pb.Decision, []*pb.Quote, error)
+	BorrowContext(context.Context, *pb.BorrowRequest) (*pb.Decision, *pb.Quote, error)
 }
 
 type Request struct {
@@ -80,15 +80,15 @@ func (s *Service) Send(ctx context.Context, req Request, connect Connect) (Resul
 
 // Borrow records progress only after the transport has validated and completely
 // read the authorized view. A denied or pending request never clears BUSY memory.
-func (s *Service) Borrow(ctx context.Context, peer string, client Borrower, request *pb.BorrowRequest) (*pb.Decision, []*pb.Quote, error) {
-	decision, pages, err := client.BorrowContext(ctx, request)
+func (s *Service) Borrow(ctx context.Context, peer string, client Borrower, request *pb.BorrowRequest) (*pb.Decision, *pb.Quote, error) {
+	decision, quote, err := client.BorrowContext(ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}
 	if decision.GetStatus() == pb.DecisionStatus_DECISION_STATUS_GRANTED && decision.Lease != nil {
 		delegator.FromContext(ctx).Borrowed(peer, decision.Lease)
 	}
-	return decision, pages, nil
+	return decision, quote, nil
 }
 
 // Runtime owns admission and execution. BusyError reports an unaccepted call;

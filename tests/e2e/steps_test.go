@@ -74,7 +74,7 @@ type scenario struct {
 
 	pendingWriter *borrow.Service
 
-	firstPage *rpcpb.ReadResponse
+	firstRead *rpcpb.ReadResponse
 
 	lastRequest runner.Request
 
@@ -96,6 +96,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeCLI(sc, s)
 	initializeRegistry(sc, s)
 	initializeCollaboration(sc, s)
+	initializeBorrowRead(sc, s)
 
 	sc.Before(
 		func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
@@ -198,7 +199,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^所有持久化条目仍归借阅角色所有$`, s.checkLocalOwnership)
 	sc.Step(`^调用方请求借阅已提交视图$`, s.borrow)
 	sc.Step(`^借阅决策为 "([^"]*)"$`, s.decisionIs)
-	sc.Step(`^调用方读取第一条发现$`, s.readFirst)
+	sc.Step(`^调用方读取完整授权视图$`, s.readFirst)
 
 	sc.Step(
 		`^研究节点在授权后提交新的发现$`,
@@ -209,9 +210,9 @@ func initializeScenario(sc *godog.ScenarioContext) {
 
 	sc.Step(`^研究节点重启存储和服务$`, s.restartPeer)
 	sc.Step(`^重试同一请求仍返回原 lease$`, s.retryGrant)
-	sc.Step(`^调用方分页读完原有授权视图$`, s.finishSnapshot)
+	sc.Step(`^调用方再次读取相同的原有授权视图$`, s.finishSnapshot)
 	sc.Step(`^研究节点已提交 (\d+) 条发现$`, s.addFindings)
-	sc.Step(`^调用方跨页读完全部 (\d+) 条发现$`, s.readAll)
+	sc.Step(`^调用方完整读出全部 (\d+) 条发现$`, s.readAll)
 	sc.Step(`^调用方保持请求 ID 但修改用途、查询和范围$`, s.retryChangedBorrow)
 	sc.Step(`^返回原有借阅决定且 lease 仍可读取$`, s.readFirst)
 
@@ -272,7 +273,7 @@ func (s *scenario) saveFailure(name string, failure error) error {
 	data, err := json.MarshalIndent(map[string]any{
 		"scenario": name, "error": failure.Error(), "answer": s.answer,
 		"model_request": s.lastRequest, "borrow_request": s.request,
-		"decision": s.decision, "first_page": s.firstPage,
+		"decision": s.decision, "read_response": s.firstRead,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -668,19 +669,15 @@ func exportedTextIs(e *pb.ExportedEntry, want string) bool {
 
 func (s *scenario) readFirst() error {
 	var err error
-
-	s.firstPage, err = s.client.Read(
-		s.ctx,
-		&rpcpb.ReadRequest{
-			LeaseId:  s.decision.Lease.Id,
-			PageSize: 1,
-		},
-	)
+	s.firstRead, err = s.client.Read(s.ctx, &rpcpb.ReadRequest{
+		LeaseId: s.decision.Lease.Id,
+	})
 	if err != nil {
 		return err
 	}
-	if len(s.firstPage.Quote.Entries) != 1 || !exportedTextIs(s.firstPage.Quote.Entries[0], "bbolt requires a single writer") || s.firstPage.NextCursor == "" {
-		return fmt.Errorf("unexpected first page: %v", s.firstPage)
+	entries := s.firstRead.Quote.Entries
+	if len(entries) != 2 || !exportedTextIs(entries[0], "bbolt requires a single writer") || !exportedTextIs(entries[1], "concurrent updates need version checks") {
+		return fmt.Errorf("unexpected authorized content: %v", s.firstRead)
 	}
 	return nil
 }
@@ -697,20 +694,14 @@ func (s *scenario) retryGrant() error {
 }
 
 func (s *scenario) finishSnapshot() error {
-	page, err := s.client.Read(
-		s.ctx,
-		&rpcpb.ReadRequest{
-			LeaseId:  s.decision.Lease.Id,
-			Cursor:   s.firstPage.NextCursor,
-			PageSize: 1,
-		},
-	)
+	response, err := s.client.Read(s.ctx, &rpcpb.ReadRequest{
+		LeaseId: s.decision.Lease.Id,
+	})
 	if err != nil {
 		return err
 	}
-
-	if len(page.Quote.Entries) != 1 || !exportedTextIs(page.Quote.Entries[0], "concurrent updates need version checks") || page.Quote.Entries[0].Seq != s.decision.Lease.Ref.Scopes[1].SeqS || page.NextCursor != "" || !proto.Equal(page.Quote.Provenance, s.firstPage.Quote.Provenance) {
-		return fmt.Errorf("original snapshot was not preserved: %v", page)
+	if !proto.Equal(response.Quote, s.firstRead.Quote) {
+		return fmt.Errorf("original snapshot was not preserved: %v", response)
 	}
 	return nil
 }
@@ -725,28 +716,17 @@ func (s *scenario) addFindings(count int) error {
 }
 
 func (s *scenario) readAll(count int) error {
-	pages, err := s.client.ReadView(s.ctx, s.decision.Lease)
+	quote, err := s.client.ReadView(s.ctx, s.decision.Lease)
 	if err != nil {
 		return err
 	}
-	if len(pages) < 2 {
-		return fmt.Errorf("expected multiple pages, got %d", len(pages))
+	if len(quote.Entries) != count || quote.Provenance.LeaseId != s.decision.Lease.Id || !proto.Equal(quote.Provenance.Ref, s.decision.Lease.Ref) {
+		return fmt.Errorf("authorized Quote lost entries or provenance: %v", quote)
 	}
-	seen := 0
-	for _, page := range pages {
-
-		if page.Provenance.LeaseId != s.decision.Lease.Id || !proto.Equal(page.Provenance.Ref, s.decision.Lease.Ref) {
-			return fmt.Errorf("page lost provenance: %v", page)
+	for i, e := range quote.Entries {
+		if e.Seq != s.decision.Lease.Ref.Scopes[i].SeqS {
+			return fmt.Errorf("entry %d has sequence %s", i, e.Seq)
 		}
-		for _, e := range page.Entries {
-			seen++
-			if e.Seq != s.decision.Lease.Ref.Scopes[seen-1].SeqS {
-				return fmt.Errorf("entry %d has sequence %s", seen, e.Seq)
-			}
-		}
-	}
-	if seen != count {
-		return fmt.Errorf("received %d findings, want %d", seen, count)
 	}
 	return nil
 }
@@ -973,12 +953,12 @@ func (s *scenario) checkAccess(outcome string) error {
 		return s.decisionIs(outcome)
 	}
 
-	pages, err := s.client.ReadView(s.ctx, s.decision.Lease)
+	quote, err := s.client.ReadView(s.ctx, s.decision.Lease)
 	if err != nil {
 		return err
 	}
-	if len(pages) != 1 || len(pages[0].Entries) != 2 {
-		return fmt.Errorf("approved context missing: %v", pages)
+	if len(quote.Entries) != 2 {
+		return fmt.Errorf("approved context missing: %v", quote)
 	}
 	return nil
 }
@@ -1173,8 +1153,8 @@ func (s *scenario) wireRequest(problem string) error {
 		body = `{"requestId":"wire-request","query":"bbolt"}`
 	case "reversed bounds":
 		body = `{"requestId":"wire-request","purpose":"research","query":"bbolt","bounds":{"seqS":"9","seqE":"2"}}`
-	case "excessive page":
-		method, body = "Read", `{"viewId":"unknown","pageSize":101}`
+	case "空 lease ID":
+		method, body = "Read", `{}`
 	default:
 		return fmt.Errorf("unknown wire problem %s", problem)
 	}

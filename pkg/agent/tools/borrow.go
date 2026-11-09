@@ -12,6 +12,7 @@ import (
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/flow/clbr"
 	"github.com/anra-studio/anra/pkg/model/view"
+	"github.com/samber/lo"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -113,11 +114,11 @@ func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string,
 				Query:     args.Query,
 			}
 
-			decision, pages, err := collaboration.Borrow(ctx, args.Peer, client, req)
+			decision, quote, err := collaboration.Borrow(ctx, args.Peer, client, req)
 			if err != nil {
 				return nil, err
 			}
-			result, err := formatBorrowContext(decision, pages)
+			result, err := formatBorrowContext(decision, quote)
 			if err != nil {
 				return nil, err
 			}
@@ -130,48 +131,44 @@ func NewPeerBorrowTool(directory *discovery.Client, h *http.Client, self string,
 // borrowContext formats protocol results for the model. Permission decisions,
 // snapshot checks, and complete reads stay in the shared A2A client.
 func borrowContext(ctx context.Context, client *a2a.Client, req *pb.BorrowRequest) (map[string]any, *pb.Decision, error) {
-	decision, pages, err := client.BorrowContext(ctx, req)
+	decision, quote, err := client.BorrowContext(ctx, req)
 	if err != nil {
 		return nil, nil, err
 	}
-	result, err := formatBorrowContext(decision, pages)
+	result, err := formatBorrowContext(decision, quote)
 	return result, decision, err
 }
 
-func formatBorrowContext(decision *pb.Decision, pages []*pb.Quote) (map[string]any, error) {
+func formatBorrowContext(decision *pb.Decision, quoted *pb.Quote) (map[string]any, error) {
 	value, err := messageObject(decision)
 	if err != nil {
 		return nil, err
 	}
 	result := map[string]any{"decision": value}
-	if len(pages) > 0 {
-
-		quote := view.FromProto(pages[0])
-
-		entries := []contextEntry{}
-
-		for _, page := range pages {
-			for _, e := range view.FromProto(page).Entries {
-				entries = append(
-					entries,
-					contextEntry{
-						Seq:       e.Seq,
-						Kind:      e.Kind,
-						Timestamp: e.Timestamp,
-						MediaType: e.MediaType,
-						Content:   string(e.Content),
-					},
-				)
+	if quoted == nil {
+		return result, nil
+	}
+	quote := view.FromProto(quoted)
+	entries := lo.Map(
+		quote.Entries,
+		func(e view.Entry, _ int) contextEntry {
+			return contextEntry{
+				Seq:       e.Seq,
+				Kind:      e.Kind,
+				Timestamp: e.Timestamp,
+				MediaType: e.MediaType,
+				Content:   string(e.Content),
 			}
-		}
-
-		provenance, err := messageObject(pages[0].Provenance)
-		if err != nil {
-			return nil, err
-		}
-
-		result["borrowed_context"] = map[string]any{"channel": quote.Channel, "provenance": provenance, "entries": entries}
-
+		},
+	)
+	provenance, err := messageObject(quoted.Provenance)
+	if err != nil {
+		return nil, err
+	}
+	result["borrowed_context"] = map[string]any{
+		"channel":    quote.Channel,
+		"provenance": provenance,
+		"entries":    entries,
 	}
 	return result, nil
 }

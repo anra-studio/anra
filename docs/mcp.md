@@ -94,7 +94,8 @@ canonical decimal strings; the host authorizes the exact anchor and tool through
 
 `read_role` returns the bound typed RoleDefinition/Profile revision. It never
 selects a newer role definition. `read_tape_view` calls
-`borrowing.ReadAll(ctx, target.Caller, target.LeaseID)` and returns the shared Quote:
+`borrowing.Read(ctx, target.Caller, target.LeaseID)` and consumes the stream
+through `view.Decode` before returning the shared Quote:
 
 ```json
 {
@@ -126,10 +127,9 @@ unknown anchor schemas yield `null` content while preserving the entry sequence.
 Unsupported or undecodable content fails the whole read.
 There is no Summary or intermediate Projection model.
 
-Peer pagination traverses each scope in order and skips unauthorized gaps.
-Source, caller, lease and complete Ref stay fixed across every page. A missing
-entry or failed segment is an error, not a successful partial Quote. MCP returns
-the complete Quote. Neither adapter imposes fixed request or result body caps;
+Peer and MCP consume the same complete authorized stream in scope order,
+skipping gaps. Source, caller, lease and Ref remain fixed. A missing entry or
+failed segment fails without a partial Quote. Neither adapter imposes fixed request or result body caps;
 MCP explicitly disables the SDK's default request-body cap.
 
 ## Authentication and public errors

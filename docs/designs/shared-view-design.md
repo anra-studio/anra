@@ -10,7 +10,7 @@ MCP 和 peer 读取同一类已提交上下文，统一使用 `pkg/flow` 的借�
 
 - `pkg/mcp/view.go` 自行读取 Tape、生成 `TapeViewResult` / `ViewEntry`，从 MCP Grant 组装 Channel 和 Provenance。
 - `pkg/a2a/service.go` 同时承担协议服务、范围选择、lease 签发、读取、分页和撤销。现有 `pb.View` 是授权，`pb.TapeView` 是没有授权的快照引用，两者名称没有表达差异。
-- `pkg/agent/tools/borrow.go` 再从 peer decision 和 page 组装另一份 `borrowed_context`。两条路径已经共用 Entry 内容，却没有共用借阅模型。
+- `pkg/agent/tools/borrow.go` 再从 peer decision 和读取结果 组装另一份 `borrowed_context`。两条路径已经共用 Entry 内容，却没有共用借阅模型。
 - `entry.Channel` 和 `entry.Provenance` 描述消费权限，却放在持久化条目包内。
 
 只移动响应结构体不能解决这些问题；共享的业务规则和 lease 状态必须有同一个所有者。
@@ -78,14 +78,16 @@ expired 由有效期判定，不要求额外写一份过期状态。借阅请求
 
 Channel 和 Provenance 从 `entry` 移到 `view`。它们由已验证的借阅关系产生，不能从条目内容、客户端参数、历史 user/model role 或自述身份中推导。Primary / Observation 仍由原生消费方赋予；两个借阅入口只能输出 Borrowed。
 
-Quote 表达合作交互中的引用内容及来源，包含 Channel、Provenance 和 Entries；通道不限定为 borrowed。借阅服务根据当前有效 lease 将其读取结果标为 borrowed，其他合作交互可以使用其他通道。Lease 负责授予读取权限，Quote 本身不授予权限。公开 Entry 只携带条目标识和内容，不逐条复制 Channel、Provenance 或整份 Ref。分页是读取操作的状态：共享服务的 Page 与协议 ReadResponse 将 Quote 和 NextCursor 分开携带，Quote 不包含游标；各页不能改变其 lease、来源或范围。
+Quote 表达合作交互中的引用内容及来源，包含 Channel、Provenance 和 Entries。借阅服务根据当前有效 lease 将读取结果标为 borrowed；Quote 本身不授予权限。公开 Entry 不重复复制 Channel、Provenance 或整份 Ref。协议 ReadRequest 仅携带 lease_id，ReadResponse 返回单个完整 Quote，没有分页参数或续读令牌。
 
-读取按 Scopes 的顺序遍历各段，段内保持 Tape 序号顺序；分页可以跨段，cursor 绑定该 lease、固定 Ref 和读取位置。完整性检查以当前段为准，跳到下一段时允许序号间隙，不要求跨段连续。例如 Scopes 为 `[9,14)` 和 `[31,42)` 时，序号 13 后接 31，不读取 `[14,31)`。任一段缺失或读取失败都返回错误，不能把部分段结果当作完整 Quote 成功返回。
+借阅 API 为 `Read(ctx, caller, leaseID) (io.Reader, error)`，授权后惰性输出公开 Quote JSON。打开流不访问正文，调用方用自己的字节缓冲消费。原生 Tape Reader 与 io.MultiReader 顺序遍历全部授权 Scopes，允许段间间隙，例如 `[9,14)` 与 `[31,42)` 之间的内容不会读取。流按条目导出公开内容，缺失条目、解码失败或取消会终止读取，错误后不会补上 Quote 的结束标记。流不拥有底层 storage，也不启动 goroutine。宿主关闭存储前，调用方需完成读取或取消上下文。
+
+A2A 和 MCP 在响应前通过 `view.Decode` 消费整个流，检查完整 JSON 与尾部错误；失败不返回部分 Quote。网络 Read 保持 unary RPC，Go 调用方可以增量消费 Reader。客户端校验完整来源、范围及逐条序号，返回单个 Quote；借阅成功后的委托进度更新也以完整校验通过为前提。
 
 内容继续复用现有领域对象：
 
 - 模型内容使用 `Entry.Content()` 的 SDK-backed 多模态结构，保留 Part 顺序、思考文本及 thought 标记、图片、音频、文件和工具内容。
-- 原生锚点调用 `Record.Body()`，排除 OwnerEpoch；第三方锚点保留原文，分享责任由 View 的选择方承担。
+- 原生锚点调用 `Record.Body()`，排除 OwnerEpoch；未知锚点 schema 的公开内容为 null，保留条目序号。
 - 不导出执行状态、任意扩展或 provider thought signatures；读取公开表示不修改 Tape 中的原始事件。
 
 公开 Entry 存在模型内容、原生锚点和第三方文本三种实际内容形态，不再重新手写 GenAI Part 模型或引入 Projection。异构内容的编码集中在共享出口完成；协议适配不再自行判断条目种类或删改 Parts。
@@ -96,14 +98,14 @@ Channel 是消费权限约定，不能保证任意模型免疫 Prompt 注入。�
 
 ## 模块职责与依赖
 
-`pkg/model/view` 只拥有公共内容模型、导出和编解码；`pkg/flow/borrow` 拥有借阅审批、请求状态机、Journal、授权读取和分页，`pkg/flow/grant` 拥有 lease 签发与有效期。根包 `pkg/model` 继续负责 LLM provider 初始化。flow 直接复用原生 View、grant handler 和 sidecar，不调用本进程的 HTTP 接口，也不增加第二套持久化状态。
+`pkg/model/view` 只拥有公共内容模型、导出和编解码；`pkg/flow/borrow` 拥有借阅审批、请求状态机、Journal、授权读取流，`pkg/flow/grant` 拥有 lease 签发与有效期。根包 `pkg/model` 继续负责 LLM provider 初始化。flow 直接复用原生 View、grant handler 和 sidecar，不调用本进程的 HTTP 接口，也不增加第二套持久化状态。
 
 | 模块 | 目标职责 |
 | --- | --- |
 | `agent` | 提交和恢复 Turn，维护已提交窗口索引，解析或选择准确的 Ref |
 | `model/view` | Quote、Entry、Provenance、Channel、公开内容导出及编解码 |
 | `flow` | 通过 Set 组合具体流程 |
-| `flow/borrow` | 借阅策略、请求决策、共享 Journal、授权读取及分页 |
+| `flow/borrow` | 借阅策略、请求决策、共享 Journal、授权读取流 |
 | `flow/grant` | 原生 view handler、候选 lease 签发、有效期与释放 |
 | `flow/clbr` | 委托、BUSY 抑制、完整借阅后的进度更新 |
 | `model/entry` | 存储条目、扩展访问、SDK-backed 模型内容 |
@@ -160,7 +162,7 @@ flowchart TD
 
 认证失败继续映射为 401 / Bearer challenge，认证后端不可用为 503；工具阶段的失效或不属于当前调用方的 lease 映射为公开 permission_denied，不能暴露其他调用方的授权是否存在。两种协议映射同一组领域错误，不把底层存储诊断返回给客户端。
 
-保留 Origin 先于认证、重复 Authorization 拒绝、请求级身份隔离和所有 MCP 响应 no-store。Bearer 不增加字符集限制，也不进入日志、Tape 或 Provenance。请求和内容响应不增加固定 body 上限；分页按条目划分，不拆分或截断多模态内容。
+保留 Origin 先于认证、重复 Authorization 拒绝、请求级身份隔离和所有 MCP 响应 no-store。Bearer 不增加字符集限制，也不进入日志、Tape 或 Provenance。请求和内容响应不增加固定 body 上限；读取流保留完整多模态条目。
 
 ## 实现与验收
 
@@ -174,7 +176,7 @@ flowchart TD
 
 复用并调整现有中文 E2E，重点覆盖：
 
-- 同一调用方和 lease 经 MCP、peer 得到相同 Ref、Provenance、条目顺序及完整内容；复用真实提交路径构造至少两段不相邻内容，验证跨段分页跳过间隙且不重复、不丢失授权条目。
+- 同一调用方和 lease 经 MCP、peer 得到相同 Ref、Provenance、条目顺序及完整内容；复用真实提交路径构造至少两段不相邻内容，验证读取跨段跳过间隙且不重复、不丢失授权条目。
 - 没有成功提交窗口时拒绝借阅；未结束或失败 Turn、空范围及自由区间不能生成 lease。锚点与大型媒体用例通过真实提交窗口构造。
 - Bearer 或 peer 调用方不能读取另一调用方的 lease，参数不能改写 Source 或 Scopes、插入间隙或增减段；角色工具权限独立执行。
 - 追加新 Turn 和服务重建不扩大已有 Ref；释放、撤销及到期对两个入口同时生效。Read 不签发、不续租、不进入推理。

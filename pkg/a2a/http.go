@@ -40,7 +40,6 @@ func Advertise(card *sdk.AgentCard, endpoint string) error {
 			Params: map[string]any{
 				"endpoint":        endpoint,
 				"entryMediaTypes": []string{TextMediaType},
-				"maxPageSize":     MaxPageSize,
 			},
 		},
 	)

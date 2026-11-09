@@ -15,10 +15,10 @@ such as a web UI, can use it without importing Cobra or launching a subprocess.
 | `discovery` | Typed registry client, presence checks, heartbeat maintenance and owned metadata updates | `NewClient`, `Client.Lookup`, `Client.List`, `Client.Start`, `Registration.Update` |
 | `registry` | Persistent Peer directory, runtime ownership, presence and retirement | `Open`, `NewHandler`, `Serve` |
 | `a2a` | A2A / Connect / REST protocol adapters and clients | `NewExecutor`, `NewPeerHandler`, `NewMessageClient`, `Client.BorrowContext` |
-| `model/view` | Public view content, provenance, exporters and codecs | `Quote`, `Entry`, `FromProto` |
+| `model/view` | Public view content, provenance, exporters and codecs | `Quote`, `Entry`, `Decode`, `FromProto` |
 | tape-go `pkg/tape` / `pkg/tape/view` | Native context Tape, OverView and handler registry | `Tape.OverView`, `view.Registry`, `view.Handler` |
 | `flow` | Explicit host composition of concrete flows | `Set` |
-| `flow/borrow` | Request admission, Review policy, Approve/Reject, shared Journal, authorized reads and pagination | `New`, `NewJournal`, `Service.Borrow`, `Service.Approve`, `Service.Reject` |
+| `flow/borrow` | Request admission, Review policy, Approve/Reject, shared Journal and authorized read streams | `New`, `NewJournal`, `Service.Borrow`, `Service.Approve`, `Service.Reject`, `Service.Read` |
 | `flow/grant` | View handler, candidate lease issuance, validity and release | `New`, `Service.Handle`, `Service.Authorize` |
 | `flow/clbr` | Delegation, BUSY suppression and progress after complete borrowing | `Service.Send`, `Service.Borrow`, `Service.Run`, `Result` |
 | `mcp` | Bearer authentication, handoff/role permissions and shared Quote reads | `NewService`, `Service.Handler` |

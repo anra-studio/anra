@@ -24,10 +24,9 @@ var (
 )
 
 const (
-	Granted     = pb.DecisionStatus_DECISION_STATUS_GRANTED
-	Denied      = pb.DecisionStatus_DECISION_STATUS_DENIED
-	Pending     = pb.DecisionStatus_DECISION_STATUS_PENDING
-	MaxPageSize = 100
+	Granted = pb.DecisionStatus_DECISION_STATUS_GRANTED
+	Denied  = pb.DecisionStatus_DECISION_STATUS_DENIED
+	Pending = pb.DecisionStatus_DECISION_STATUS_PENDING
 )
 
 // Selection is a review outcome for a new request. Pending completion uses the
@@ -53,12 +52,14 @@ type Config struct {
 // Service borrows its dependencies. mu preserves per-service callback ordering;
 // the shared Journal owns state and atomic commits across all service instances.
 type Service struct {
-	mu     sync.Mutex
-	config Config
+	mu       sync.Mutex
+	config   Config
+	validate *validator.Validate
 }
 
 func New(c Config) (*Service, error) {
-	if err := validator.New().Struct(c); err != nil {
+	validate := validator.New()
+	if err := validate.Struct(c); err != nil {
 		return nil, fmt.Errorf("%w: borrowing config: %w", ErrInvalidParams, err)
 	}
 	if c.Tape.Registry == nil {
@@ -86,7 +87,8 @@ func New(c Config) (*Service, error) {
 		}
 	}
 	return &Service{
-		config: c,
+		config:   c,
+		validate: validate,
 	}, nil
 }
 

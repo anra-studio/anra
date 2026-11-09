@@ -198,12 +198,12 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 				return err
 			}
 
-			pages, err := views.ReadView(c.s.ctx, grant.Lease)
+			quote, err := views.ReadView(c.s.ctx, grant.Lease)
 			if err != nil {
 				return err
 			}
 
-			if len(pages) != 1 || len(pages[0].Entries) != 2 || !exportedTextIs(pages[0].Entries[0], "publish before crash") || !exportedTextIs(pages[0].Entries[1], "alice: publish before crash") {
+			if len(quote.Entries) != 2 || !exportedTextIs(quote.Entries[0], "publish before crash") || !exportedTextIs(quote.Entries[1], "alice: publish before crash") {
 				return errors.New("precrash view changed")
 			}
 

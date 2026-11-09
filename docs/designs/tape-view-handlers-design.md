@@ -46,6 +46,18 @@ Pending and denied are request outcomes; they do not fabricate authorized Views.
 
 Multiple borrowing services, A2A, and MCP share one Journal and grant service. The Journal lock covers state refresh, comparison with the expected snapshot, lifecycle checks, and record append, so competing approvals can commit only once. Read authorization and release are ordered at the same commit boundary: reads authorized after termination commits fail, while reads already authorized may finish.
 
+## Reading through io.Reader
+
+The domain API is `Read(ctx, caller, leaseID) (io.Reader, error)`. It authorizes the current lease and opens a lazy JSON Quote stream. The authenticated Caller is separate from the lease ID. Opening the stream performs no context-content reads. The caller chooses its byte buffer and consumption pace, keeps the context alive while reading, and finishes consumption before the host closes storage.
+
+Each complete authorized scope gets a request-local native Tape configured with SetView. io.MultiReader joins those readers in scope order. A synchronous entry exporter consumes native JSONL records and emits public Quote entries one at a time, preserving opaque payload numbers and filtering private extensions. The shared host Tape's read position is never modified or closed. The stream owns no goroutines, files, pagination state, or continuation tokens.
+
+The upstream reader uses a background context and skips missing entries. A private storage adapter binds the request context and requires each entry to exist with the expected sequence and owner. Storage EOF is a failure; only exhaustion of the configured scopes ends the source normally. A source failure is terminal and never emits the Quote's closing array/object. A later call to a failed reader returns the same error. Cancellation stops further consumption.
+
+`view.Decode` consumes exactly one complete Quote and checks for trailing source errors or values. Connect/REST Read retains its unary RPC and materializes that Quote before responding; MCP uses the same decoder. They return an error without a partial Quote when any authorized entry is missing, unreadable, or unsupported. Direct Go callers can consume the Reader incrementally. Reads already authorized may finish after a later release, while opening another reader rechecks the lease.
+
+ReadRequest carries only lease_id and ReadResponse carries one complete Quote. Removed pagination field numbers and names are reserved. The client validates exact provenance and sequence coverage of every granted scope, and BorrowContext returns a decision and one Quote. Collaboration progress is recorded only after this complete validated read. No default truncation, page size, cursor, or maximum-page capability is part of the current reading model.
+
 ## Sidecar and Resource Ownership
 
 The host selects and initializes separate sidecar storage. Bbolt may use `<agent>.lease.db`; JSONL uses a separate directory. The sidecar inside the Journal only adapts storage Get, Range, and Store operations. It does not construct `te.Tape`, initialize or close storage, or expose context Views. Its internal use of entry.Seq addresses sidecar records only; these positions are neither context coordinates nor the sequence of another context Tape.
@@ -58,6 +70,8 @@ The new format neither reads nor migrates historical `.grants.db` files or the p
 
 ## Validation
 
-Chinese E2E scenarios exercise real HTTP borrowing and persistent storage. They cover grant and release recovery with both sidecar backends, context isolation, rejection across Sources, missing handlers and duplicate registration, cancellation without an append, and deterministic concurrent decisions across services sharing a Journal. Existing MCP, A2A, multimodal, and multi-scope pagination scenarios verify authorization consumption. The real multi-scope lease scenario also checks that the sidecar persists only one authorization record containing every range. Pure algorithm tests cover borrowing Ref bounds, ordering, and arbitrary-precision sequence numbers. Upstream maintains the general Registry and OverView tests.
+Chinese E2E scenarios exercise real HTTP borrowing and persistent storage. They cover grant and release recovery with both sidecar backends, context isolation, rejection across Sources, missing handlers and duplicate registration, cancellation without an append, and deterministic concurrent decisions across services sharing a Journal. Native multi-scope dispatch persists one authorization record containing every range.
 
-Before the flow package split, after upgrading to tape-go `v0.2.0-anra.5`, the full `mise run test` suite passed: 252 scenarios and 1,218 steps, including native multi-scope dispatch, authorization persistence, race detection, builds, pure logic tests, and Protobuf checks. Modified Go files were formatted with gofumpt.
+Read acceptance covers complete large multimodal Quotes over Connect, REST, direct clients and MCP; byte-for-byte media and number precision; native and unknown-anchor privacy; unchanged scopes after append/restart; source reads exactly once in authorized order; lazy opening and cancellation; and missing disk records failing both the stream decoder and the RPC without a partial Quote. Pure tests cover entry-stream framing with small reads, terminal source errors and complete-Quote decoding. `BenchmarkBorrowRead` measures full stream consumption and the complete Connect path over real storage. General Registry and OverView tests remain upstream.
+
+The complete migration passed `mise run test`: 255 scenarios and 1,232 steps, including race-enabled E2E. The large multimodal journey completed in 8.52 seconds under its unchanged 20-second deadline. Related packages passed go vet, gofumpt and diff whitespace checks.

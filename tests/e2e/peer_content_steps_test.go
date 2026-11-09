@@ -43,9 +43,11 @@ type peerContentScenario struct {
 
 	peer *pv.Peer
 
-	cursor string
+	response *rpcpb.ReadResponse
 
 	ref *pb.Ref
+
+	reads *readLog
 }
 
 func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
@@ -55,10 +57,12 @@ func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
 
 	sc.Step(`^节点存有大型多模态条目和两种锚点$`, p.setup)
 	sc.Step(`^调用方为完整内容取得借阅 lease$`, s.borrow)
+	sc.Step(`^授权 Reader 在消费前不读取正文且可取消$`, p.checkLazyReader)
 	sc.Step(`^Connect 和 REST 接受超过默认消息大小的合法借阅请求$`, p.sendLargeBodies)
-	sc.Step(`^两种 Peer 客户端的大请求到达服务端字段校验$`, p.sendLargeClientRequests)
-	sc.Step(`^Connect、REST 和直接 Peer 客户端读取相同的完整多模态条目且游标位于读取响应$`, p.readTransports)
-	sc.Step(`^其余分页保留原生锚点公开内容并隐藏未知锚点内容$`, p.readAnchors)
+	sc.Step(`^两种 Peer 客户端的大读取请求到达服务端授权检查$`, p.sendLargeClientRequests)
+	sc.Step(`^Connect、REST 和直接 Peer 客户端一次读取相同的完整多模态内容$`, p.readTransports)
+	sc.Step(`^完整视图保留原生锚点公开内容并隐藏未知锚点内容$`, p.readAnchors)
+	sc.Step(`^一次读取只访问授权条目且不重复读取$`, p.checkReadRanges)
 	sc.Step(`^借出节点的存储和服务重建$`, p.restart)
 	sc.Step(`^原 lease 仍可读取完整多模态条目$`, p.readRecovered)
 
@@ -167,13 +171,16 @@ func (p *peerContentScenario) setup() error {
 func (p *peerContentScenario) start() error {
 	s := p.s
 	var err error
+	p.reads = &readLog{
+		TapeStorage: s.peerTape,
+	}
 
 	s.grants, err = openGrantFixture(
 		s.ctx,
 		filepath.Join(s.root, "large.lease.db"),
 		p.ref.Source,
 		"researcher-local",
-		s.peerTape,
+		p.reads,
 		func() time.Time {
 			return time.Unix(0, s.clock.Load())
 		},
@@ -223,12 +230,12 @@ func (p *peerContentScenario) start() error {
 
 func (p *peerContentScenario) checkMedia(response *rpcpb.ReadResponse) error {
 	view := p.s.decision.GetLease()
-	page := response.Quote
+	quote := response.Quote
 
-	if view == nil || page.Provenance.LeaseId != view.Id || !proto.Equal(page.Provenance.Ref, view.Ref) || len(page.Entries) != 1 || page.Entries[0].Seq != p.ref.Scopes[0].SeqS || response.NextCursor == "" {
-		return errors.New("large content lost grant provenance or pagination boundaries")
+	if view == nil || quote.Provenance.LeaseId != view.Id || !proto.Equal(quote.Provenance.Ref, view.Ref) || len(quote.Entries) != 4 || quote.Entries[0].Seq != p.ref.Scopes[0].SeqS {
+		return errors.New("large content lost grant provenance or complete scopes")
 	}
-	payload := page.Entries[0].Payload
+	payload := quote.Entries[0].Payload
 	if payload.GetMediaType() != a2a.ContextMediaType || len(payload.GetJsonData()) <= 4<<20 || bytes.Contains(payload.GetJsonData(), []byte("PRIVATE-")) || bytes.Contains(payload.GetJsonData(), []byte("thoughtSignature")) {
 		return errors.New("large content was truncated, misidentified or exposed execution metadata")
 	}
@@ -292,20 +299,19 @@ func (p *peerContentScenario) sendLargeClientRequests() error {
 	}
 
 	request := &rpcpb.ReadRequest{
-		LeaseId: s.decision.Lease.Id,
-		Cursor:  strings.Repeat("x", 5<<20),
+		LeaseId: strings.Repeat("x", 5<<20),
 	}
 
 	for _, reader := range []*a2a.Client{s.client, client} {
 		_, err := reader.Read(s.ctx, request)
 		if err == nil {
-			return errors.New("large request bypassed cursor validation")
+			return errors.New("unknown large lease ID bypassed authorization")
 		}
-		if !errors.Is(err, a2a.ErrInvalidParams) {
-			return fmt.Errorf("large client request did not reach cursor validation: %w", err)
+		if !errors.Is(err, a2a.ErrUnavailable) {
+			return fmt.Errorf("large client request did not reach authorization: %w", err)
 		}
 		var remote *connect.Error
-		if !errors.As(err, &remote) || remote.Code() != connect.CodeInvalidArgument {
+		if !errors.As(err, &remote) || remote.Code() != connect.CodeNotFound {
 			return fmt.Errorf("large client request was rejected before reaching the server: %w", err)
 		}
 	}
@@ -316,27 +322,25 @@ func (p *peerContentScenario) readTransports() error {
 	s := p.s
 
 	request := &rpcpb.ReadRequest{
-		LeaseId:  s.decision.Lease.Id,
-		PageSize: 1,
+		LeaseId: s.decision.Lease.Id,
 	}
 
-	page, err := s.client.Read(s.ctx, request)
+	quote, err := s.client.Read(s.ctx, request)
 	if err != nil {
 		return err
 	}
-	if err := p.checkMedia(page); err != nil {
+	if err := p.checkMedia(quote); err != nil {
 		return err
 	}
-	p.cursor = page.NextCursor
 	client, err := a2a.NewPeerClient(s.httpClient("borrower"), p.peer)
 	if err != nil {
 		return err
 	}
-	page, err = client.Read(s.ctx, request)
+	quote, err = client.Read(s.ctx, request)
 	if err != nil {
 		return err
 	}
-	if err := p.checkMedia(page); err != nil {
+	if err := p.checkMedia(quote); err != nil {
 		return err
 	}
 
@@ -349,7 +353,8 @@ func (p *peerContentScenario) readTransports() error {
 		extension: true,
 	}
 
-	if err := rest.message(http.MethodGet, "/v1/tape/views/"+request.LeaseId+"/entries?pageSize=1", nil, &response); err != nil {
+	p.reads.reset()
+	if err := rest.message(http.MethodGet, "/v1/tape/views/"+request.LeaseId+"/entries", nil, &response); err != nil {
 		return err
 	}
 
@@ -365,34 +370,28 @@ func (p *peerContentScenario) readTransports() error {
 	if err := json.Unmarshal(fields["quote"], &quoteFields); err != nil {
 		return err
 	}
-	if _, nested := quoteFields["nextCursor"]; nested || len(fields["nextCursor"]) == 0 {
-		return errors.New("read continuation belongs to the response, not the quote")
+	if _, exists := quoteFields["nextCursor"]; exists {
+		return errors.New("Quote must not carry a continuation")
 	}
-	return p.checkMedia(&response)
+	if _, exists := fields["nextCursor"]; exists {
+		return errors.New("ReadResponse must not carry a continuation")
+	}
+	if err := p.checkMedia(&response); err != nil {
+		return err
+	}
+	p.response = &response
+	return nil
 }
 
 func (p *peerContentScenario) readAnchors() error {
 	s := p.s
 
 	for index, seq := range []string{te.MustParseSeq(p.ref.Scopes[0].SeqS).Next().String(), p.ref.Scopes[1].SeqS, te.MustParseSeq(p.ref.Scopes[1].SeqS).Next().String()} {
-
-		response, err := s.client.Read(
-			s.ctx,
-			&rpcpb.ReadRequest{
-				LeaseId:  s.decision.Lease.Id,
-				Cursor:   p.cursor,
-				PageSize: 1,
-			},
-		)
-		if err != nil {
-			return err
+		quote := p.response.Quote
+		e := quote.Entries[index+1]
+		if e.Seq != seq || quote.Provenance.LeaseId != s.decision.Lease.Id || !proto.Equal(quote.Provenance.Ref, s.decision.Lease.Ref) {
+			return errors.New("complete content changed source, order or scope")
 		}
-		page := response.Quote
-
-		if len(page.Entries) != 1 || page.Entries[0].Seq != seq || page.Provenance.LeaseId != s.decision.Lease.Id || !proto.Equal(page.Provenance.Ref, s.decision.Lease.Ref) {
-			return errors.New("content pagination changed source, order or scope")
-		}
-		e := page.Entries[0]
 
 		if index == 0 {
 
@@ -446,12 +445,7 @@ func (p *peerContentScenario) readAnchors() error {
 		}
 
 		if index == 2 && !exportedTextIs(e, "context complete") {
-			return errors.New("paging lost the final model content")
-		}
-		p.cursor = response.NextCursor
-
-		if (index == 2) != (p.cursor == "") {
-			return errors.New("content paging stopped early or escaped its grant")
+			return errors.New("complete read lost the final model content")
 		}
 	}
 	return nil
@@ -479,15 +473,14 @@ func (p *peerContentScenario) readRecovered() error {
 		return errors.New("storage restart changed the existing lease")
 	}
 
-	page, err := s.client.Read(
+	quote, err := s.client.Read(
 		s.ctx,
 		&rpcpb.ReadRequest{
-			LeaseId:  decision.Lease.Id,
-			PageSize: 1,
+			LeaseId: decision.Lease.Id,
 		},
 	)
 	if err != nil {
 		return err
 	}
-	return p.checkMedia(page)
+	return p.checkMedia(quote)
 }

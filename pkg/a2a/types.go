@@ -3,7 +3,6 @@ package a2a
 
 import (
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
-	"github.com/anra-studio/anra/pkg/flow/borrow"
 	"github.com/anra-studio/anra/pkg/model/view"
 )
 
@@ -11,7 +10,6 @@ const (
 	ExtensionURI    = "urn:anra:a2a:tape-view:v1"
 	ExtensionHeader = "A2A-Extensions"
 	TextMediaType   = view.TextMediaType
-	MaxPageSize     = borrow.MaxPageSize
 )
 
 const (

@@ -6,7 +6,7 @@
 
 | 包 | 拥有的行为与状态 |
 | --- | --- |
-| `flow/borrow` | 新请求的 Review、请求幂等、已提交 View 选择、Approve/Reject、完整 Quote 读取、分页，以及唯一的持久化 Journal |
+| `flow/borrow` | 新请求的 Review、请求幂等、已提交 View 选择、Approve/Reject、授权 Quote 读取流，以及唯一的持久化 Journal |
 | `flow/grant` | 原生多段 View handler、候选 lease 构建、有效期检查及已提交 lease 的读取/释放能力 |
 | `flow/clbr` | 委托调用、BUSY 抑制、已完整借阅后的进度更新、本地运行结果到协作结果的转换 |
 | `agent` / `model/delegator` | 原生 Turn 的执行与恢复；不可变委托路径、deadline 与每个 Turn 的 BUSY 记忆 |
@@ -54,4 +54,6 @@ grant 通过自己定义的 `Leases` 接口取得已提交快照和原子释放�
 
 使用真实 HTTP 与持久化的中文 E2E 检查：候选 lease 不可读、Approve 缺少 View 时不改 pending、显式 Reject、其他调用方隔离、竞争批准仅一次提交、bbolt/JSONL 重启恢复。既有协作场景验证循环、并行根、deadline、BUSY 抑制与新借阅内容的进度。纯逻辑测试分别验证请求终态、lease 到期、多段范围及来源精度。
 
-本轮验证：`mise run test` 中的协议检查、生成一致性、构建和单元测试通过；race E2E 为 253/254 场景通过，大型多模态场景在原有 20 秒期限处超时，单独运行仍可复现，无 race 报告。未修改期限或断言。不带 race 的完整 `go test -count=1 -v ./tests/e2e` 为 254 个场景、1226 个步骤全部通过，其中大型多模态场景耗时 2.17 秒。相关包 `go vet`、gofumpt 与 `git diff --check` 通过。
+借阅读取使用 `Read(ctx, caller, leaseID) (io.Reader, error)`。A2A/MCP 在边界消费完整 Quote，客户端与协作工具接收一个 Quote；分页参数、游标、分页规划器及 ReadAll 入口均已移除。验收保留真实网络和存储、完整多段范围、隐私过滤、失效租约、惰性读取、取消和错误时无完整结果等约束。
+
+全链路迁移后 `mise run test` 全量通过：255 个场景、1232 个步骤，包含 race E2E；大型多模态完整读取耗时 8.52 秒，原 20 秒期限和失败断言保留。相关包 go vet、gofumpt 和 diff 空白检查通过。

@@ -31,7 +31,18 @@ GOFLAGS=-race mise run test  # Include unit tests and builds in race detection.
 go test -count=1 -v ./tests/e2e
 # Select a scenario using its Go subtest name:
 go test -count=1 -v ./tests/e2e -run 'TestFeatures/A_grant_keeps_its_original_snapshot'
+# Measure complete stream consumption and Connect reads over real storage:
+go test ./tests/e2e -run '^$' -bench '^BenchmarkBorrowRead$' -benchmem
 ```
+
+## Borrowing stream benchmark
+
+`BenchmarkBorrowRead` uses the same lease and disk-backed fixture as the large
+multimodal acceptance scenario. The stream case consumes the public JSON Reader
+with io.Copy; the Connect case reads and validates one complete Quote over HTTP.
+Both consume all authorized entries. Fixture setup is outside the timed loop.
+Use `-benchmem` to measure allocations alongside latency. The former per-page
+benchmark is removed along with the pagination contract.
 
 ## Investigating in the browser
 
@@ -58,7 +69,7 @@ Each run writes `reports/e2e/<timestamp>/index.html` and its `cucumber.json`.
 On scenario failure, its closed database files and a `failure.json` snapshot
 are saved under that run's `artifacts/scenario-*/` directory. The snapshot
 includes the scenario name, error, model request, borrow request, decision, and
-first page when available. These are separate files to inspect alongside the
+first read response when available. These are separate files to inspect alongside the
 HTML report; HTTP traffic is not captured automatically.
 
 Dependencies and generated reports are ignored by Git. Delete `reports/e2e/`
@@ -70,7 +81,7 @@ discovery, the official A2A SDK, and Connect over localhost HTTP. Each scenario
 gets its own temporary files and servers, with cleanup after success or failure.
 Reporting runs preserve a copy of failed scenarios' files before cleanup.
 Restart steps close and reopen the database files and rebuild the server on a
-new port. Pagination checks include a view larger than one full page. Expiry
+new port. Read checks include disjoint scopes, more than 100 entries and large media. Expiry
 uses a controlled clock rather than sleeps.
 
 Model responses and lender permission decisions are deterministic fixtures.

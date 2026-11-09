@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/anra-studio/anra/pkg/flow/grant"
-	"github.com/go-playground/validator/v10"
 
 	"buf.build/go/protovalidate"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
@@ -59,7 +58,7 @@ func (s *Service) Borrow(ctx context.Context, caller string, req *pb.BorrowReque
 	if err != nil {
 		return nil, err
 	}
-	if err := validator.New().Struct(selection); err != nil {
+	if err := s.validate.Struct(selection); err != nil {
 		return nil, fmt.Errorf("%w: review outcome: %w", ErrInvalidParams, err)
 	}
 	decision := &pb.Decision{
