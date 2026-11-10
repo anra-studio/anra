@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
@@ -23,10 +24,11 @@ type sidecar struct {
 	source  *pb.Source
 }
 
-// snapshot returns the complete tail of decision records after the given head.
+// snapshot returns the complete tail of decision records after the given head,
+// normalized to Anra entries at the storage boundary.
 // Storage metadata is only used to address sidecar records; it is never exposed
 // as a source Tape view or passed to context assembly.
-func (s *sidecar) snapshot(ctx context.Context, after te.Seq) ([]te.EntryLike, te.Seq, error) {
+func (s *sidecar) snapshot(ctx context.Context, after te.Seq) ([]entry.Entry, te.Seq, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, te.Seq{}, err
 	}
@@ -53,16 +55,22 @@ func (s *sidecar) snapshot(ctx context.Context, after te.Seq) ([]te.EntryLike, t
 	if err != nil {
 		return nil, te.Seq{}, fmt.Errorf("%w: read lease sidecar: %w", ErrStorage, err)
 	}
-	for _, record := range batch.Raw {
+	records := make([]entry.Entry, len(batch.Raw))
+	for i, raw := range batch.Raw {
+		record, err := entry.FromTape(raw)
+		if err != nil {
+			return nil, te.Seq{}, fmt.Errorf("%w: decode lease sidecar entry at %s: %w", ErrStorage, next, err)
+		}
 		if record.GetID() != next || record.GetKind() != decisionKind || record.GetOwner() != s.owner {
 			return nil, te.Seq{}, fmt.Errorf("%w: invalid lease sidecar record at %s", ErrStorage, next)
 		}
+		records[i] = record
 		next = next.Next()
 	}
 	if next != head.Next() {
 		return nil, te.Seq{}, fmt.Errorf("%w: incomplete lease sidecar", ErrStorage)
 	}
-	return batch.Raw, head, nil
+	return records, head, nil
 }
 
 func (s *sidecar) append(ctx context.Context, expected te.Seq, data []byte) error {

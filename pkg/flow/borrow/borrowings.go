@@ -66,7 +66,7 @@ func (r *borrowings) refresh(ctx context.Context) error {
 	pending := make(map[requestKey]borrowingState)
 	leases := make(map[string]requestKey)
 	for _, record := range batch {
-		st, err := r.decode([]byte(record.GetSummary()))
+		st, err := r.decode([]byte(record.Body()))
 		if err != nil {
 			return fmt.Errorf("%w: lease sidecar record %s: %w", ErrStorage, record.GetID(), err)
 		}
