@@ -87,7 +87,7 @@
   场景大纲: 原生 OverView 的候选授权通过独立 Journal 保存和释放
     假如 授权 sidecar 使用 "<backend>" 存储
     而且 保存源 Tape 的正文和序号
-    那么 未绑定 grant handler 的 Tape 不能创建借阅服务
+    那么 未绑定 grant handler 的 Tape 可创建服务但借阅失败且 sidecar 不变
     而且 原生 OverView 拒绝无效授权命令且 sidecar 不变
     而且 未提交的候选 lease 不能读取或释放且 sidecar 不变
     当 重复注册 grant handler 被拒绝且原绑定仍可使用

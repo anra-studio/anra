@@ -35,7 +35,7 @@ flowchart TD
 
 `borrow.Journal` 是唯一持久化所有者。初始请求的结果、其中的 lease 和后续释放均使用原有 sidecar 记录格式，一次追加同时作为状态与审计来源。多个服务共享 Journal；其锁覆盖重放、预期快照比较、lease ID 唯一性和追加。候选 lease 与请求结果在同一条记录中提交，无需跨两个存储协调。
 
-grant 通过自己定义的 `Leases` 接口取得已提交快照和原子释放能力，Journal 实现此接口。`borrow.New` 校验其配置的授权服务与请求状态确实使用同一个 Journal。读取与释放的线性化点由共享 Journal 提供；已取得快照许可的读取可以完成，释放后取得的快照必须拒绝。
+grant 通过自己定义的 `Leases` 接口取得已提交快照和原子释放能力，Journal 实现此接口。宿主负责将 Tape 的 grant handler、授权服务和请求状态组装为使用同一个 Journal、Source 和 owner；`borrow.New` 只校验必填依赖并初始化默认值。读取与释放的线性化点由共享 Journal 提供；已取得快照许可的读取可以完成，释放后取得的快照必须拒绝。
 
 ## 明确的业务操作
 

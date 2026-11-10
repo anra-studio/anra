@@ -13,7 +13,6 @@ import (
 	"github.com/anra-studio/anra/pkg/model/view"
 	"github.com/go-playground/validator/v10"
 	"github.com/scbizu/tape-go/pkg/tape"
-	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -57,23 +56,12 @@ type Service struct {
 	validate *validator.Validate
 }
 
+// New initializes borrowing defaults. The host must wire the Tape's grant
+// handler and Grants to the same Journal, Source and owner.
 func New(c Config) (*Service, error) {
 	validate := validator.New()
 	if err := validate.Struct(c); err != nil {
 		return nil, fmt.Errorf("%w: borrowing config: %w", ErrInvalidParams, err)
-	}
-	if c.Tape.Registry == nil {
-		return nil, fmt.Errorf("%w: missing grant registry", ErrInvalidParams)
-	}
-	handler, found := c.Tape.Registry.Lookup(grant.Action)
-	if !found || handler != c.Grants {
-		return nil, fmt.Errorf("%w: mismatched grant handler", ErrInvalidParams)
-	}
-	if c.Grants.Leases() != c.Journal {
-		return nil, fmt.Errorf("%w: grants must use the request journal", ErrInvalidParams)
-	}
-	if !proto.Equal(c.Grants.Source(), c.Source) || !proto.Equal(c.Journal.Source(), c.Source) || c.Grants.Owner() != c.Tape.OwnerID || c.Journal.Owner() != c.Tape.OwnerID {
-		return nil, fmt.Errorf("%w: source or owner mismatch", ErrInvalidParams)
 	}
 	if c.Exporter == nil {
 		c.Exporter = view.ContextExporter{}

@@ -222,8 +222,12 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 		},
 	)
 	sc.Step(
-		`^未绑定 grant handler 的 Tape 不能创建借阅服务$`,
+		`^未绑定 grant handler 的 Tape 可创建服务但借阅失败且 sidecar 不变$`,
 		func() error {
+			_, before, err := s.grants.decisions(s.ctx)
+			if err != nil {
+				return err
+			}
 			bare := &tape.Tape{
 				TapeStorage: s.grants.tape.TapeStorage,
 				OwnerID:     s.grants.tape.OwnerID,
@@ -239,8 +243,27 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 					},
 				},
 			)
-			if service != nil || !errors.Is(err, borrow.ErrInvalidParams) {
-				return fmt.Errorf("missing handler admitted a borrowing service: %v", err)
+			if err != nil {
+				return err
+			}
+			req := &pb.BorrowRequest{
+				RequestId: "missing-grant-handler",
+				Purpose:   "verify native handler dispatch failure",
+				Query:     "committed context",
+			}
+			decision, err := service.Borrow(s.ctx, "borrower", req)
+			if decision != nil || !errors.Is(err, borrow.ErrStorage) {
+				return fmt.Errorf("missing handler borrowing returned %v, %v", decision, err)
+			}
+			if decision, err := service.Get(s.ctx, "borrower", req.RequestId); decision != nil || !errors.Is(err, borrow.ErrUnavailable) {
+				return fmt.Errorf("failed borrowing persisted a decision: %v, %v", decision, err)
+			}
+			_, after, err := s.grants.decisions(s.ctx)
+			if err != nil {
+				return err
+			}
+			if before != after {
+				return errors.New("missing handler borrowing appended a sidecar record")
 			}
 			return nil
 		},
