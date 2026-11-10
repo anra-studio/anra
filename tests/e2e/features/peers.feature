@@ -86,6 +86,9 @@
 
   场景大纲: 原生 OverView 的候选授权通过独立 Journal 保存和释放
     假如 授权 sidecar 使用 "<backend>" 存储
+    那么 授权 sidecar 没有记录且序号为零
+    当 研究节点重启存储和服务
+    那么 授权 sidecar 没有记录且序号为零
     而且 保存源 Tape 的正文和序号
     那么 未绑定 grant handler 的 Tape 可创建服务但借阅失败且 sidecar 不变
     而且 原生 OverView 拒绝无效授权命令且 sidecar 不变
@@ -97,9 +100,6 @@
     当 研究节点重启存储和服务
     那么 sidecar 按顺序保留同一视图的授权和释放
     而且 源 Tape 的正文和序号保持不变
-    而且 调用方不能继续读取该 lease
-    当 其他 Source 不能重新绑定该授权 sidecar
-    那么 sidecar 按顺序保留同一视图的授权和释放
     而且 调用方不能继续读取该 lease
 
     例子:

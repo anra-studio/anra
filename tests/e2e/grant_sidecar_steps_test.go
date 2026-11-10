@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -51,6 +50,19 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 		},
 	)
 	sc.Step(
+		`^授权 sidecar 没有记录且序号为零$`,
+		func() error {
+			records, head, err := s.grants.decisions(s.ctx)
+			if err != nil {
+				return err
+			}
+			if len(records) != 0 || !head.IsZero() {
+				return fmt.Errorf("empty sidecar has %d records at %s", len(records), head)
+			}
+			return nil
+		},
+	)
+	sc.Step(
 		`^保存源 Tape 的正文和序号$`,
 		func() error {
 			var err error
@@ -78,11 +90,11 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 			if err != nil {
 				return err
 			}
-			if len(records) != 2 || head != te.SeqFromUint64(3) {
-				return fmt.Errorf("sidecar history = %d decisions at %s, want 2 at 3", len(records), head)
+			if len(records) != 2 || head != te.SeqFromUint64(2) {
+				return fmt.Errorf("sidecar history = %d decisions at %s, want 2 at 2", len(records), head)
 			}
 			for i, record := range records {
-				if record.GetID() != te.SeqFromUint64(uint64(i+2)) || record.GetKind() != "anra:lease-decision/v1" {
+				if record.GetID() != te.SeqFromUint64(uint64(i+1)) || record.GetKind() != "anra:lease-decision/v1" {
 					return errors.New("sidecar lost its position or decision kind")
 				}
 				var payload struct {
@@ -101,24 +113,6 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 				}
 			}
 			return nil
-		},
-	)
-	sc.Step(
-		`^其他 Source 不能重新绑定该授权 sidecar$`,
-		func() error {
-			source := proto.Clone(s.grants.source).(*pb.Source)
-			if err := s.stopPeer(); err != nil {
-				return err
-			}
-			source.TapeId += "-another-incarnation"
-			other, err := openGrantFixture(s.ctx, filepath.Join(s.root, "peer.lease.db"), source, "researcher-local", nil, nil, s.jsonlSidecar)
-			if other != nil {
-				return errors.Join(errors.New("another source opened the grant sidecar"), other.close())
-			}
-			if !errors.Is(err, borrow.ErrStorage) {
-				return fmt.Errorf("source mismatch returned %v", err)
-			}
-			return s.restartPeer()
 		},
 	)
 	sc.Step(
@@ -197,7 +191,7 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 			if err != nil {
 				return err
 			}
-			if len(records) != 2 || head != te.SeqFromUint64(3) {
+			if len(records) != 2 || head != te.SeqFromUint64(2) {
 				return errors.New("sidecar did not preserve exactly one pending admission and one approval")
 			}
 			_, err = s.client.ReadView(s.ctx, s.decision.Lease)

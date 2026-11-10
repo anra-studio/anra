@@ -33,7 +33,7 @@ flowchart TD
 
 `grant.Handle` 的命令只有 Caller 和 TTL，目标 Ref 来自完整的原生多段 View。它返回候选 lease，不接收 BorrowRequest、pending 状态、Selection 或 expected 快照，也不写 sidecar。未提交的候选 lease 无法通过正常借阅 API 读取或释放。
 
-`borrow.Journal` 是唯一持久化所有者。初始请求的结果、其中的 lease 和后续释放均使用原有 sidecar 记录格式，一次追加同时作为状态与审计来源。多个服务共享 Journal；其锁覆盖重放、预期快照比较、lease ID 唯一性和追加。候选 lease 与请求结果在同一条记录中提交，无需跨两个存储协调。
+`borrow.Journal` 是唯一持久化所有者。sidecar 只保存借阅决策和释放记录，从序号 1 开始；空 Journal 的初始化与恢复不写入记录，也没有 Source 绑定头。初始请求的结果、其中的 lease 和后续释放一次追加同时作为状态与审计来源。多个服务共享 Journal；其锁覆盖重放、预期快照比较、lease ID 唯一性和追加。候选 lease 与请求结果在同一条记录中提交，无需跨两个存储协调。
 
 grant 通过自己定义的 `Leases` 接口取得已提交快照和原子释放能力，Journal 实现此接口。宿主负责将 Tape 的 grant handler、授权服务和请求状态组装为使用同一个 Journal、Source 和 owner；`borrow.New` 只校验必填依赖并初始化默认值。读取与释放的线性化点由共享 Journal 提供；已取得快照许可的读取可以完成，释放后取得的快照必须拒绝。
 

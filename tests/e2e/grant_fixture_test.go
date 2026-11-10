@@ -95,17 +95,20 @@ func openGrantFixture(ctx context.Context, path string, source *pb.Source, ident
 }
 
 // decisions inspects physical sidecar records without treating the sidecar as
-// a context Tape. Entry 1 is the source binding, subsequent entries are decisions.
+// a context Tape. Every entry is a borrowing decision or release.
 func (f *grantFixture) decisions(ctx context.Context) ([]te.EntryLike, te.Seq, error) {
 	ctx = owner.WithOwnerId(ctx, f.owner)
 	state, err := f.storage.Get(ctx)
 	if err != nil {
 		return nil, te.Seq{}, err
 	}
+	if state.Scope.SeqE.IsZero() {
+		return nil, state.Scope.SeqE, nil
+	}
 	batch, err := f.storage.Range(
 		ctx,
 		tv.EntryRange{
-			SeqS: te.SeqFromUint64(2),
+			SeqS: te.SeqFromUint64(1),
 			SeqE: state.Scope.SeqE.Next(),
 		},
 	)

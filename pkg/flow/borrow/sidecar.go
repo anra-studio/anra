@@ -9,14 +9,9 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
-const (
-	bindingKind  te.EntryKind = "anra:lease-source/v1"
-	decisionKind te.EntryKind = "anra:lease-decision/v1"
-)
+const decisionKind te.EntryKind = "anra:lease-decision/v1"
 
 // sidecar is the borrowing journal's persistence dependency, not a context Tape.
 // It adapts native storage records without constructing te.Tape, exposing views,
@@ -28,57 +23,7 @@ type sidecar struct {
 	source  *pb.Source
 }
 
-func (s *sidecar) bind(ctx context.Context) error {
-	ctx = owner.WithOwnerId(ctx, s.owner)
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	state, err := s.storage.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("%w: read lease sidecar binding: %w", ErrStorage, err)
-	}
-	if state.Scope.SeqE.IsZero() {
-		data, err := protojson.Marshal(s.source)
-		if err != nil {
-			return fmt.Errorf("%w: encode lease sidecar source: %w", ErrStorage, err)
-		}
-		_, err = s.storage.Store(
-			ctx,
-			te.Entry{
-				Ek:    bindingKind,
-				Owner: s.owner,
-				Text:  string(data),
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("%w: bind lease sidecar: %w", ErrStorage, err)
-		}
-		return nil
-	}
-	batch, err := s.storage.Range(
-		ctx,
-		tv.EntryRange{
-			SeqS: te.SeqFromUint64(1),
-			SeqE: te.SeqFromUint64(2),
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("%w: read lease sidecar source: %w", ErrStorage, err)
-	}
-	if len(batch.Raw) != 1 || batch.Raw[0].GetID() != te.SeqFromUint64(1) || batch.Raw[0].GetKind() != bindingKind || batch.Raw[0].GetOwner() != s.owner {
-		return fmt.Errorf("%w: missing lease sidecar binding", ErrStorage)
-	}
-	var source pb.Source
-	if err := protojson.Unmarshal([]byte(batch.Raw[0].GetSummary()), &source); err != nil {
-		return fmt.Errorf("%w: decode lease sidecar source: %w", ErrStorage, err)
-	}
-	if !proto.Equal(&source, s.source) {
-		return fmt.Errorf("%w: lease sidecar source mismatch", ErrStorage)
-	}
-	return nil
-}
-
-// snapshot returns a complete tail of decision records, excluding the binding.
+// snapshot returns the complete tail of decision records after the given head.
 // Storage metadata is only used to address sidecar records; it is never exposed
 // as a source Tape view or passed to context assembly.
 func (s *sidecar) snapshot(ctx context.Context, after te.Seq) ([]te.EntryLike, te.Seq, error) {
@@ -91,13 +36,13 @@ func (s *sidecar) snapshot(ctx context.Context, after te.Seq) ([]te.EntryLike, t
 		return nil, te.Seq{}, fmt.Errorf("%w: lease sidecar head: %w", ErrStorage, err)
 	}
 	head := state.Scope.SeqE
-	if head.IsZero() || after.Cmp(head) > 0 {
+	if after.Cmp(head) > 0 {
 		return nil, te.Seq{}, fmt.Errorf("%w: invalid lease sidecar head", ErrStorage)
 	}
-	next := after.Next()
-	if next.Cmp(te.SeqFromUint64(2)) < 0 {
-		next = te.SeqFromUint64(2)
+	if after == head {
+		return nil, head, nil
 	}
+	next := after.Next()
 	batch, err := s.storage.Range(
 		ctx,
 		tv.EntryRange{

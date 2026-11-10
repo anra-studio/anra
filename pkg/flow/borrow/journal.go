@@ -39,9 +39,6 @@ func NewJournal(ctx context.Context, c JournalConfig) (*Journal, error) {
 		owner:   c.Owner,
 		source:  proto.Clone(c.Source).(*pb.Source),
 	}
-	if err := store.bind(ctx); err != nil {
-		return nil, err
-	}
 	records := newBorrowings(store)
 	if err := records.refresh(ctx); err != nil {
 		return nil, err

@@ -217,8 +217,9 @@ sidecar decision; gaps are never included in an enclosing range. The command car
 only the borrowing journal can make it readable by atomically recording the
 request outcome.
 
-The sidecar's first record binds the Source. Subsequent `anra:lease-decision/v1`
-records preserve the request, decision and release state. One append supplies
+The sidecar contains only `anra:lease-decision/v1` records, starting at sequence 1,
+which preserve the request, decision and release state. Opening an empty journal
+writes nothing; the host supplies the stable Source. One append supplies
 both the new state and its audit record. It uses tape-go storage operations
 without constructing a second Tape, exposing context views, or changing source
 sequences. The journal checks the entire recovered tail before publishing its
@@ -231,8 +232,9 @@ approval and release check the previous outcome inside the shared journal's
 critical section. Competing approvals cannot overwrite a completed outcome.
 
 Use `.lease.db` for the new sidecar format. Historical `.grants.db` and the
-superseded `.crops.db` format are not read or migrated; their leases must be
-reissued. Context Tape data remains unchanged.
+superseded `.crops.db` format, along with sidecars with the removed binding
+header, are not read or migrated; their leases must be reissued. Context Tape
+data remains unchanged.
 
 The shared journal orders lease snapshots with Release/Revoke. Reads authorized
 after termination fail; a request already authorized may finish. Expiry is
