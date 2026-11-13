@@ -2,19 +2,25 @@ package e2e_test
 
 import (
 	"fmt"
+
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 )
 
 // inspectLifecycle verifies the physical records before projecting conversation.
 func inspectLifecycle(entries []entry.EntryLike) ([]entry.EntryLike, error) {
 	var conversation []entry.EntryLike
-	var active *anchor.Record
+	var active *anchor.BuiltIn
 	initialized, starts, closes := 0, 0, 0
 	var startSeq string
 	calls, results := 0, 0
 	for _, e := range entries {
-		r, err := anchor.Decode(e)
+		value, err := ae.FromTape(e)
+		if err != nil {
+			return nil, err
+		}
+		r, err := anchor.Decode(value)
 		if err != nil {
 			return nil, err
 		}

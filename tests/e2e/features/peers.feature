@@ -1,85 +1,135 @@
-Feature: Trusted peers communicate and borrow permissioned context
-  A borrower discovers a peer, speaks standard A2A, and reads only the context
-  that the lender approved. Decisions and closures survive storage restarts.
+# language: zh-CN
+功能: 节点通过 A2A 通信并借阅已提交视图
+  调用方只读取完整获准的已提交 Scopes，授权决策和终止状态在重启后保持。
 
-  Background:
-    Given a researcher peer with two findings and a durable grant journal
+  背景:
+    假如 研究节点已提交两份发现并持久化授权记录
 
-  Scenario: Send a message to a discovered peer using standard A2A
-    When the borrower discovers the researcher and sends "hello"
-    Then the peer answers "research response"
-    And the peer can stream a response to "hello again"
+  场景: 通过标准 A2A 向发现的节点发送消息
+    当 调用方发现研究节点并发送 "hello"
+    那么 节点回答 "research response"
+    而且 节点也能流式回答 "hello again"
 
-  Scenario: Borrowed context informs an answer and survives a borrower restart
-    When the borrower asks its agent to use the researcher's findings
-    Then the answer is "Use version checks for competing writes."
-    And the borrowed tool result retains the source and sequence provenance
-    When I close and reopen the borrower agent's storage
-    Then its model can recall the findings as a tool result
-    And every stored borrower entry belongs to the borrower
+  场景: 授权范围在借出节点重启后保持不变
+    当 调用方请求借阅已提交视图
+    那么 借阅决策为 "granted"
+    当 调用方读取完整授权视图
+    而且 研究节点在授权后提交新的发现
+    而且 研究节点重启存储和服务
+    那么 重试同一请求仍返回原 lease
+    而且 调用方再次读取相同的原有授权视图
 
-  Scenario: A grant keeps its original snapshot across a lender restart
-    When the borrower requests context
-    Then the decision is "granted"
-    When the borrower reads the first finding
-    And the researcher adds a finding after the grant
-    And the researcher closes and reopens its storage and server
-    Then retrying the request returns the same grant
-    And the borrower can finish paging the original snapshot
+  场景: 多段已提交视图一次完整读取
+    假如 研究节点已提交 103 条发现
+    当 调用方请求借阅已提交视图
+    那么 调用方完整读出全部 103 条发现
 
-  Scenario: A selected range is fully read across multiple pages
-    Given the researcher has 103 findings
-    When the borrower requests context
-    Then the borrower receives all 103 findings across multiple pages
+  场景: 缺失授权条目时整次读取失败
+    当 调用方请求借阅已提交视图
+    而且 授权视图后一段的正文丢失并重启存储
+    那么 读取缺失的授权视图失败且不返回部分内容
 
-  Scenario: Reusing a request ID with different input is rejected
-    When the borrower requests context
-    And the borrower changes the query but keeps the request ID
-    Then the request fails with a conflict
+  场景: 重用请求 ID 返回原有借阅决定
+    当 调用方请求借阅已提交视图
+    而且 调用方保持请求 ID 但修改用途、查询和范围
+    那么 返回原有借阅决定且 lease 仍可读取
 
-  Scenario: Another identified peer cannot use the borrower's grant
-    When the borrower requests context
-    Then another peer cannot look up, read, or release that grant
-    And another peer's own request is denied without context
+  场景: 其他调用方不能使用已有借阅授权
+    当 调用方请求借阅已提交视图
+    那么 其他调用方不能查询读取或释放该 lease
+    而且 其他调用方自己的请求被拒绝且不返回内容
 
-  Scenario Outline: Ending a grant prevents further reads after restart
-    When the borrower requests context
-    And the grant is <closure>
-    And the researcher closes and reopens its storage and server
-    Then the borrower cannot read the grant
-    And the recorded decision still identifies the original grant
+  场景大纲: 终止授权后重启仍拒绝读取
+    当 调用方请求借阅已提交视图
+    而且 授权终止方式为 <closure>
+    而且 研究节点重启存储和服务
+    那么 调用方不能继续读取该 lease
+    而且 记录的决策仍标识原 lease
 
-    Examples:
+    例子:
       | closure  |
       | released |
       | revoked  |
       | expired  |
 
-  Scenario Outline: A pending decision can be resolved and recovered
-    Given the researcher requires approval for borrowing
-    When the borrower requests context
-    Then the decision is "pending"
-    When the researcher closes and reopens its storage and server
-    Then the decision is still "pending"
-    When the researcher resolves the request as "<outcome>"
-    And the researcher closes and reopens its storage and server
-    Then the decision is still "<outcome>"
-    And access matches the "<outcome>" decision
+  场景大纲: 待批准的借阅决策可以完成并恢复
+    假如 研究节点要求本地批准借阅
+    当 调用方请求借阅已提交视图
+    那么 借阅决策为 "pending"
+    当 研究节点重启存储和服务
+    那么 恢复后的决策仍为 "pending"
+    而且 审批租期无效时原待审批决策不变
+    而且 另一借阅服务读取当前待审批决策
+    当 研究节点将请求处理为 "<outcome>"
+    而且 另一服务的审批和重复借阅均不能改写结果
+    而且 研究节点重启存储和服务
+    那么 恢复后的决策仍为 "<outcome>"
+    而且 读取结果符合 "<outcome>" 决策
+    而且 已完成的请求不能再次审批且原决策不变
 
-    Examples:
+    例子:
       | outcome |
       | granted |
       | denied  |
 
-  Scenario Outline: Invalid or unauthorized wire requests cannot borrow context
-    When a peer submits a wire request with "<problem>"
-    Then the wire error is "<code>"
+  场景大纲: 无效或未授权的协议请求不能借阅上下文
+    当 节点提交包含 "<problem>" 的协议请求
+    那么 返回协议错误 "<code>"
 
-    Examples:
+    例子:
       | problem           | code                |
       | no identity       | unauthenticated     |
       | no extension      | failed_precondition |
       | missing purpose   | invalid_argument    |
       | reversed bounds   | invalid_argument    |
-      | excessive page    | invalid_argument    |
-      | excessive body    | resource_exhausted  |
+      | 空 lease ID        | invalid_argument    |
+
+  场景大纲: 原生 OverView 的候选授权通过独立 Journal 保存和释放
+    假如 授权 sidecar 使用 "<backend>" 存储
+    那么 授权 sidecar 没有记录且序号为零
+    当 研究节点重启存储和服务
+    那么 授权 sidecar 没有记录且序号为零
+    而且 保存源 Tape 的正文和序号
+    那么 未绑定 grant handler 的 Tape 可创建服务但借阅失败且 sidecar 不变
+    而且 原生 OverView 拒绝无效授权命令且 sidecar 不变
+    而且 未提交的候选 lease 不能读取或释放且 sidecar 不变
+    当 重复注册 grant handler 被拒绝且原绑定仍可使用
+    而且 授权终止方式为 released
+    那么 sidecar 按顺序保留同一视图的授权和释放
+    而且 源 Tape 的正文和序号保持不变
+    当 研究节点重启存储和服务
+    那么 sidecar 按顺序保留同一视图的授权和释放
+    而且 源 Tape 的正文和序号保持不变
+    而且 调用方不能继续读取该 lease
+
+    例子:
+      | backend |
+      | bbolt   |
+      | jsonl   |
+
+  场景大纲: 多个服务共享 Journal 时审批只能提交一次
+    假如 授权 sidecar 使用 "<backend>" 存储
+    而且 保存源 Tape 的正文和序号
+    而且 研究节点要求本地批准借阅
+    当 调用方请求借阅已提交视图
+    那么 借阅决策为 "pending"
+    而且 取消的授权请求不追加 sidecar 记录
+    当 两个借阅服务并发批准同一请求且只有一个结果提交
+    而且 研究节点重启存储和服务
+    那么 重启后仅恢复已提交的审批结果且 lease 可读取
+    而且 源 Tape 的正文和序号保持不变
+
+    例子:
+      | backend |
+      | bbolt   |
+      | jsonl   |
+
+  场景大纲: Approve 和 Reject 分别表达批准与拒绝
+    假如 授权 sidecar 使用 "<backend>" 存储
+    而且 研究节点要求本地批准借阅
+    那么 无可用视图时批准保留 pending 且只能显式拒绝
+
+    例子:
+      | backend |
+      | bbolt   |
+      | jsonl   |

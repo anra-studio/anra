@@ -18,7 +18,8 @@ func Card(value *pv.Peer) (*sdk.AgentCard, error) {
 	if err != nil {
 		return nil, err
 	}
-	card := &sdk.AgentCard{Name: value.Id, Description: value.Description, Version: "0.1.0",
+	card := &sdk.AgentCard{
+		Name: value.Id, Description: value.Description, Version: "0.1.0",
 		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(value.Address+CorePath, sdk.TransportProtocolJSONRPC)},
 		DefaultInputModes:   []string{"text/plain"}, DefaultOutputModes: []string{"text/plain"},
 	}
@@ -47,6 +48,6 @@ func NewPeerClient(h *http.Client, value *pv.Peer) (*Client, error) {
 	if !peermodel.HasSkill(value, peermodel.BorrowContext) {
 		return nil, ErrInactive
 	}
-	transport := connecthttp.NewTransport(h, value.Address, connecthttp.WithReadMaxBytes(MaxBodyBytes), connecthttp.WithSendMaxBytes(MaxBodyBytes))
+	transport := connecthttp.NewTransport(h, value.Address, connecthttp.WithReadMaxBytes(0), connecthttp.WithSendMaxBytes(0))
 	return &Client{rpc: tapev1connect.NewTapeViewServiceClient(connect.NewClient(transport)), viewVersion: true}, nil
 }

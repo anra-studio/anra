@@ -188,10 +188,10 @@ owns selection. Borrowing records the grant and returned provenance as a tool
 result on the borrower's tape. References never confer another agent's grant.
 
 A completed window contains its user message, assistant messages, and structured
-tool calls/results. Failed or unfinished work, thought parts, state deltas, and
-control anchors are excluded. The closing anchor records completion without
-copying the final answer. Existing entry/page size limits still apply; there is
-no separate 2 KiB publication limit. Trusted callers receive separate
+tool calls/results and authorized thought content. Failed or unfinished work,
+state deltas, provider signatures and control boundaries are excluded. The closing
+anchor records completion without copying the final answer. Borrowed entries
+and responses have no fixed size cap; pagination only splits transport. Trusted callers receive separate
 requester-bound grants for these immutable windows.
 
 The CLI uses `[lobby].address` to find the selected server; its peer tools resolve
@@ -224,6 +224,6 @@ commits. On restart, an open turn receives one abandoned close; its
 unfinished ADK events and state deltas stay on disk but are excluded from the
 next model context. An uncertain storage append fences new reasoning.
 
-`serve` also opens `<data-dir>/<agent>.grants.db` and exposes the TapeView Connect
+`serve` also opens `<data-dir>/<agent>.lease.db` and exposes the TapeView Connect
 service advertised in its card. Grants retain their original source, exact range,
 head, requester, expiry, and release/revocation state across restart.

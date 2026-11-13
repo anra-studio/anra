@@ -1,6 +1,7 @@
 [tools]
 go = "1.27.1"
 buf = "1.61.0"
+"go:mvdan.cc/gofumpt" = "v0.12.0"
 "go:google.golang.org/protobuf/cmd/protoc-gen-go" = "v1.36.12"
 "go:connectrpc.com/connect/v2/cmd/protoc-gen-connect-go" = "v2.0.0-rc.1"
 
@@ -40,11 +41,15 @@ run = "go build -o anra ./cmd/anra"
 
 [tasks.e2e]
 description = "Run the executable Given/When/Then acceptance scenarios"
-run = "go test -count=1 -v ./tests/e2e"
+run = "go test -race -count=1 -v ./tests/e2e"
+
+[tasks.unit]
+description = "Check pure domain logic and codecs"
+run = "go test ./pkg/..."
 
 [tasks.test]
-description = "Check the API contract, build all packages, and run BDD E2E scenarios"
-depends = ["proto-lint", "proto-build", "proto-check-generated", "build", "e2e"]
+description = "Check the API contract, build all packages, and run unit and BDD E2E tests"
+depends = ["proto-lint", "proto-build", "proto-check-generated", "build", "unit", "e2e"]
 
 [tasks.e2e-report]
 description = "Run BDD scenarios and generate a local HTML investigation report"

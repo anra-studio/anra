@@ -7,9 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
-	"github.com/cucumber/godog"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
@@ -18,8 +18,8 @@ import (
 	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/peer"
 	"github.com/anra-studio/anra/pkg/registry"
+	"github.com/cucumber/godog"
 	"google.golang.org/protobuf/proto"
-	"path/filepath"
 )
 
 type hostedServer struct {

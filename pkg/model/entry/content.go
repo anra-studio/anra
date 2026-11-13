@@ -1,0 +1,114 @@
+package entry
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	te "github.com/scbizu/tape-go/pkg/tape/entry"
+	"google.golang.org/genai"
+)
+
+// ErrUnsupported means the entry has no decodable model content.
+var ErrUnsupported = errors.New("unsupported entry content")
+
+// Content wraps SDK model content, preserving its parts and historical role.
+// Channel and provenance determine authority, independently of that role.
+type Content struct {
+	genai.Content
+	Parts []*Part `json:"parts,omitempty"`
+}
+
+// ADKEventContent extracts model content from an ADK event extension.
+type ADKEventContent struct {
+	Content *Content `json:"content"`
+}
+
+// Part preserves SDK content, including media and code, while excluding provider
+// signatures and execution metadata from its JSON representation. Tool payloads
+// override the SDK's maps to preserve opaque business JSON and number lexemes.
+type Part struct {
+	genai.Part
+	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
+	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
+	ToolCall         *ToolCall         `json:"toolCall,omitempty"`
+	ToolResponse     *ToolResponse     `json:"toolResponse,omitempty"`
+}
+
+// partFields omits Part's codec methods. The shallower fields in partJSON shadow
+// SDK metadata during decoding and remain absent when encoding public content.
+type partFields Part
+
+type partJSON struct {
+	partFields
+	ThoughtSignature json.RawMessage `json:"thoughtSignature,omitempty"`
+	PartMetadata     json.RawMessage `json:"partMetadata,omitempty"`
+}
+
+func (p *Part) UnmarshalJSON(data []byte) error {
+	var decoded partJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*p = Part(decoded.partFields)
+	return nil
+}
+
+func (p *Part) MarshalJSON() ([]byte, error) {
+	return json.Marshal(partJSON{partFields: partFields(*p)})
+}
+
+type FunctionCall struct {
+	genai.FunctionCall
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+type FunctionResponse struct {
+	genai.FunctionResponse
+	Response json.RawMessage `json:"response,omitempty"`
+}
+
+type ToolCall struct {
+	genai.ToolCall
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+type ToolResponse struct {
+	genai.ToolResponse
+	Response json.RawMessage `json:"response,omitempty"`
+}
+
+// Content decodes the structured model body, or represents a plain user/model
+// entry as a text part. It does not validate persisted content or attach consumer
+// authority. The original event extension, including SDK state and signatures,
+// remains untouched for runtime recovery. Content's JSON codec defines the
+// public representation shared by Export and MCP.
+func (e Entry) Content() (*Content, error) {
+	switch e.GetKind() {
+	case te.EntryUser, te.EntryAssistant, te.EntryToolCall, te.EntryToolResult:
+	default:
+		return nil, ErrUnsupported
+	}
+	var event ADKEventContent
+	exists, err := e.DecodeExtension(ADKEvent, &event)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnsupported, err)
+	}
+	if exists {
+		if event.Content == nil {
+			return nil, ErrUnsupported
+		}
+		return event.Content, nil
+	}
+	// Without an ADK event, only user and assistant entries fall back to plain text.
+	// Tool entries require structured content.
+	role := genai.RoleUser
+	switch e.GetKind() {
+	case te.EntryUser:
+	case te.EntryAssistant:
+		role = genai.RoleModel
+	default:
+		return nil, ErrUnsupported
+	}
+	return &Content{Content: genai.Content{Role: role}, Parts: []*Part{{Part: genai.Part{Text: e.Body()}}}}, nil
+}

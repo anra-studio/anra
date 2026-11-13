@@ -3,11 +3,6 @@ package a2a
 import (
 	"context"
 	"sort"
-	"time"
-
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
-	te "github.com/scbizu/tape-go/pkg/tape/entry"
-	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 // Ranker owns relevance ordering and the cut-off. It returns the indexes of the
@@ -19,7 +14,7 @@ import (
 // A Ranker is trusted to honor that contract; callers do not re-validate it.
 // Vendor responses are parsed by the client that owns the vendor protocol, which
 // returns well-formed indexes. Indexes
-// can only select among candidates Eligible already permitted, so a faulty
+// can only select among candidates the caller already permitted, so a faulty
 // Ranker can pick a worse permitted candidate but never an unpermitted one.
 type Ranker interface {
 	Rank(ctx context.Context, query string, candidates []string) ([]int, error)
@@ -102,44 +97,4 @@ func (r ScoreRanker) Rank(ctx context.Context, q string, candidates []string) ([
 		order = append(order, s.Index)
 	}
 	return order, nil
-}
-
-type Candidate struct {
-	Summary string
-	Range   tv.EntryRange
-}
-
-// Eligible must check sharing permission and exportability before returning
-// candidate summaries, and must honor req.Bounds: it returns only valid ranges
-// within the head that lie inside the requested bounds, because only its output
-// is submitted to the Ranker. Ranking never grants permission by itself, and
-// Service re-checks the selected range regardless of the Policy in use.
-type Eligible func(context.Context, string, *pb.BorrowRequest, te.Seq) ([]Candidate, error)
-type BestRangePolicy struct {
-	Eligible Eligible
-	Ranker   Ranker
-	TTL      time.Duration
-}
-
-func (p BestRangePolicy) Select(ctx context.Context, requester string, req *pb.BorrowRequest, head te.Seq) (Selection, error) {
-	if p.Eligible == nil {
-		return Selection{}, ErrInvalidParams
-	}
-	cs, err := p.Eligible(ctx, requester, req, head)
-	if err != nil {
-		return Selection{}, err
-	}
-	summaries := make([]string, len(cs))
-	for i, c := range cs {
-		summaries[i] = c.Summary
-	}
-	order, err := rank(ctx, p.Ranker, req.Query, summaries)
-	if err != nil {
-		return Selection{}, err
-	}
-	if len(order) == 0 {
-		return Selection{Status: Denied}, nil
-	}
-	// A grant covers a single range: the best-ranked one.
-	return Selection{Status: Granted, Range: &cs[order[0]].Range, TTL: p.TTL}, nil
 }

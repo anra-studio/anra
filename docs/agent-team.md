@@ -30,7 +30,7 @@ provide exactly-once side effects. A failed Run returns its error to the caller.
 
 ## Collaboration
 
-`a2a.NewExecutor` exposes a member's Run method through A2A. Peer messaging and
+`a2a.NewExecutor(runtime, &flows.Clbr)` exposes a member's Run method through A2A; `flow/clbr` maps execution and BUSY outcomes to collaboration results. Peer messaging and
 permissioned Tape borrowing belong to `pkg/a2a`; members need no shared team
 Tape or mandatory coordinator. A coordinating member can use tools to request
 work from peers.

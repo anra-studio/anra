@@ -57,10 +57,10 @@ sequenceDiagram
     P-->>B: Grant or denial
     B->>S: Capture source identity and head
     B-->>A: Granted view, denied, or pending decision
-    A->>B: TapeViewService/Read (viewId, optional cursor)
+    A->>B: TapeViewService/Read (leaseId)
     B->>P: Check grant, requester, expiry and revocation
     B->>S: Read only granted ranges within captured head
-    B-->>A: Entry page with source provenance
+    B-->>A: Complete Quote with source provenance
     A->>A: Consume context; retain source provenance
 ```
 
@@ -141,7 +141,7 @@ has been removed.
 | --- | --- | --- |
 | `TapeViewService/Borrow` | `requestId`, `purpose`, relevance `query`, optional requested bounds | `granted` with view, `denied`, or `pending` with request ID |
 | `TapeViewService/Get` | `requestId` | Current decision, including an existing grant when approved |
-| `TapeViewService/Read` | `viewId`, optional opaque cursor, bounded page size | Ordered entry page and optional next cursor |
+| `TapeViewService/Read` | `leaseId` | One complete ordered Quote with provenance |
 | `TapeViewService/Release` | `viewId` | Idempotent acknowledgement that this requester has released the grant |
 
 `borrow` asks the peer to select context, rather than assuming the requester
@@ -176,9 +176,9 @@ An empty approved selection returns an empty ranges array. The source identity
 is stable for the grant and opaque to the requester; it does not expose or
 accept local owner routing. Sequence IDs are meaningful only with this source.
 
-An entry page includes `viewId`, source identity, snapshot head, entries, and
-`nextCursor` when more entries exist. Each entry carries `seq`, `kind`,
-`timestamp`, a readable `summary`, and an explicitly typed payload
+Read returns one complete Quote containing the borrowed channel, caller, lease
+ID, complete Ref and all public entries. Each entry carries `seq`, `kind`,
+`timestamp` and an explicitly typed payload
 (`mediaType` and `data`) if granted. Arbitrary local `CustomEntry.Extensions`
 are never automatically exported. Typed export codecs define what can be
 shared, including messages and artifacts; unsupported types fail explicitly.
@@ -193,8 +193,8 @@ source agent, tape, sequence, and view ID as provenance.
 Grants are bound to the authenticated requester, source, selected ranges,
 snapshot head, allowed payload representation, and expiry. A view ID is a
 reference, not a bearer credential. Every read rechecks the grant; expired,
-revoked, or released grants fail. A cursor cannot expand access and is bound to
-the grant and its snapshot.
+revoked, or released grants fail. The complete Quote is bound to the lease
+and its immutable Ref; gaps between scopes are never read.
 
 The append-only snapshot excludes entries appended after approval. If storage
 has reset, changed source identity, or cannot return the granted entries, reads
@@ -204,7 +204,7 @@ projection. Already delivered context cannot be recalled by revocation.
 
 Responses distinguish pending decisions, denials, invalid params, request-ID
 conflicts, unavailable views, and storage failures. Concrete extension error
-codes and payload size/page limits are fixed in the [integration contract](../a2a-adapter.md). Errors
+codes and input validation are defined in the [integration contract](../a2a-adapter.md). Reads have no pagination or fixed body caps. Errors
 for unauthorized view IDs must not reveal another requester's grant details.
 
 ## Integration and compatibility
@@ -235,20 +235,18 @@ The extension identifier is `urn:anra:a2a:tape-view:v1`. The native Agent Card
 advertises `/anra.a2a.tape.v1.TapeViewService` as its single Connect service
 endpoint; `/a2a` remains the SDK's core endpoint. The integration pins the official Go SDK at v2.5.0.
 
-Grants and decisions are persisted in a dedicated indexed bbolt journal, separate from
-source context. Source identity is provisioned by the application; a grant
-references the tape by that identity, snapshot head and range. The tape is
-append-only, so the reference identifies the content and grants carry no
-session, exporter or content fingerprints. The journal holds three record kinds:
-a grant (immutable), request state (pending or denied) and a release. The
-default exporter shares only
-user/assistant summaries; other payloads require a deterministic typed exporter.
-Limits and error codes are fixed in the integration contract linked above.
+The current implementation binds a grant handler to native Tape views; see
+[the View Handler model](tape-view-handlers-design.md). The handler persists
+request decisions and lease state in a separate sidecar. The sidecar reuses
+tape-go storage interfaces without becoming a second context Tape. References
+retain the complete `Source + Scopes`; source sequence and context stay unchanged.
+The current exporter and protocol contract are documented in
+[the A2A adapter guide](../a2a-adapter.md).
 
 Configured card discovery, best-peer ranking, permissioned best-range ranking,
 borrowing RPCs, and Anra tool-result consumption are implemented. Network
 directory registration and a concrete JEV adapter remain future integrations;
-`Ranker` and `Eligible` provide their boundaries. The historical A2A task-store
+`Ranker` and application-owned `Policy` provide their boundaries. The historical A2A task-store
 adapter has not been restored.
 
 ## Trusted-team identity profile

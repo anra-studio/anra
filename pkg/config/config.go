@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pelletier/go-toml/v2"
 	peermodel "github.com/anra-studio/anra/pkg/model/peer"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // ErrInvalidAgentID is returned for an identity that cannot safely name an agent.

@@ -8,49 +8,77 @@ import (
 	"time"
 	"uuid"
 
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
+	"github.com/anra-studio/anra/pkg/flow/clbr"
 	"github.com/anra-studio/anra/pkg/model/anchor"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/protobuf/proto"
 )
 
-var ErrBusy = errors.New("agent: busy; request was not accepted")
-var ErrFenced = errors.New("agent: execution requires storage reconciliation")
+var (
+	ErrBusy   = errors.New("agent: busy; request was not accepted")
+	ErrFenced = errors.New("agent: execution requires storage reconciliation")
+)
 
-type BusyError struct{ view *pb.TapeView }
+type BusyError struct {
+	view *pb.Ref
+}
 
-var _ a2a.BusyError = (*BusyError)(nil)
+var _ clbr.BusyError = (*BusyError)(nil)
 
-func (*BusyError) Error() string            { return ErrBusy.Error() }
-func (*BusyError) Unwrap() error            { return ErrBusy }
-func (e *BusyError) BusyView() *pb.TapeView { return anchor.CloneRef(e.view) }
+func (*BusyError) Error() string {
+	return ErrBusy.Error()
+}
+
+func (*BusyError) Unwrap() error {
+	return ErrBusy
+}
+
+func (e *BusyError) BusyView() *pb.Ref {
+	return anchor.CloneRef(e.view)
+}
 
 // activeTurn identifies the admitted Agent Turn spanning the model/tool loop.
 type activeTurn struct {
-	id, epoch string
-	start     te.Seq
+	id    string
+	epoch string
+
+	start te.Seq
 }
 type execution struct {
-	source    *pb.Source
+	source *pb.Source
+
 	sessionID string
-	epoch     string
-	active    *activeTurn
-	latest    *pb.TapeView
-	views     map[string]tv.TapeView
-	seen      map[string]bool
-	aborted   []tv.EntryRange
-	fenced    bool
-	closing   bool
-	cancel    context.CancelFunc
-	done      chan struct{}
+
+	epoch string
+
+	active *activeTurn
+
+	latest *pb.Ref
+
+	views map[string]tv.TapeView
+
+	seen map[string]bool
+
+	aborted []tv.EntryRange
+
+	fenced bool
+
+	closing bool
+
+	cancel context.CancelFunc
+
+	done chan struct{}
 }
 
 func (a *Anra) tapeContext(ctx context.Context) context.Context {
 	return owner.WithOwnerId(ctx, a.role)
 }
+
 func (a *Anra) Source() *pb.Source {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -59,7 +87,7 @@ func (a *Anra) Source() *pb.Source {
 
 // View resolves an immutable view for an identified peer without
 // entering ADK. TapeView Borrow issues and enforces requester-bound grants.
-func (a *Anra) View(_ context.Context, requester string, ref *pb.TapeView) (*pb.TapeView, error) {
+func (a *Anra) View(_ context.Context, requester string, ref *pb.Ref) (*pb.Ref, error) {
 	if requester == "" {
 		return nil, nil
 	}
@@ -71,30 +99,55 @@ func (a *Anra) View(_ context.Context, requester string, ref *pb.TapeView) (*pb.
 	if ref == nil || !proto.Equal(ref.Source, a.execution.source) {
 		return nil, nil
 	}
-	window, ok := a.execution.views[ref.SnapshotHead]
-	if !ok {
+
+	var previous te.Seq
+
+	for _, scope := range ref.Scopes {
+
+		start, err := te.ParseSeq(scope.SeqS)
+
+		if err != nil || (!previous.IsZero() && previous.Cmp(start) > 0) {
+			return nil, nil
+		}
+
+		previous = te.MustParseSeq(scope.SeqE)
+
+		window, ok := a.execution.views[scope.SeqE]
+
+		if !ok || window.Scope.SeqS.String() != scope.SeqS {
+			return nil, nil
+		}
+
+	}
+
+	if len(ref.Scopes) == 0 {
 		return nil, nil
 	}
-	selected := a.viewRef(window)
-	if !proto.Equal(ref, selected) {
-		return nil, nil
-	}
-	return selected, nil
+
+	return anchor.CloneRef(ref), nil
 }
-func (a *Anra) viewRef(window tv.TapeView) *pb.TapeView {
-	return &pb.TapeView{
-		Source:       proto.Clone(a.execution.source).(*pb.Source),
-		SnapshotHead: window.Scope.SeqE.String(),
-		Scope:        &pb.EntryRange{SeqS: window.Scope.SeqS.String(), SeqE: window.Scope.SeqE.String()},
+
+func (a *Anra) viewRef(window tv.TapeView) *pb.Ref {
+	return &pb.Ref{
+		Source: proto.Clone(a.execution.source).(*pb.Source),
+
+		Scopes: []*pb.EntryRange{{
+			SeqS: window.Scope.SeqS.String(),
+			SeqE: window.Scope.SeqE.String(),
+		}},
 	}
 }
-func (a *Anra) apply(raw te.EntryLike) error {
+
+func (a *Anra) apply(raw entry.Entry) error {
 	r, err := anchor.Decode(raw)
+	if errors.Is(err, anchor.ErrUnsupported) {
+		// Other schemas do not drive the native execution state machine.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	if r == nil {
-		// Other schemas do not drive the native execution state machine.
 		return nil
 	}
 	x := &a.execution
@@ -109,41 +162,78 @@ func (a *Anra) apply(raw te.EntryLike) error {
 			return errors.New("agent: inconsistent turn start")
 		}
 		x.seen[r.TurnID] = true
-		x.active = &activeTurn{id: r.TurnID, epoch: r.OwnerEpoch, start: raw.GetID()}
+		x.active = &activeTurn{
+			id:    r.TurnID,
+			epoch: r.OwnerEpoch,
+			start: raw.GetID(),
+		}
+
 	case anchor.TurnClosed:
 		if x.active == nil || x.active.id != r.TurnID || x.active.start.String() != r.StartSeq {
 			return errors.New("agent: unmatched turn record")
 		}
 		if r.Outcome == "completed" {
-			window := tv.TapeView{SessionID: x.sessionID, Owner: a.role, Scope: tv.EntryRange{SeqS: x.active.start.Next(), SeqE: raw.GetID()}}
+
+			window := tv.TapeView{
+				SessionID: x.sessionID,
+				Owner:     a.role,
+				Scope: tv.EntryRange{
+					SeqS: x.active.start.Next(),
+					SeqE: raw.GetID(),
+				},
+			}
+
 			x.views[raw.GetID().String()] = window
 			x.latest = a.viewRef(window)
 		} else {
-			x.aborted = append(x.aborted, tv.EntryRange{SeqS: x.active.start, SeqE: raw.GetID().Next()})
+			x.aborted = append(
+				x.aborted,
+				tv.EntryRange{
+					SeqS: x.active.start,
+					SeqE: raw.GetID().Next(),
+				},
+			)
 		}
 		x.active = nil
 	}
 	return nil
 }
-func (a *Anra) appendAnchor(ctx context.Context, r anchor.Record) error {
-	r.Schema = anchor.Schema
+
+func (a *Anra) appendAnchor(ctx context.Context, r anchor.BuiltIn) error {
+	r.Schema = anchor.BuiltInSchema
 	data, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
-	stored, err := a.tape.Store(a.tapeContext(ctx), te.NewAnchor(te.Seq{}, a.role, te.AnchorKindCustom, data))
+
+	stored, err := a.tape.Store(a.tapeContext(ctx), te.NewAnchor(
+		te.Seq{},
+		a.role,
+		te.AnchorKindCustom,
+		data,
+	))
 	if err != nil {
 		a.execution.fenced = true
 		return fmt.Errorf("%w: append: %w", ErrFenced, err)
 	}
-	if err := a.apply(stored); err != nil {
+	value, err := entry.FromTape(stored)
+	if err == nil {
+		err = a.apply(value)
+	}
+	if err != nil {
 		a.execution.fenced = true
 		return fmt.Errorf("%w: %w", ErrFenced, err)
 	}
 	return nil
 }
+
 func (a *Anra) recoverExecution() error {
-	a.execution = execution{epoch: uuid.New().String(), views: map[string]tv.TapeView{}, seen: map[string]bool{}}
+	a.execution = execution{
+		epoch: uuid.New().String(),
+		views: map[string]tv.TapeView{},
+		seen:  map[string]bool{},
+	}
+
 	ctx, cancel := context.WithTimeout(a.tapeContext(context.Background()), 5*time.Second)
 	defer cancel()
 	state, err := a.tape.Get(ctx)
@@ -152,28 +242,58 @@ func (a *Anra) recoverExecution() error {
 	}
 	a.execution.sessionID = state.SessionID
 	if !state.Scope.SeqE.IsZero() {
-		entries, err := a.tape.Range(ctx, tv.EntryRange{SeqS: te.SeqFromUint64(1), SeqE: state.Scope.SeqE.Next()})
+
+		entries, err := a.tape.Range(
+			ctx,
+			tv.EntryRange{
+				SeqS: te.SeqFromUint64(1),
+				SeqE: state.Scope.SeqE.Next(),
+			},
+		)
 		if err != nil {
 			return err
 		}
 		for _, e := range entries.Raw {
-			if err := a.apply(e); err != nil {
+			value, err := entry.FromTape(e)
+			if err != nil {
+				return fmt.Errorf("agent: decode tape entry: %w", err)
+			}
+			if err := a.apply(value); err != nil {
 				return fmt.Errorf("agent: replay %s: %w", e.GetID(), err)
 			}
 		}
 	}
 	if a.execution.source == nil {
-		if err := a.appendAnchor(ctx, anchor.Record{Type: anchor.TapeInitialized, Source: &pb.Source{AgentId: a.role, TapeId: uuid.New().String()}}); err != nil {
+		if err := a.appendAnchor(
+			ctx,
+			anchor.BuiltIn{
+				Type: anchor.TapeInitialized,
+				Source: &pb.Source{
+					AgentId: a.role,
+					TapeId:  uuid.New().String(),
+				},
+			},
+		); err != nil {
 			return err
 		}
 	}
 	if active := a.execution.active; active != nil {
-		if err := a.appendAnchor(ctx, anchor.Record{Type: anchor.TurnClosed, TurnID: active.id, StartSeq: active.start.String(), OwnerEpoch: a.execution.epoch, Outcome: "abandoned"}); err != nil {
+		if err := a.appendAnchor(
+			ctx,
+			anchor.BuiltIn{
+				Type:       anchor.TurnClosed,
+				TurnID:     active.id,
+				StartSeq:   active.start.String(),
+				OwnerEpoch: a.execution.epoch,
+				Outcome:    "abandoned",
+			},
+		); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
 func (a *Anra) admit(ctx context.Context, cancel context.CancelFunc) (chan struct{}, error) {
 	identified := a2a.Requester(ctx) != ""
 	a.mu.Lock()
@@ -188,13 +308,28 @@ func (a *Anra) admit(ctx context.Context, cancel context.CancelFunc) (chan struc
 		return nil, ErrFenced
 	}
 	if a.execution.active != nil {
-		var ref *pb.TapeView
+
+		var ref *pb.Ref
+
 		if identified {
 			ref = anchor.CloneRef(a.execution.latest)
 		}
-		return nil, &BusyError{view: ref}
+
+		return nil, &BusyError{
+			view: ref,
+		}
+
 	}
-	if err := a.appendAnchor(ctx, anchor.Record{Type: anchor.TurnStarted, TurnID: uuid.New().String(), OwnerEpoch: a.execution.epoch, BaseView: anchor.CloneRef(a.execution.latest)}); err != nil {
+
+	if err := a.appendAnchor(
+		ctx,
+		anchor.BuiltIn{
+			Type:       anchor.TurnStarted,
+			TurnID:     uuid.New().String(),
+			OwnerEpoch: a.execution.epoch,
+			BaseView:   anchor.CloneRef(a.execution.latest),
+		},
+	); err != nil {
 		return nil, err
 	}
 	a.execution.cancel = cancel
@@ -211,7 +346,14 @@ func (a *Anra) finish(runErr error) error {
 	if active == nil || a.execution.fenced {
 		return ErrFenced
 	}
-	r := anchor.Record{Type: anchor.TurnClosed, TurnID: active.id, StartSeq: active.start.String(), Outcome: "completed"}
+
+	r := anchor.BuiltIn{
+		Type:     anchor.TurnClosed,
+		TurnID:   active.id,
+		StartSeq: active.start.String(),
+		Outcome:  "completed",
+	}
+
 	if runErr != nil {
 		r.Outcome = "failed"
 		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/anra-studio/anra/pkg/flow/clbr"
 	"github.com/anra-studio/anra/pkg/model/delegator"
 	tapeagent "github.com/scbizu/tape-go/pkg/agent"
 	"github.com/scbizu/tape-go/pkg/tape"
@@ -22,8 +23,10 @@ import (
 	"google.golang.org/genai"
 )
 
-const defaultMaxModelTurns = 32
-const appName = "anra"
+const (
+	defaultMaxModelTurns = 32
+	appName              = "anra"
+)
 
 var (
 	ErrRuntimeNotConfigured  = errors.New("agent: runtime is not configured")
@@ -31,6 +34,7 @@ var (
 )
 
 type runtimeConfig struct {
+	collaboration     clbr.Service
 	llm               model.LLM
 	systemInstruction string
 	registry          *discovery.Client

@@ -4,48 +4,51 @@ package anchor
 import (
 	"encoding/json"
 	"errors"
-	"strings"
+	"fmt"
 
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
+	"github.com/anra-studio/anra/pkg/model/entry"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"google.golang.org/protobuf/proto"
 )
 
 const Kind te.EntryKind = "anchor:custom"
 
-// Decode returns only native v1 execution records. Valid custom anchors owned
-// by other schemas are ignored. Malformed Anra records and invalid v1 records
-// fail closed. Add schema-specific decoders at the dispatch boundary as needed.
-func Decode(e te.EntryLike) (*Record, error) {
+var ErrUnsupported = errors.New("anchor: unsupported schema")
+
+// Schema is the envelope identifying the format of a custom anchor.
+type Schema struct {
+	Schema string `json:"schema" validate:"required"`
+}
+
+// Decode returns native v1 execution records. Unknown custom anchor schemas
+// return ErrUnsupported; malformed envelopes and records return an error.
+func Decode(e entry.Entry) (*BuiltIn, error) {
 	if e.GetKind() != Kind {
 		return nil, nil
 	}
-	var tag struct {
-		Schema string `json:"schema"`
-	}
-	raw := []byte(e.GetSummary())
+	var tag Schema
+	raw := []byte(e.Body())
 	if err := json.Unmarshal(raw, &tag); err != nil {
-		if strings.Contains(string(raw), "anra.dev/anchor/") {
-			return nil, errors.New("anchor: malformed record")
-		}
-		return nil, nil
+		return nil, fmt.Errorf("anchor: decode schema: %w", err)
 	}
-	if !strings.HasPrefix(tag.Schema, "anra.dev/anchor/") {
-		return nil, nil
+	if err := recordValidator.Struct(tag); err != nil {
+		return nil, fmt.Errorf("anchor: validate schema: %w", err)
 	}
 	// Dispatch by exact schema. Other versions and integration records do not
 	// belong to the v1 execution state machine, even if they reuse its types.
 	switch tag.Schema {
-	case Schema:
-		return decodeRecord(e, raw)
+	case BuiltInSchema:
+		return decodeBuiltIn(e, raw)
 	default:
-		return nil, nil
+		return nil, fmt.Errorf("%w: %q", ErrUnsupported, tag.Schema)
 	}
 }
 
-func CloneRef(r *pb.TapeView) *pb.TapeView {
+func CloneRef(r *pb.Ref) *pb.Ref {
 	if r == nil {
 		return nil
 	}
-	return proto.Clone(r).(*pb.TapeView)
+
+	return proto.Clone(r).(*pb.Ref)
 }

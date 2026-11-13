@@ -17,6 +17,7 @@ import (
 // modelFunc is a deterministic ADK model fixture. The neutral request shape is
 // used only by these scenarios to inspect the observable conversation contract.
 func (f modelFunc) Name() string { return "e2e-model" }
+
 func (f modelFunc) GenerateContent(ctx context.Context, request *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		r := runner.Request{Model: request.Model}

@@ -23,13 +23,26 @@ and checks stay together. Undefined and pending steps fail the suite.
 ## Running scenarios
 
 ```sh
-mise run test  # Build, schema checks, generated bindings, and E2E scenarios.
+mise run test  # Build, schema checks, generated bindings, unit tests, and E2E scenarios.
+mise run unit  # Pure domain logic and codecs under pkg/.
 mise run e2e   # Only the BDD E2E scenarios.
+GOFLAGS=-race mise run test  # Include unit tests and builds in race detection.
 # Go alone, without mise:
 go test -count=1 -v ./tests/e2e
 # Select a scenario using its Go subtest name:
 go test -count=1 -v ./tests/e2e -run 'TestFeatures/A_grant_keeps_its_original_snapshot'
+# Measure complete stream consumption and Connect reads over real storage:
+go test ./tests/e2e -run '^$' -bench '^BenchmarkBorrowRead$' -benchmem
 ```
+
+## Borrowing stream benchmark
+
+`BenchmarkBorrowRead` uses the same lease and disk-backed fixture as the large
+multimodal acceptance scenario. The stream case consumes the public JSON Reader
+with io.Copy; the Connect case reads and validates one complete Quote over HTTP.
+Both consume all authorized entries. Fixture setup is outside the timed loop.
+Use `-benchmem` to measure allocations alongside latency. The former per-page
+benchmark is removed along with the pagination contract.
 
 ## Investigating in the browser
 
@@ -56,19 +69,19 @@ Each run writes `reports/e2e/<timestamp>/index.html` and its `cucumber.json`.
 On scenario failure, its closed database files and a `failure.json` snapshot
 are saved under that run's `artifacts/scenario-*/` directory. The snapshot
 includes the scenario name, error, model request, borrow request, decision, and
-first page when available. These are separate files to inspect alongside the
+first read response when available. These are separate files to inspect alongside the
 HTML report; HTTP traffic is not captured automatically.
 
 Dependencies and generated reports are ignored by Git. Delete `reports/e2e/`
 when you no longer need its run history. Routine `mise run test` and `mise run e2e`
 continue to work with Go alone; Node is used only for HTML reporting.
 
-Scenarios use real Anra agents, tape-go bbolt storage, the grant journal,
+Scenarios use real Anra agents, tape-go bbolt storage, the grant sidecar and View Handler,
 discovery, the official A2A SDK, and Connect over localhost HTTP. Each scenario
 gets its own temporary files and servers, with cleanup after success or failure.
 Reporting runs preserve a copy of failed scenarios' files before cleanup.
 Restart steps close and reopen the database files and rebuild the server on a
-new port. Pagination checks include a view larger than one full page. Expiry
+new port. Read checks include disjoint scopes, more than 100 entries and large media. Expiry
 uses a controlled clock rather than sleeps.
 
 Model responses and lender permission decisions are deterministic fixtures.
@@ -96,31 +109,39 @@ The application embedding scenarios call `config`, `peer`, `discovery`, and
 peer communication, restart, invalid identities and readiness failure cleanup.
 The suite does not exercise an application UI.
 
-## Temporary unit checks
+## Pure logic unit tests
 
-Agents should write unit tests when useful for diagnosis or implementation.
-These are local evaluation tools and must not be committed. The repository
-ignores `*_test.go` outside `tests/e2e/`; ignored Go files still run when their
-package is tested:
+Keep focused `pkg/**/*_test.go` tests for pure logic and algorithm boundaries:
+state transitions, recursive protocol filtering, codecs, and number precision.
+These tests are committed and run by `mise run test`. They need no external
+dependencies, mock frameworks, or interfaces introduced only for testing.
+Do not unit-test configuration forwarding or struct field assignments.
 
 ```sh
-go test ./pkg/a2a -run TestLocalInvestigation
+mise run unit
+go test -race ./pkg/model/entry ./pkg/mcp
 ```
 
-Remove disposable tests after use. Before proposing a change, check that its
-diff contains only the intended product changes and shared E2E scenarios.
-The `AGENTS.md` policy carries this workflow to future agent sessions.
+Keep E2E scenarios for core journeys through public APIs, real network
+transport, and persistent storage, including isolation, concurrency, and atomic
+failure. Do not enumerate large parameter matrices in Scenario Outlines or
+inflate fixtures to increase test counts or coverage. Architecture, clear
+responsibilities, and meaningful assertions determine test quality.
+
+The [MCP feature](../tests/e2e/features/mcp.feature) contains such journeys;
+content codecs, privacy, business JSON precision, and pure state transitions
+live in package unit tests. Remove disposable investigative
+scaffolding before committing. [AGENTS.md](../AGENTS.md) defines this policy.
 
 ## Adding behavior
 
-Start with a concrete scenario describing a person's goal and observable
-outcome. Reuse steps where their meaning is the same, and exercise the public
+Write new and modified feature scenarios in Chinese. Start with a concrete
+scenario describing a person's goal and observable outcome. Reuse steps where
+their meaning is the same, and exercise the public
 boundary through the actual runtime, transport, and storage. Keep setup and
 implementation detail in the step definitions, not in the feature language.
 Each scenario must stand alone. Include denied access and failure behavior
 when they are part of the promise being changed.
 
-This policy favors a human-readable acceptance contract. Temporary unit checks
-can make debugging faster, but their assertions are not retained as a separate
-regression suite. BDD scenarios should therefore preserve important observable
-failure cases as the product evolves.
+Use unit tests for pure logic boundaries and BDD scenarios for observable
+integration behavior; avoid repeating the same parameter matrix across layers.

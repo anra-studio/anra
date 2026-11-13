@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	ae "github.com/anra-studio/anra/pkg/model/entry"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
@@ -25,7 +26,7 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			return err
 		}
 		configured := strings.Replace(string(text), "[agents.alice]", fmt.Sprintf("[agents.alice]\nmodel = %q", name), 1)
-		if err := os.WriteFile(path, []byte(configured), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(configured), 0o600); err != nil {
 			return err
 		}
 		c.env = map[string]string{"OPENAI_BASE_URL": c.s.modelServer.URL + basePath}
@@ -76,19 +77,14 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			return fmt.Errorf("legacy entries: %d", len(stored.Raw))
 		}
 		for _, raw := range stored.Raw {
-			var extensions map[string]any
-			switch v := raw.(type) {
-			case entry.CustomEntry:
-				extensions = v.Extensions
-			case *entry.CustomEntry:
-				extensions = v.Extensions
-			default:
-				return fmt.Errorf("legacy entry changed type: %T", raw)
+			value, err := ae.FromTape(raw)
+			if err != nil {
+				return err
 			}
-			if _, ok := extensions["anra:runner-message/v1"]; !ok {
+			if _, ok := value.Extension(ae.RunnerMessage); !ok {
 				return fmt.Errorf("legacy payload lost")
 			}
-			if _, ok := extensions["adk:event"]; ok {
+			if _, ok := value.Extension(ae.ADKEvent); ok {
 				return fmt.Errorf("legacy entry was rewritten")
 			}
 		}
@@ -134,21 +130,19 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			if raw.GetKind().IsAnchor() {
 				continue
 			}
-			var extensions map[string]any
-			switch value := raw.(type) {
-			case entry.CustomEntry:
-				extensions = value.Extensions
-			case *entry.CustomEntry:
-				extensions = value.Extensions
-			}
-			payload, ok := extensions["adk:event"].(string)
-			if !ok {
-				return fmt.Errorf("entry %s is missing its ADK event", raw.GetID())
-			}
-			var event session.Event
-			if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			value, err := ae.FromTape(raw)
+			if err != nil {
 				return err
 			}
+			var event session.Event
+			exists, err := value.DecodeExtension(ae.ADKEvent, &event)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return fmt.Errorf("entry %s is missing its ADK event", raw.GetID())
+			}
+
 			if event.Content == nil {
 				continue
 			}
@@ -185,13 +179,13 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 			if problem == "removed deepseek provider" {
 				provider = "deepseek"
 			}
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \""+provider+"\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0600); err != nil {
+			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \""+provider+"\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0o600); err != nil {
 				return err
 			}
 		case "tool flag":
 			args = append(args, "--tools", "unknown")
 		case "tool config":
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ntools = [\"bash\"]\n"), 0600); err != nil {
+			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ntools = [\"bash\"]\n"), 0o600); err != nil {
 				return err
 			}
 		case "invalid API base":

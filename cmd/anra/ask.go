@@ -10,7 +10,8 @@ import (
 )
 
 func newAskCommand() *cobra.Command {
-	return &cobra.Command{Use: "ask [flags] message", Short: "Ask a running agent to use its model and built-in tools", Args: messageArgs,
+	return &cobra.Command{
+		Use: "ask [flags] message", Short: "Ask a running agent to use its model and built-in tools", Args: messageArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			settings, err := loadSettings(command)
 			if err != nil {

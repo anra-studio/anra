@@ -1,31 +1,24 @@
 # Anra protobuf contracts
 
-`anra/a2a/tape/v1/tape.proto` defines Anra's permissioned tape-view extension:
-`Borrow`, `Get`, `Read`, and `Release`. The official A2A core remains in
-`github.com/a2aproject/a2a-go/v2`; do not copy its schema or regenerate its
-messages here. External A2A callers can still fetch the official JSON Agent Card;
-Anra discovery resolves typed Peer metadata.
+`anra/model/view/v1/view.proto` owns shared Source, EntryRange, Ref, Lease,
+BorrowRequest, Decision, Provenance, public entry payloads and Quote values.
+Both MCP and A2A consume this model through `pkg/model/view`. Ref contains
+Source and Scopes only; it has no stored snapshot-head or finalized-end field.
 
-`anra/a2a/collaboration/v1/collaboration.proto` defines the delegation and
-response metadata for `urn:anra:a2a:collaboration:v1`. It imports TapeView's
-`TapeView` and adds no RPC service. These generated messages travel as ProtoJSON
-objects in the official A2A Message's extension metadata. Answer text remains in
-standard A2A text parts.
+`anra/a2a/tape/v1/tape.proto` contains the optional TapeViewService and its RPC
+response/request envelopes. Borrow accepts the shared business request; Read
+returns a shared Quote. `anra/a2a/collaboration/v1/collaboration.proto` imports
+the common Ref for delegation and BUSY hints, without granting access or adding
+another RPC service. Core A2A remains in the official a2a-go/v2 SDK.
 
-`anra/peer/v1/peer.proto` defines canonical Peer/Skill metadata. The
-`anra/registry/v1/registry.proto` contract defines runtime presence and the
-Register, Heartbeat, Disconnect, Lookup, List and Forget RPCs. It is independent
-of the A2A SDK. `pkg/registry` persists ownership and metadata; `pkg/discovery`
-uses the generated client, and `pkg/a2a.Card` produces the A2A representation.
-Presence defaults to `PRESENCE_STATE_UNKNOWN`; the schema intentionally exempts
-that enum's zero value from Buf's usual `UNSPECIFIED` naming rule. See the
-[registry contract](../docs/registry.md) for persistence and mutation semantics.
+`anra/peer/v1/peer.proto` declares canonical Peer/Skill metadata. Registry RPCs
+and presence live in `anra/registry/v1/registry.proto`. The registry persists
+ownership and metadata; discovery uses its generated client. A2A Agent Cards
+are produced at the adapter boundary, not stored as registry identities.
 
-The layout follows Gate: versioned packages under `proto/`, generated messages
-and Connect bindings under `gen/`, transport adapters under `pkg/a2a`, and root
-Buf v2 configurations. mise pins Go, Buf, protoc-gen-go, and the Connect v2
-generator. The Connect runtime and generator use `v2.0.0-rc.1`, matching Gate;
-update both together. Generated files are checked in and must not be hand edited.
+The module uses versioned packages under `proto/`, generated messages and
+Connect bindings under `gen/`, pinned local generators, and Buf v2 configs.
+Generated files are committed and never edited by hand.
 
 ## Tooling
 
@@ -65,126 +58,68 @@ package for incompatible wire or semantic changes.
 
 ## Transport and semantics
 
-`NewPeerHandler` mounts the service at `/anra.a2a.tape.v1.TapeViewService/`.
-Call `Advertise(card, publicBaseURL + ViewPath)` to publish its service URL
-as the extension's single `endpoint` parameter. `NewClient` uses the generated
-Connect binding. Vanguard v0.5.0 also exposes the schema's `google.api.http`
-routes through the same Connect v2.0.0 server. Standalone servers can mount
-`NewViewHandler` themselves at the service path and `ViewRESTPath`.
-See [HTTP routes](../docs/http.md) for the REST API.
+TapeViewService supports Borrow, Get, Read and Release over Connect and generated
+Vanguard REST routes. Identity and extension negotiation precede schema validation
+and dispatch. Local Approve/Reject/Revoke and controller borrowing are shared-flow
+operations, not remotely exposed management RPCs. Public types import only the
+neutral model schema; tape-go View bindings and the `pkg/flow/grant` handler do not depend on A2A requests.
 
-Generated clients use `tapev1connect.NewTapeViewServiceClient` with
-`connect.NewClient(connecthttp.NewTransport(httpClient, baseURL))`. Every call
-must include `A2A-Extensions: urn:anra:a2a:tape-view:v1`, set using
-`connect.NewClientContext`. Acknowledgement comes back in response metadata.
-The HTTP client is responsible for credentials, redirects, and endpoint trust.
-`NewClient` handles opt-in, acknowledgement, domain conversions, and public
-error mapping. `Client.BorrowContext` combines grant selection and complete
-validated reads for the built-in tools in `pkg/agent/tools` and other hosts.
+Sequences are nonzero canonical ASCII decimal strings of arbitrary precision.
+EntryRange uses `[seqS,seqE)` and its CEL rule compares length and lexical order,
+never uint64. Ref requires Source and one or more Scopes. The view owner enforces
+canonical scope order, non-overlap and actual commitment. Native Anra resolves
+whole completed windows; it rejects cropped or reordered references. A Ref is
+not proof of permission. Lease binds its caller and Ref with ID and expiry.
 
-The schema is a separate extension service, not a new core A2A transport.
-The generated Connect service invokes `Service`, its permission policy, and
-grant journal. `Resolve` and `Revoke` remain lender-local methods. A caller's
-identity is never accepted from protobuf request fields.
+A decision contains a lease exactly when granted. Empty/uncommitted views are
+not granted. Borrow request IDs are caller-scoped and idempotent; changed input
+replays its original decision. Reads check lease ownership, expiry, release/revocation and complete
+scope contents. Multiple scopes are read in order, skipping gaps. Each complete
+Quote retains its channel, caller, lease ID and Ref. Quote itself does not
+restrict channel to borrowed. ReadRequest carries only lease_id; ReadResponse
+contains one complete Quote. The removed pagination field numbers and names are
+reserved. ReadView validates exact complete sequence coverage across all scopes.
 
-Sequence fields are arbitrary-precision canonical decimal strings, including
-`"0"` for an empty snapshot. Ranges are half-open; `bounds` is optional. `BorrowRequest.view` optionally pins a `TapeView`
-(source, closing-anchor snapshot head, and exact context scope); clients require `viewBorrowVersion: 1`
-in the card before sending it and verify exact grant provenance before reading. ProtoJSON
-range fields are `seqS` and `seqE`. Local domain/journal JSON uses `SeqS` and
-`SeqE`; it is independent of the protobuf wire format. Status is an enum with an invalid unspecified value.
-Times use protobuf Timestamp. `Payload.json_data` contains the exact JSON bytes;
-ProtoJSON represents those bytes as base64. It is deliberately not a Struct or
-Value, so large integers and numeric formatting survive transport unchanged.
+Protobuf field constraints use Protovalidate; non-Protobuf construction inputs
+use validator tags. Network adapters validate messages at their boundary; the
+shared service enforces real commitment and authorization transitions. Trusted
+view/exporter results are not recursively revalidated as a second format pass.
+No custom MCP validation rules are needed by independent validators.
 
-`NewViewHandler` installs `connectrpc.com/validate`'s `NewServerInterceptor`.
-The pinned `v0.8.0-rc.1` release supports the project's Connect v2 runtime.
-Request rules in `tape.proto` require identifiers, purpose and query; preserve
-the existing byte limits; constrain page size to 0..100; and require positive
-canonical decimal bounds in increasing order. The range CEL rule compares
-decimal lengths and lexicographic order without narrowing to machine integers.
-Absent bounds and page size zero remain valid.
-
-Invalid requests return `invalid_argument` with field violation details before
-the service handler or permission policy runs. The domain client preserves
-`errors.Is(err, ErrInvalidParams)` and the original Connect error/details.
-Structural rules for requests and responses live in `tape.proto`: required
-identifiers and nested messages, canonical sequences, valid decision statuses,
-one-range limits, and the relationship between status and view presence.
-Protovalidate executes these rules from generated protobuf descriptors; no
-separate validation-code generator is needed. Direct Service calls, peer
-responses, and persisted grant messages use the same rules.
-
-Go retains checks for JSON syntax and Timestamp seconds/nanos validity, plus
-request correlation, authorization, snapshot bounds, journal integrity, export
-policy, and client provenance. Non-protobuf `Config` dependencies and distinct
-source/journal owners use `go-playground/validator/v10`; `Config.Source` uses its
-protobuf rules. Validation errors support `errors.Is(err, ErrInvalidParams)`
-and `errors.As` for `protovalidate.ValidationError` or configuration
-`validator.ValidationErrors`.
-
-HTTP transport limits encoded/decompressed RPC messages to 1 MiB. Borrowed pages
-retain source, view, snapshot, and sequence provenance checks in `Client.ReadView`.
-`Client.BorrowContext` reuses those checks, while `pkg/agent/tools` formats the
-generated results as model-facing ProtoJSON objects.
-The lender's selected turn/anchor range defines the complete view size. There
-is no separate maximum-entry cap or truncation of that range; pagination only
-splits its transport. `Eligible`/`Policy` supplies the turn boundaries.
+Payload carries mediaType and exact JSON bytes rather than Struct/Value, keeping
+opaque business number lexemes intact. ProtoJSON encodes bytes as base64. The
+shared JSON Quote uses raw content JSON; the ADK tool keeps content as text to
+avoid its map conversion coercing numbers. No Summary or Projection schema is
+present. There is no fixed peer/MCP body cap or per-entry cap. Complete reads
+retain entire media entries; field constraints and the registry's metadata
+message limit remain independent policies.
 
 ## Collaboration metadata
 
-`DelegationMetadata` defines the root request ID, required Timestamp deadline,
-ancestors, and optional context references. Its schema limits identifiers and
-context references; ancestry has no hop-count limit. The receiver validates this
-metadata before reasoning admission. `pkg/model/delegator` owns runtime delegation
-state: it creates roots, caps deadlines, and forks the path for each edge.
-Generated metadata stays private to the model;
-transport adapters receive owned snapshots.
+DelegationMetadata carries rootRequestId, deadline, immutable ancestors and
+ungranted Ref hints. ResponseMetadata carries Status, RetryHint and optional Ref.
+Generated enums use their ProtoJSON names; ordinary SDK answer text stays in
+standard A2A parts. The Delegator model owns path forks, deadline propagation and
+BUSY progress; the adapter only encodes and decodes these messages. Reading
+newer completed scopes can clear suppression; receiving a hint does not.
 
-`ResponseMetadata` defines `Status`, `RetryHint`, and an optional TapeView.
-Only `STATUS_BUSY` may carry a view or retry hints. Status must be a defined,
-nonzero enum value. Canonical ProtoJSON uses `STATUS_COMPLETED`, `STATUS_BUSY`,
-and `RETRY_HINT_AFTER_NEW_VIEW`. Unknown fields,
-unknown enum values, invalid references, and invalid field combinations are
-rejected. There is no decoder for the former lowercase wire statuses.
+## Errors
 
-Both incoming and outgoing metadata use ProtoJSON plus Protovalidate descriptors;
-the A2A adapter caps each metadata object at 8 KiB. `CollaborationResult` is only
-a local pairing of generated response metadata with text extracted from A2A
-parts. The CLI and model tools render readable lowercase status labels.
-`no_new_context` remains a local tool outcome derived from the Delegator's BUSY
-memory, not a protobuf status or wire outcome. `Begin` starts fresh memory for
-each turn; outgoing siblings share that turn's progress without
-sharing a mutable path. A successful read of a newer lender-selected snapshot
-clears suppression through `Borrowed`.
-Deadline expiry and cancellation are ordinary context errors. The transport's
-8 KiB metadata bound still applies to the encoded ancestry and context hints.
-
-| Domain error | Connect code |
+| Domain condition | Connect code |
 | --- | --- |
-| Invalid parameters | `invalid_argument` |
-| Extension inactive | `failed_precondition` |
-| Request ID conflict | `already_exists` |
-| View unavailable | `not_found` |
-| Storage failure | `internal` |
-| Unsupported representation | `unimplemented` |
-| Authentication failure | `unauthenticated` |
-| Oversized RPC message | `resource_exhausted` |
+| Invalid parameters | invalid_argument |
+| Inactive extension | failed_precondition |
+| Conflicting request ID | already_exists |
+| Unknown, foreign or inactive lease | not_found |
+| Storage failure | internal |
+| Unsupported content | unimplemented |
+| Missing authenticated identity | unauthenticated |
 
-Provider/internal errors are masked. Cancellation and deadlines retain their
-Connect codes. The domain client preserves `errors.Is` for known service errors
-and preserves the original Connect error for code inspection.
+Private storage errors and credentials are not returned to remote callers.
+The domain client retains errors.Is categories and the original Connect error.
+MCP maps credential failure to 401/Bearer challenge, credential-backend failure
+to 503, and lease rejection during a tool read to permission_denied.
+See the [MCP contract](../docs/mcp.md) and [A2A adapter](../docs/a2a-adapter.md).
 
-References: [Buf generation configuration](https://buf.build/docs/configuration/v2/buf-gen-yaml/)
-and [Connect Go guide](https://connectrpc.com/docs/go/getting-started/).
-
-## Migration from the removed tape-view transport
-
-The handwritten tape-view JSON-RPC transport and `/tape-views` route have been
-removed. `Client`, `NewClient`, `Advertise`, and `NewViewHandler` now use Connect
-exclusively; `ViewPath` names the generated service path. Re-advertise peer cards
-with `publicBaseURL + ViewPath`. Old `/tape-views` endpoints are rejected by the
-client; there is no compatibility fallback. The intermediate `ConnectClient`,
-`NewConnectClient`, `AdvertiseConnect`, `connectEndpoint`, and `ConnectViewPath`
-names are removed in favor of the single API. Grant journal encoding remains compatible. Tool decisions and pages use
-ProtoJSON. Core A2A still uses the official SDK transport.
+This revision directly replaces the old View/TapeView and grant-store formats;
+it adds no migration, compatibility alias, old decoder or fallback transport.

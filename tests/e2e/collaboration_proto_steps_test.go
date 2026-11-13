@@ -14,7 +14,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
-	pb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
+	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -22,7 +22,11 @@ import (
 )
 
 func delegationFixture() *cp.DelegationMetadata {
-	return &cp.DelegationMetadata{RootRequestId: "protobuf-root", Deadline: timestamppb.New(time.Now().Add(5 * time.Second)), Ancestors: []string{"bob"}}
+	return &cp.DelegationMetadata{
+		RootRequestId: "protobuf-root",
+		Deadline:      timestamppb.New(time.Now().Add(5 * time.Second)),
+		Ancestors:     []string{"bob"},
+	}
 }
 
 func metadataObject(message proto.Message) (map[string]any, error) {
@@ -41,13 +45,17 @@ func (c *collaborationScenario) protobufRoundtrip() error {
 		return err
 	}
 	delegation := delegationFixture()
-	delegation.Context = []*pb.TapeView{c.originalRef}
+
+	delegation.Context = []*pb.Ref{c.originalRef}
+
 	metadata, err := metadataObject(delegation)
 	if err != nil {
 		return err
 	}
 	for _, expected := range []cp.Status{cp.Status_STATUS_COMPLETED, cp.Status_STATUS_BUSY} {
-		var view *pb.TapeView
+
+		var view *pb.Ref
+
 		if expected == cp.Status_STATUS_BUSY {
 			view, err = c.nodes["alice"].a.View(c.s.ctx, "bob", nil)
 			if err != nil {
@@ -60,7 +68,13 @@ func (c *collaborationScenario) protobufRoundtrip() error {
 		message := sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("protobuf roundtrip"))
 		message.Extensions = []string{a2a.CollaborationURI}
 		message.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-		event, err := client.SendMessage(c.s.ctx, &sdk.SendMessageRequest{Message: message})
+
+		event, err := client.SendMessage(
+			c.s.ctx,
+			&sdk.SendMessageRequest{
+				Message: message,
+			},
+		)
 		if err != nil {
 			return err
 		}
@@ -99,7 +113,21 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	if err != nil {
 		return err
 	}
-	ref := map[string]any{"source": map[string]any{"agentId": "alice", "tapeId": "source"}, "snapshotHead": "3", "scope": map[string]any{"seqS": "1", "seqE": "3"}}
+	ref, err := metadataObject(
+		&pb.Ref{
+			Source: &pb.Source{
+				AgentId: "alice",
+				TapeId:  "source",
+			},
+			Scopes: []*pb.EntryRange{{
+				SeqS: "1",
+				SeqE: "3",
+			}},
+		},
+	)
+	if err != nil {
+		return err
+	}
 	switch problem {
 	case "missing root":
 		delete(metadata, "rootRequestId")
@@ -116,16 +144,13 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	case "excessive context":
 		metadata["context"] = []any{ref, ref, ref, ref, ref, ref, ref, ref, ref}
 	case "malformed context":
-		ref["snapshotHead"] = "01"
+		ref["scopes"] = []any{map[string]any{"seqS": "01", "seqE": "3"}}
 		metadata["context"] = []any{ref}
 	case "missing context scope":
-		delete(ref, "scope")
+		delete(ref, "scopes")
 		metadata["context"] = []any{ref}
 	case "reversed context scope":
-		ref["scope"] = map[string]any{"seqS": "3", "seqE": "1"}
-		metadata["context"] = []any{ref}
-	case "uncommitted context boundary":
-		ref["snapshotHead"] = "4"
+		ref["scopes"] = []any{map[string]any{"seqS": "3", "seqE": "1"}}
 		metadata["context"] = []any{ref}
 	case "unknown field":
 		metadata["caller"] = "body-controlled-identity"
@@ -144,7 +169,14 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	message := sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("must be rejected"))
 	message.Extensions = []string{a2a.CollaborationURI}
 	message.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-	_, err = client.SendMessage(c.s.ctx, &sdk.SendMessageRequest{Message: message})
+
+	_, err = client.SendMessage(
+		c.s.ctx,
+		&sdk.SendMessageRequest{
+			Message: message,
+		},
+	)
+
 	if !errors.Is(err, sdk.ErrInvalidParams) {
 		return fmt.Errorf("invalid delegation did not return invalid params: %v", err)
 	}
@@ -161,7 +193,21 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
 	metadata := map[string]any{"status": cp.Status_STATUS_COMPLETED.String()}
 	answer := "completed answer"
-	ref := map[string]any{"source": map[string]any{"agentId": "peer", "tapeId": "source"}, "snapshotHead": "3", "scope": map[string]any{"seqS": "1", "seqE": "3"}}
+	ref, err := metadataObject(
+		&pb.Ref{
+			Source: &pb.Source{
+				AgentId: "peer",
+				TapeId:  "source",
+			},
+			Scopes: []*pb.EntryRange{{
+				SeqS: "1",
+				SeqE: "3",
+			}},
+		},
+	)
+	if err != nil {
+		return err
+	}
 	switch problem {
 	case "unspecified status":
 		delete(metadata, "status")
@@ -176,15 +222,11 @@ func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
 		metadata["view"] = ref
 	case "malformed busy view":
 		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		ref["snapshotHead"] = "01"
+		ref["scopes"] = []any{map[string]any{"seqS": "01", "seqE": "3"}}
 		metadata["view"] = ref
 	case "missing busy scope":
 		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		delete(ref, "scope")
-		metadata["view"] = ref
-	case "uncommitted busy boundary":
-		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		ref["snapshotHead"] = "4"
+		delete(ref, "scopes")
 		metadata["view"] = ref
 	case "answer in metadata":
 		metadata["answer"] = "answer belongs in A2A parts"
@@ -200,16 +242,31 @@ func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
 	server := httptest.NewUnstartedServer(nil)
 	defer server.Close()
 	base := "http://" + server.Listener.Addr().String()
-	card := &sdk.AgentCard{Name: "peer", Version: "1", SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(base+a2a.CorePath, sdk.TransportProtocolJSONRPC)}, DefaultInputModes: []string{"text/plain"}, DefaultOutputModes: []string{"text/plain"}}
+
+	card := &sdk.AgentCard{
+		Name:                "peer",
+		Version:             "1",
+		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(base+a2a.CorePath, sdk.TransportProtocolJSONRPC)},
+		DefaultInputModes:   []string{"text/plain"},
+		DefaultOutputModes:  []string{"text/plain"},
+	}
+
 	a2a.AdvertiseCollaboration(card)
-	executor := a2asrv.AgentExecutorFunc(func(_ context.Context, _ *a2asrv.ExecutorContext) iter.Seq2[sdk.Event, error] {
-		return func(yield func(sdk.Event, error) bool) {
-			reply := sdk.NewMessage(sdk.MessageRoleAgent, sdk.NewTextPart(answer))
-			reply.Extensions = []string{a2a.CollaborationURI}
-			reply.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-			yield(reply, nil)
-		}
-	})
+
+	executor := a2asrv.AgentExecutorFunc(
+		func(_ context.Context, _ *a2asrv.ExecutorContext) iter.Seq2[sdk.Event, error] {
+			return func(yield func(sdk.Event, error) bool) {
+				reply := sdk.NewMessage(sdk.MessageRoleAgent, sdk.NewTextPart(answer))
+
+				reply.Extensions = []string{a2a.CollaborationURI}
+
+				reply.Metadata = map[string]any{a2a.CollaborationURI: metadata}
+
+				yield(reply, nil)
+			}
+		},
+	)
+
 	handler, err := a2a.NewMessageHandler(card, a2asrv.NewHandler(executor), a2a.TrustedPeerIdentity)
 	if err != nil {
 		return err

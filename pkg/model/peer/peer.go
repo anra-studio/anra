@@ -14,8 +14,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const Chat = "chat"
-const BorrowContext = "borrow-context"
+const (
+	Chat          = "chat"
+	BorrowContext = "borrow-context"
+)
 
 // Address normalizes a public HTTP(S) origin. Listen addresses are resolved by
 // the host before publication; wildcard addresses and port zero are unusable.

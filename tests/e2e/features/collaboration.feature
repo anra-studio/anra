@@ -7,7 +7,7 @@ Feature: Anchor-backed nonblocking peer collaboration
     And Alice has completed a shareable answer
     Then generated collaboration metadata roundtrips through A2A
 
-  Scenario Outline: Invalid delegation metadata cannot enter reasoning
+  Scenario Outline: 无效委托元数据在推理前被拒绝
     Given a collaboration agent
     Then collaboration rejects request metadata with <problem> before reasoning
 
@@ -23,10 +23,9 @@ Feature: Anchor-backed nonblocking peer collaboration
       | malformed context            |
       | missing context scope        |
       | reversed context scope       |
-      | uncommitted context boundary |
       | unknown field                |
 
-  Scenario Outline: Invalid response metadata is rejected through the A2A client
+  Scenario Outline: A2A 客户端拒绝无效响应元数据
     Given a collaboration agent
     Then the client rejects response metadata with <problem>
 
@@ -39,7 +38,6 @@ Feature: Anchor-backed nonblocking peer collaboration
       | completed view            |
       | malformed busy view       |
       | missing busy scope        |
-      | uncommitted busy boundary |
       | answer in metadata        |
       | empty completed answer    |
       | local suppression status  |
@@ -85,11 +83,7 @@ Feature: Anchor-backed nonblocking peer collaboration
       | revocation  |
       | expiry      |
 
-  Scenario: A TapeView retains the completed tool conversation and long final answer
-    Given a collaboration agent
-    Then Bob borrows Alice's completed tool conversation as a TapeView while she thinks
-
-  Scenario: An ancestor callback uses BUSY and borrowed findings to finish
+  Scenario: 祖先回调通过 BUSY 和带 lease 来源的引用内容完成推理
     Given a collaboration agent
     And Alice has completed a shareable answer
     When cyclic peer reasoning completes using BUSY and borrowed findings
@@ -169,6 +163,15 @@ Feature: Anchor-backed nonblocking peer collaboration
       | unmatched close              |
       | conflicting source           |
 
+  Scenario Outline: 缺少 schema 或格式损坏的 Anchor 不能用于恢复
+    Given a collaboration agent
+    Then startup rejects a tape containing <problem>
+
+    Examples:
+      | problem                  |
+      | missing schema           |
+      | malformed unknown schema |
+
   Scenario Outline: Other anchor schemas coexist with native execution history
     Given a collaboration agent
     And Alice's tape contains a custom anchor with schema "<schema>"
@@ -204,7 +207,7 @@ Feature: Anchor-backed nonblocking peer collaboration
     And Alice is held inside its model call
     Then Bob borrows supplied context without reentering Alice
 
-  Scenario Outline: Mismatched grants cannot expand a view reference
+  Scenario Outline: 不匹配的 lease 不能替换已提交视图的来源或 Scopes
     Given a collaboration agent
     And Alice has completed a shareable answer
     Then a client rejects a view grant with mismatched <provenance>
@@ -213,4 +216,3 @@ Feature: Anchor-backed nonblocking peer collaboration
       | provenance |
       | source     |
       | range      |
-      | head       |

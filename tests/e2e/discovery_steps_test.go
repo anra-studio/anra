@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"connectrpc.com/connect/v2"
-	"github.com/cucumber/godog"
 	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/discovery"
+	"github.com/cucumber/godog"
 )
 
 type teamScenario struct {
