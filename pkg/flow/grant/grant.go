@@ -1,4 +1,4 @@
-// Package grant issues leases over native Tape views and enforces their lifetime.
+// Package grant issues leases over native Tape views and enforces their state.
 // Request admission and persistence belong to its borrowing caller.
 package grant
 

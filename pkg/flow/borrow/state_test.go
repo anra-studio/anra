@@ -7,7 +7,7 @@ import (
 
 func TestRequestApprovalIsTerminal(t *testing.T) {
 	t.Parallel()
-	machine := lifecycle(newState)
+	machine := requestStateMachine(newState)
 	if err := machine.Event(context.Background(), Pending.String()); err != nil {
 		t.Fatal(err)
 	}

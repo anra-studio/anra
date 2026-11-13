@@ -45,7 +45,7 @@ borrow. Sidecar state is not another context Tape. See the
 [View Handler model](designs/tape-view-handlers-design.md) and
 [flow boundaries](designs/flow-boundaries-design.md).
 
-The request transition table in `pkg/flow/borrow/lifecycle.go` uses looplab/fsm;
+The request transition table in `pkg/flow/borrow/state.go` uses looplab/fsm;
 lease lifetime is handled in `flow/grant`. The journal lock spans the expected
 request check and append, so splitting packages does not split the commit.
 `flow/clbr` calls transport and borrowing capabilities through interfaces defined

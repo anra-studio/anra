@@ -62,7 +62,7 @@ stateDiagram-v2
 
 expired 由有效期判定，不要求额外写一份过期状态。借阅请求以调用方和 request ID 实现幂等；重用 request ID 返回原决定，不因输入变化重新审批或延长有效期。释放保持幂等，终止后的 lease 不重新激活。
 
-请求转换规则集中声明在 `pkg/flow/borrow/lifecycle.go`，使用 looplab/fsm。新请求可进入 pending、granted 或 denied，pending 只能完成为 granted 或 denied。grant 根据已提交 lease 的释放标记和时钟判断有效期；释放后的 lease 不重新激活。状态机回调不执行 I/O，只有 sidecar 追加成功后结果才对调用方可见。
+请求转换规则集中声明在 `pkg/flow/borrow/state.go`，使用 looplab/fsm。新请求可进入 pending、granted 或 denied，pending 只能完成为 granted 或 denied。grant 根据已提交 lease 的释放标记和时钟判断有效期；释放后的 lease 不重新激活。状态机回调不执行 I/O，只有 sidecar 追加成功后结果才对调用方可见。
 
 `Borrow` 负责新请求的 Review 策略与首次记录；`Approve` 批准已有 pending 请求，`Reject` 拒绝已有 pending 请求，均不重新执行 Review。已完成请求再次审批返回冲突；Approve 无合格 View 时返回不可用并保留 pending。Approve 在提交锁内重新比较此前读取的 pending 快照，竞争审批不能覆盖已提交结果。
 

@@ -151,13 +151,13 @@ func sameState(a, b borrowingState) bool {
 // pending resolution and a granted lease's one-way release are persisted.
 func validSuccessor(prior borrowingState, found bool, next borrowingState) bool {
 	if !found {
-		return !next.Released && lifecycle(newState).Can(next.Decision.Status.String())
+		return !next.Released && requestStateMachine(newState).Can(next.Decision.Status.String())
 	}
 	if prior.Requester != next.Requester || !proto.Equal(prior.Request, next.Request) {
 		return false
 	}
 	if prior.Decision.Status == Pending {
-		return !next.Released && lifecycle(Pending.String()).Can(next.Decision.Status.String())
+		return !next.Released && requestStateMachine(Pending.String()).Can(next.Decision.Status.String())
 	}
 	return prior.Decision.Status == Granted && !prior.Released && next.Released && proto.Equal(prior.Decision, next.Decision)
 }
