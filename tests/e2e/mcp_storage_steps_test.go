@@ -15,10 +15,8 @@ import (
 	"github.com/anra-studio/anra/pkg/flow/borrow"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
-	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
-	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 // The embedding runtime owns these fixtures across MCP service lifetimes.
@@ -112,18 +110,7 @@ func (m *mcpScenario) viewStorage() storage.TapeStorage {
 }
 
 func (m *mcpScenario) useJSONLTape() error {
-	state, err := m.tape.Get(m.tapeContext())
-	if err != nil {
-		return err
-	}
-
-	entries, err := m.tape.Range(
-		m.tapeContext(),
-		tv.EntryRange{
-			SeqS: te.SeqFromUint64(1),
-			SeqE: state.Scope.SeqE.Next(),
-		},
-	)
+	entries, _, err := readAllEntries(m.tapeContext(), m.tape)
 	if err != nil {
 		return err
 	}
@@ -134,7 +121,7 @@ func (m *mcpScenario) useJSONLTape() error {
 	if err := tape.Init(m.tapeContext()); err != nil {
 		return err
 	}
-	for _, raw := range entries.Raw {
+	for _, raw := range entries {
 		value, err := ae.FromTape(raw)
 		if err != nil {
 			return err

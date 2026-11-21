@@ -16,8 +16,6 @@ import (
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
-	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
-	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 var cliBinary string
@@ -189,28 +187,21 @@ func (c *cliScenario) stop() error {
 }
 
 func (c *cliScenario) conversation(id string, table *godog.Table) error {
-	tape, err := bbolt.NewBboltStorage("default", filepath.Join(c.dataDir(), id+".db"))
+	ctx := owner.WithOwnerId(c.s.ctx, id)
+	tape, err := openBboltTape(ctx, "default", filepath.Join(c.dataDir(), id+".db"))
 	if err != nil {
 		return err
 	}
 	defer tape.Close()
-	ctx := owner.WithOwnerId(c.s.ctx, id)
-	if err := tape.Init(ctx); err != nil {
-		return err
-	}
-	state, err := tape.Get(ctx)
+	entries, head, err := readAllEntries(ctx, tape)
 	if err != nil {
 		return err
 	}
-	want := len(table.Rows) - 1
-	if state.Scope.SeqE.IsZero() {
+	if head.IsZero() {
 		return errors.New("CLI tape is empty")
 	}
-	entries, err := tape.Range(ctx, view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: state.Scope.SeqE.Next()})
-	if err != nil {
-		return err
-	}
-	conversation, err := inspectLifecycle(entries.Raw)
+	want := len(table.Rows) - 1
+	conversation, err := inspectLifecycle(entries)
 	if err != nil {
 		return err
 	}

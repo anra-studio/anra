@@ -21,21 +21,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
+func initializeGrantSidecar(sc *godog.ScenarioContext, s *peerScenario) {
 	var original []byte
 	history := func() ([]byte, error) {
 		ctx := owner.WithOwnerId(s.ctx, "researcher-local")
-		state, err := s.peerTape.Get(ctx)
-		if err != nil {
-			return nil, err
-		}
-		entries, err := s.peerTape.Range(
-			ctx,
-			tv.EntryRange{
-				SeqS: te.SeqFromUint64(1),
-				SeqE: state.Scope.SeqE.Next(),
-			},
-		)
+		entries, _, err := readAllEntries(ctx, s.peerTape)
 		if err != nil {
 			return nil, err
 		}

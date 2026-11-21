@@ -62,48 +62,41 @@ func TestResolveAgentSettings(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		field *string
-		value string
-		want  string
+		mutate func(*Agent)
+		want   string
 	}{
 		{
-			field: &valid.DataDir,
-			value: " ",
-			want:  "data-dir is required",
+			mutate: func(a *Agent) { a.DataDir = " " },
+			want:   "data-dir is required",
 		},
 		{
-			field: &valid.Provider,
-			value: " ",
-			want:  "provider is required",
+			mutate: func(a *Agent) { a.Provider = " " },
+			want:   "provider is required",
 		},
 		{
-			field: &valid.Endpoint,
-			value: " ",
-			want:  "endpoint is required",
+			mutate: func(a *Agent) { a.Endpoint = " " },
+			want:   "endpoint is required",
 		},
 		{
-			field: &valid.Timeout,
-			value: " ",
-			want:  "timeout is required",
+			mutate: func(a *Agent) { a.Timeout = " " },
+			want:   "timeout is required",
 		},
 		{
-			field: &valid.Timeout,
-			value: "soon",
-			want:  "invalid duration",
+			mutate: func(a *Agent) { a.Timeout = "soon" },
+			want:   "invalid duration",
 		},
 		{
-			field: &valid.Timeout,
-			value: "0s",
-			want:  "timeout must be positive",
+			mutate: func(a *Agent) { a.Timeout = "0s" },
+			want:   "timeout must be positive",
 		},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
-			original := *tc.field
-			*tc.field = tc.value
-			file.Agents["alice"] = valid
-			*tc.field = original
+			invalid := valid
+			tc.mutate(&invalid)
+			input := file
+			input.Agents = map[string]Agent{"alice": invalid}
 
-			got, err := file.Agent("alice")
+			got, err := input.Agent("alice")
 			if got != (Settings{}) || err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("resolved invalid settings: %+v, %v; want %q", got, err, tc.want)
 			}

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
@@ -41,7 +40,7 @@ func metadataObject(message proto.Message) (map[string]any, error) {
 }
 
 func (c *collaborationScenario) protobufRoundtrip() error {
-	client, err := a2aclient.NewFromCard(c.s.ctx, c.nodes["alice"].card, a2aclient.WithJSONRPCTransport(a2a.TrustedHTTPClient("bob")))
+	client, err := c.a2aClient("bob", "alice")
 	if err != nil {
 		return err
 	}
@@ -127,7 +126,7 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	if err != nil {
 		return err
 	}
-	client, err := a2aclient.NewFromCard(c.s.ctx, n.card, a2aclient.WithJSONRPCTransport(a2a.TrustedHTTPClient("bob")))
+	client, err := c.a2aClient("bob", "alice")
 	if err != nil {
 		return err
 	}
@@ -241,7 +240,7 @@ func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
 	}
 	server.Config.Handler = handler
 	server.Start()
-	client, err := messageClient(c.s.ctx, a2a.TrustedHTTPClient("bob"), base)
+	client, err := messageClient(c.s.ctx, "bob", base)
 	if err != nil {
 		return err
 	}

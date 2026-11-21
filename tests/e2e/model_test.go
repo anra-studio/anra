@@ -8,11 +8,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/scbizu/tape-go/pkg/runner"
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
 )
+
+type modelFunc func(context.Context, runner.Request) (runner.Response, error)
 
 // modelFunc is a deterministic ADK model fixture. The neutral request shape is
 // used only by these scenarios to inspect the observable conversation contract.
@@ -86,19 +89,59 @@ type completionMessage struct {
 	} `json:"tool_calls"`
 }
 
-// newModelServer speaks the real provider HTTP protocol. No fixture provider or
-// mock runtime is exposed by the production binary.
-type providerControl struct {
+type countedModel struct {
+	model.LLM
+	calls *atomic.Int32
+}
+
+func (m countedModel) GenerateContent(ctx context.Context, r *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	m.calls.Add(1)
+	return m.LLM.GenerateContent(ctx, r, stream)
+}
+
+// modelGate signals when the model enters and waits until released or cancelled.
+type modelGate struct {
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
-func newProviderControl() *providerControl {
-	return &providerControl{entered: make(chan struct{}, 1), release: make(chan struct{})}
+func newModelGate(expected int) *modelGate {
+	return &modelGate{
+		entered: make(chan struct{}, expected),
+		release: make(chan struct{}),
+	}
 }
-func (c *providerControl) unblock() { c.once.Do(func() { close(c.release) }) }
-func newModelServer(control *providerControl) *httptest.Server {
+
+func (g *modelGate) block(ctx context.Context) error {
+	select {
+	case g.entered <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-g.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g *modelGate) awaitEntry(ctx context.Context) error {
+	select {
+	case <-g.entered:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g *modelGate) unblock() {
+	g.once.Do(func() { close(g.release) })
+}
+
+// newModelServer speaks the real provider HTTP protocol for CLI processes.
+func newModelServer(control *modelGate) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer e2e-model-key" {
 			http.Error(w, "invalid fixture key", http.StatusUnauthorized)
@@ -139,13 +182,7 @@ func newModelServer(control *providerControl) *httptest.Server {
 			}
 		}
 		if input == "crash before completion" {
-			select {
-			case control.entered <- struct{}{}:
-			default:
-			}
-			select {
-			case <-control.release:
-			case <-r.Context().Done():
+			if err := control.block(r.Context()); err != nil {
 				return
 			}
 		}

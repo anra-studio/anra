@@ -37,7 +37,7 @@ import (
 const foreignContextAnchor = `{"schema":"example.org/context/v1","ownerEpoch":"foreign-schema-value","note":"approved context"}`
 
 type peerContentScenario struct {
-	s *scenario
+	s *peerScenario
 
 	media []byte
 
@@ -50,7 +50,7 @@ type peerContentScenario struct {
 	reads *readLog
 }
 
-func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
+func initializePeerContent(sc *godog.ScenarioContext, s *peerScenario) {
 	p := &peerContentScenario{
 		s: s,
 	}

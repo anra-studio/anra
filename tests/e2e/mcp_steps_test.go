@@ -85,9 +85,7 @@ type mcpScenario struct {
 
 	original map[string]json.RawMessage
 
-	entered chan struct{}
-
-	release chan struct{}
+	gate *modelGate
 
 	finished chan error
 }
@@ -114,7 +112,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 
 	sc.After(
 		func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
-			if m.release != nil {
+			if m.gate != nil {
 				if err := m.finish(); err != nil {
 					return ctx, errors.Join(err, m.close())
 				}
@@ -124,101 +122,20 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		},
 	)
 
-	sc.Step(
-		`^已提交一份普通 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("normal")
-		},
-	)
-
-	sc.Step(
-		`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("complete stream")
-		},
-	)
-
-	sc.Step(
-		`^已提交包含伪造通道和来源声明的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("borrowed claims")
-		},
-	)
-
-	sc.Step(
-		`^已提交包含图片文件和代码结果的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("multimodal")
-		},
-	)
-
-	sc.Step(
-		`^已提交包含大型音频的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("large audio")
-		},
-	)
-
+	sc.Step(`^已提交一份普通 MCP 交接并签发凭证$`, func() error { return m.setup("normal") })
+	sc.Step(`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("complete stream") })
+	sc.Step(`^已提交包含伪造通道和来源声明的 MCP 交接并签发凭证$`, func() error { return m.setup("borrowed claims") })
+	sc.Step(`^已提交包含图片文件和代码结果的 MCP 交接并签发凭证$`, func() error { return m.setup("multimodal") })
+	sc.Step(`^已提交包含大型音频的 MCP 交接并签发凭证$`, func() error { return m.setup("large audio") })
 	sc.Step(`^使用超过 SDK 默认大小的 MCP 请求读取 Tape 视图$`, m.readWithLargeBody)
 	sc.Step(`^MCP 完整返回已授权的大型音频及来源$`, m.checkLargeAudio)
-
-	sc.Step(
-		`^使用不匹配凭证的锚点读取 MCP Tape 视图$`,
-		func() error {
-			return m.call(anramcp.ReadTapeView, m.token, "0", nil)
-		},
-	)
-
-	sc.Step(
-		`^官方 MCP 客户端能完整读取大型音频$`,
-		func() error {
-			var err error
-
-			m.lastResult, err = m.success(anramcp.ReadTapeView)
-			if err != nil {
-				return err
-			}
-
-			return m.checkLargeAudio()
-		},
-	)
-
+	sc.Step(`^使用不匹配凭证的锚点读取 MCP Tape 视图$`, m.readMismatchedAnchor)
+	sc.Step(`^官方 MCP 客户端能完整读取大型音频$`, m.checkSDKAudio)
 	sc.Step(`^借阅内容保留图片文件和代码结果的原始顺序且不泄露执行元数据$`, m.checkMultimodal)
 	sc.Step(`^借阅 Quote 仅携带 lease 绑定的通道与来源$`, m.checkWindowResponse)
 	sc.Step(`^借阅内容保留思考标记和文本且不泄露执行元数据$`, m.checkBorrowedClaims)
-
-	sc.Step(
-		`^控制器为同一视图签发另一调用方的凭证$`,
-		func() error {
-			m.credential.Caller = "another-runtime"
-
-			if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
-				return err
-			}
-
-			m.token = m.authorize(m.credential)
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^控制器使用默认 validator 验证角色定义和授权$`,
-		func() error {
-			v := validator.New(validator.WithRequiredStructEnabled())
-
-			if err := v.Struct(m.role); err != nil {
-				return fmt.Errorf("validate published role: %w", err)
-			}
-
-			if err := v.Struct(m.credential); err != nil {
-				return fmt.Errorf("validate issued credential: %w", err)
-			}
-
-			return nil
-		},
-	)
-
+	sc.Step(`^控制器为同一视图签发另一调用方的凭证$`, m.issueForAnotherCaller)
+	sc.Step(`^控制器使用默认 validator 验证角色定义和授权$`, m.validateDefinitions)
 	sc.Step(`^官方 MCP 客户端使用交接凭证连接$`, m.connect)
 	sc.Step(`^客户端仅发现两个只读上下文工具$`, m.discover)
 	sc.Step(`^两个工具返回交接绑定的角色版本和 Tape 视图$`, m.checkBoth)
@@ -229,100 +146,22 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^JSONL 存储和 MCP 服务重建$`, m.restartJSONLTape)
 	sc.Step(`^控制器向 Tape 提交另一份交接$`, m.commitTapeOnly)
 	sc.Step(`^使用原凭证读取新交接$`, m.readWindow)
-	sc.Step(`^宿主拒绝后续上下文借阅$`, func() {
-		m.providers.setApproval(borrow.Selection{
-			Status: borrow.Denied,
-		})
-	})
-	sc.Step(`^宿主批准后续上下文借阅且租期为十五分钟$`, func() {
-		m.providers.setApproval(borrow.Selection{
-			Status: borrow.Granted,
-			TTL:    15 * time.Minute,
-		})
-	})
+	sc.Step(`^宿主拒绝后续上下文借阅$`, m.denyNewBorrowing)
+	sc.Step(`^宿主批准后续上下文借阅且租期为十五分钟$`, m.approveNewBorrowing)
 	sc.Step(`^控制器通过 peer API 借阅交接视图$`, m.borrowHandoffView)
-	sc.Step(`^本次借阅被拒绝且未签发 lease$`, func() error {
-		if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Denied || m.borrowDecision.Lease != nil {
-			return fmt.Errorf("expected denied borrowing without a lease, got %v", m.borrowDecision)
-		}
-		return nil
-	})
-	sc.Step(`^新 lease 使用审批指定的十五分钟租期$`, func() error {
-		expiresAt := time.Unix(0, m.clock.Load()).Add(15 * time.Minute)
-		if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Granted || m.borrowDecision.Lease == nil || !m.borrowDecision.Lease.ExpiresAt.AsTime().Equal(expiresAt) {
-			return fmt.Errorf("expected granted lease expiring at %s, got %v", expiresAt, m.borrowDecision)
-		}
-		return nil
-	})
-	sc.Step(`^共享时钟前进十六分钟$`, func() {
-		m.clock.Add(int64(16 * time.Minute))
-	})
-	sc.Step(`^宿主在下一次 HTTP 认证通过后撤销凭证$`, func() {
-		m.providers.mu.Lock()
-		defer m.providers.mu.Unlock()
-		m.providers.revokeAfterAuthentication = true
-	})
+	sc.Step(`^本次借阅被拒绝且未签发 lease$`, m.checkDeniedBorrowing)
+	sc.Step(`^新 lease 使用审批指定的十五分钟租期$`, m.checkBorrowingExpiration)
+	sc.Step(`^共享时钟前进十六分钟$`, m.advancePastExpiration)
+	sc.Step(`^宿主在下一次 HTTP 认证通过后撤销凭证$`, m.revokeAfterAuthentication)
 
-	sc.Step(
-		`^控制器为新交接签发凭证$`,
-		func() error {
-			if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
-				return err
-			}
-
-			m.token = m.authorize(m.credential)
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^未携带凭证读取上下文$`,
-		func() error {
-			return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, nil)
-		},
-	)
-
-	sc.Step(
-		`^携带以下 Authorization 请求头读取上下文$`,
-		func(table *godog.Table) error {
-			headers := make(http.Header)
-
-			for _, row := range table.Rows {
-				headers.Add("Authorization", strings.ReplaceAll(row.Cells[0].Value, "{token}", m.token))
-			}
-
-			args, err := json.Marshal(map[string]string{"anchorSeq": m.credential.AnchorSeq})
-			if err != nil {
-				return err
-			}
-
-			return m.rawCall(anramcp.ReadTapeView, "", args, headers)
-		},
-	)
-
-	sc.Step(
-		`^凭证验证服务暂时不可用$`,
-		func() {
-			m.providers.mu.Lock()
-
-			defer m.providers.mu.Unlock()
-
-			m.providers.accessErr = errors.New("PRIVATE-access-provider unavailable")
-		},
-	)
-
+	sc.Step(`^控制器为新交接签发凭证$`, m.issueCredential)
+	sc.Step(`^未携带凭证读取上下文$`, m.readWithoutCredential)
+	sc.Step(`^携带以下 Authorization 请求头读取上下文$`, m.readWithAuthorizationHeaders)
+	sc.Step(`^凭证验证服务暂时不可用$`, m.failCredentialAccess)
 	sc.Step(`^使用当前凭证访问另一角色的服务$`, m.readOtherRole)
 	sc.Step(`^连接仅获准读取角色$`, m.roleOnly)
 	sc.Step(`^角色工具成功且视图工具返回 permission_denied$`, m.checkRoleOnly)
-
-	sc.Step(
-		`^控制器撤销当前凭证$`,
-		func() {
-			m.providers.revoke(m.token)
-		},
-	)
-
+	sc.Step(`^控制器撤销当前凭证$`, m.revokeCredential)
 	sc.Step(`^Tape 和 MCP 服务重启$`, m.restart)
 	sc.Step(`^记录两个工具的原始结果$`, m.remember)
 	sc.Step(`^角色开始一轮等待模型返回的推理$`, m.hold)
@@ -330,57 +169,157 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^当前推理正常结束$`, m.finish)
 	sc.Step(`^角色版本更新并继续写入 Tape$`, m.grow)
 	sc.Step(`^读取 MCP Tape 视图$`, m.readWindow)
-
-	sc.Step(
-		`^读取 MCP 角色$`,
-		func() error {
-			return m.call(anramcp.ReadRole, m.token, m.credential.AnchorSeq, nil)
-		},
-	)
-
+	sc.Step(`^读取 MCP 角色$`, m.readRole)
 	sc.Step(`^视图保留工具标识和所有有序响应分块$`, m.checkStream)
 	sc.Step(`^A2A 与 MCP 返回相同的公开条目及存储标识$`, m.checkA2AProjection)
 	sc.Step(`^MCP 返回 "([^"]+)" 且不泄露上下文或私有信息$`, m.rejected)
-
-	sc.Step(
-		`^MCP 返回 HTTP (401|403) 且不泄露上下文或私有信息$`,
-		func(status int) error {
-			if m.lastStatus != status {
-				return fmt.Errorf("want HTTP %d, got %d: %s", status, m.lastStatus, m.lastBody)
-			}
-
-			return m.rejected("permission_denied")
-		},
-	)
-
-	sc.Step(
-		`^MCP 返回 HTTP 503 且不泄露上下文或私有信息$`,
-		func() error {
-			if m.lastStatus != http.StatusServiceUnavailable {
-				return fmt.Errorf("want HTTP 503, got %d: %s", m.lastStatus, m.lastBody)
-			}
-
-			return m.rejected("unavailable")
-		},
-	)
-
+	sc.Step(`^MCP 返回 HTTP (401|403) 且不泄露上下文或私有信息$`, m.checkUnauthorizedHTTP)
+	sc.Step(`^MCP 返回 HTTP 503 且不泄露上下文或私有信息$`, m.checkUnavailableHTTP)
 	sc.Step(`^携带凭证从 Origin "([^"]+)" 读取上下文$`, m.originRequest)
-
-	sc.Step(
-		`^从 Origin "([^"]+)" 不带凭证读取上下文$`,
-		func(origin string) error {
-			return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, map[string]string{"Origin": origin})
-		},
-	)
-
-	sc.Step(
-		`^运行时仅信任 Origin "([^"]+)"$`,
-		func(origin string) error {
-			return m.configureTrustedOrigins([]string{origin})
-		},
-	)
-
+	sc.Step(`^从 Origin "([^"]+)" 不带凭证读取上下文$`, m.readOriginWithoutCredential)
+	sc.Step(`^运行时仅信任 Origin "([^"]+)"$`, m.trustOrigin)
 	sc.Step(`^MCP 响应包含交接绑定的 Tape 视图$`, m.checkWindowResponse)
+}
+
+func (m *mcpScenario) readMismatchedAnchor() error {
+	return m.call(anramcp.ReadTapeView, m.token, "0", nil)
+}
+
+func (m *mcpScenario) checkSDKAudio() error {
+	var err error
+
+	m.lastResult, err = m.success(anramcp.ReadTapeView)
+	if err != nil {
+		return err
+	}
+
+	return m.checkLargeAudio()
+}
+
+func (m *mcpScenario) issueForAnotherCaller() error {
+	m.credential.Caller = "another-runtime"
+
+	return m.issueCredential()
+}
+
+func (m *mcpScenario) validateDefinitions() error {
+	v := validator.New(validator.WithRequiredStructEnabled())
+
+	if err := v.Struct(m.role); err != nil {
+		return fmt.Errorf("validate published role: %w", err)
+	}
+
+	if err := v.Struct(m.credential); err != nil {
+		return fmt.Errorf("validate issued credential: %w", err)
+	}
+
+	return nil
+}
+
+func (m *mcpScenario) issueCredential() error {
+	if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
+		return err
+	}
+
+	m.token = m.authorize(m.credential)
+
+	return nil
+}
+
+func (m *mcpScenario) readWithoutCredential() error {
+	return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, nil)
+}
+
+func (m *mcpScenario) readWithAuthorizationHeaders(table *godog.Table) error {
+	headers := make(http.Header)
+
+	for _, row := range table.Rows {
+		headers.Add("Authorization", strings.ReplaceAll(row.Cells[0].Value, "{token}", m.token))
+	}
+
+	args, err := json.Marshal(map[string]string{"anchorSeq": m.credential.AnchorSeq})
+	if err != nil {
+		return err
+	}
+
+	return m.rawCall(anramcp.ReadTapeView, "", args, headers)
+}
+
+func (m *mcpScenario) failCredentialAccess() {
+	m.providers.mu.Lock()
+
+	defer m.providers.mu.Unlock()
+
+	m.providers.accessErr = errors.New("PRIVATE-access-provider unavailable")
+}
+
+func (m *mcpScenario) revokeCredential() {
+	m.providers.revoke(m.token)
+}
+
+func (m *mcpScenario) readRole() error {
+	return m.call(anramcp.ReadRole, m.token, m.credential.AnchorSeq, nil)
+}
+
+func (m *mcpScenario) checkUnauthorizedHTTP(status int) error {
+	return m.checkHTTPFailure(status, "permission_denied")
+}
+
+func (m *mcpScenario) checkUnavailableHTTP() error {
+	return m.checkHTTPFailure(http.StatusServiceUnavailable, "unavailable")
+}
+
+func (m *mcpScenario) checkHTTPFailure(status int, code string) error {
+	if m.lastStatus != status {
+		return fmt.Errorf("want HTTP %d, got %d: %s", status, m.lastStatus, m.lastBody)
+	}
+	return m.rejected(code)
+}
+
+func (m *mcpScenario) readOriginWithoutCredential(origin string) error {
+	return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, map[string]string{"Origin": origin})
+}
+
+func (m *mcpScenario) trustOrigin(origin string) error {
+	return m.configureTrustedOrigins([]string{origin})
+}
+
+func (m *mcpScenario) denyNewBorrowing() {
+	m.providers.setApproval(borrow.Selection{
+		Status: borrow.Denied,
+	})
+}
+
+func (m *mcpScenario) approveNewBorrowing() {
+	m.providers.setApproval(borrow.Selection{
+		Status: borrow.Granted,
+		TTL:    15 * time.Minute,
+	})
+}
+
+func (m *mcpScenario) checkDeniedBorrowing() error {
+	if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Denied || m.borrowDecision.Lease != nil {
+		return fmt.Errorf("expected denied borrowing without a lease, got %v", m.borrowDecision)
+	}
+	return nil
+}
+
+func (m *mcpScenario) checkBorrowingExpiration() error {
+	expiresAt := time.Unix(0, m.clock.Load()).Add(15 * time.Minute)
+	if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Granted || m.borrowDecision.Lease == nil || !m.borrowDecision.Lease.ExpiresAt.AsTime().Equal(expiresAt) {
+		return fmt.Errorf("expected granted lease expiring at %s, got %v", expiresAt, m.borrowDecision)
+	}
+	return nil
+}
+
+func (m *mcpScenario) advancePastExpiration() {
+	m.clock.Add(int64(16 * time.Minute))
+}
+
+func (m *mcpScenario) revokeAfterAuthentication() {
+	m.providers.mu.Lock()
+	defer m.providers.mu.Unlock()
+	m.providers.revokeAfterAuthentication = true
 }
 
 func (m *mcpScenario) readWindow() error {
@@ -407,31 +346,17 @@ func (m *mcpScenario) open() error {
 			},
 		}
 	}
-	m.tape, err = bbolt.NewBboltStorage("mcp-session", m.tapePath())
+	m.tape, err = openBboltTape(m.tapeContext(), "mcp-session", m.tapePath())
 	if err != nil {
-		return err
-	}
-	if err = m.tape.Init(m.tapeContext()); err != nil {
 		return err
 	}
 
 	m.agent, err = agent.New("vesta", m.tape, agent.WithLLM(modelFunc(
 		func(ctx context.Context, req runner.Request) (runner.Response, error) {
 			if len(req.Messages) > 0 && req.Messages[len(req.Messages)-1].Text == "hold MCP turn" {
-
-				entered, release := m.entered, m.release
-
-				close(entered)
-
-				select {
-
-				case <-release:
-
-				case <-ctx.Done():
-					return runner.Response{}, ctx.Err()
-
+				if err := m.gate.block(ctx); err != nil {
+					return runner.Response{}, err
 				}
-
 			}
 
 			return runner.Response{
@@ -1017,28 +942,24 @@ func (m *mcpScenario) restart() error {
 }
 
 func (m *mcpScenario) hold() error {
-	m.entered = make(chan struct{})
-	m.release = make(chan struct{})
-	m.finished = make(chan error, 1)
+	m.gate = newModelGate(1)
+	results := make(chan error, 1)
+	m.finished = results
+	ctx, runtime := m.s.ctx, m.agent
 
 	go func() {
-		_, err := m.agent.Run(m.s.ctx, "hold MCP turn")
-		m.finished <- err
+		_, err := runtime.Run(ctx, "hold MCP turn")
+		results <- err
 	}()
 
-	select {
-	case <-m.entered:
-		return nil
-	case <-m.s.ctx.Done():
-		return m.s.ctx.Err()
-	}
+	return m.gate.awaitEntry(m.s.ctx)
 }
 
 func (m *mcpScenario) finish() error {
-	close(m.release)
-	m.release = nil
+	m.gate.unblock()
 	select {
 	case err := <-m.finished:
+		m.gate = nil
 		return err
 	case <-m.s.ctx.Done():
 		return m.s.ctx.Err()

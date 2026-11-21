@@ -14,7 +14,7 @@ func BenchmarkBorrowRead(b *testing.B) {
 			name,
 			func(b *testing.B) {
 				b.StopTimer()
-				s := &scenario{
+				s := &peerScenario{
 					root: b.TempDir(),
 					ctx:  b.Context(),
 				}
