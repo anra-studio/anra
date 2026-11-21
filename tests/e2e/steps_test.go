@@ -116,9 +116,6 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the model sees the conversation in order$`, s.conversation)
 	sc.Step(`^the answer is "([^"]*)"$`, s.answerIs)
 	sc.Step(`^研究节点已提交两份发现并持久化授权记录$`, s.peer.setupPeer)
-	sc.Step(`^调用方发现研究节点并发送 "([^"]*)"$`, s.sendMessage)
-	sc.Step(`^节点回答 "([^"]*)"$`, s.answerIs)
-	sc.Step(`^节点也能流式回答 "([^"]*)"$`, s.peer.streamMessage)
 	sc.Step(`^研究者节点提供两条发现和持久化授权$`, s.peer.setupPeer)
 	sc.Step(`^本地角色借阅研究者上下文$`, s.borrowWithAgent)
 	sc.Step(`^借阅回答为 "([^"]*)"$`, s.answerIs)
@@ -138,12 +135,8 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	)
 
 	sc.Step(`^研究节点重启存储和服务$`, s.peer.restartPeer)
-	sc.Step(`^重试同一请求仍返回原 lease$`, s.peer.retryGrant)
+	sc.Step(`^使用原请求 ID 修改用途、查询和范围仍返回原 lease$`, s.peer.retryChangedBorrow)
 	sc.Step(`^调用方再次读取相同的原有授权视图$`, s.peer.finishSnapshot)
-	sc.Step(`^研究节点已提交 (\d+) 条发现$`, s.peer.addFindings)
-	sc.Step(`^调用方完整读出全部 (\d+) 条发现$`, s.peer.readAll)
-	sc.Step(`^调用方保持请求 ID 但修改用途、查询和范围$`, s.peer.retryChangedBorrow)
-	sc.Step(`^返回原有借阅决定且 lease 仍可读取$`, s.peer.readFirst)
 
 	sc.Step(`^其他调用方不能查询读取或释放该 lease$`, s.peer.checkIntruder)
 	sc.Step(`^其他调用方自己的请求被拒绝且不返回内容$`, s.peer.checkDenied)

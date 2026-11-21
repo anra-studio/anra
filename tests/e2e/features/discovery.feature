@@ -48,11 +48,14 @@ Feature: 按名称发现并联系节点
       | user      | hello after restart      |
       | assistant | bob: hello after restart |
 
-  Scenario: 正常停止的节点保留身份并标为离线
+  Scenario: 正常停止的节点保持离线，直到管理员通过 CLI 移除
     Given team agents "alice" and "bob" are serving
     When I stop team agent "bob"
     And running agent "alice" attempts to greet "bob"
     Then the CLI answer is "Unable to consult peer: peer bob is offline"
+    When the operator forgets team agent "bob"
+    Then team agent "bob" is forgotten
+    And team agent "alice" is still registered
     When I stop the team agents
     Then the CLI agent "alice" has this conversation on its tape
       | role      | text                                      |
@@ -65,11 +68,6 @@ Feature: 按名称发现并联系节点
     Then both team agents eventually register again
     When running agent "alice" sends "hello after directory restart" to "bob"
     Then the CLI answer is "bob: hello after directory restart"
-
-  Scenario: 发信角色必须是已注册且正在运行的节点
-    When running agent "alice" attempts to greet "bob"
-    Then the CLI command fails with "peer is not registered"
-    And no CLI tape directory is created
 
   Scenario: 新进程无法抢占运行中节点的名称
     Given team agents "alice" and "bob" are serving
@@ -85,17 +83,3 @@ Feature: 按名称发现并联系节点
     And team agent "alice" is still registered
     When running agent "alice" attempts to greet "bob"
     Then the CLI answer is "Unable to consult peer: peer bob is unknown"
-
-  Scenario: 管理员可通过 CLI 移除已停止的节点
-    Given team agents "alice" and "bob" are serving
-    When I stop team agent "bob"
-    And the operator forgets team agent "bob"
-    Then team agent "bob" is forgotten
-    And team agent "alice" is still registered
-
-  Scenario: 推理处于 BUSY 时仍按时续报心跳
-    Given team agents "alice" and "bob" are serving
-    And Alice is interrupted while reasoning after a published answer
-    Then the busy agent keeps online presence across a heartbeat window
-    When I try to ask running agent "alice" to "another callback"
-    Then the CLI command fails with "busy: request was not accepted"

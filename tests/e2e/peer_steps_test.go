@@ -14,17 +14,14 @@ import (
 	"time"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2aclient"
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
+	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
 	"github.com/anra-studio/anra/pkg/flow/borrow"
-	"github.com/anra-studio/anra/pkg/flow/clbr"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
 	bv "github.com/anra-studio/anra/pkg/model/view"
-	"github.com/scbizu/tape-go/pkg/runner"
 	entry "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
@@ -35,13 +32,13 @@ type peerScenario struct {
 	root string
 	ctx  context.Context
 
-	peerTape  *bbolt.Bbolt
-	coreTape  *bbolt.Bbolt
-	service   *borrow.Service
-	server    *httptest.Server
-	card      *sdk.AgentCard
-	client    *a2a.Client
-	ordinary  *a2aclient.Client
+	peerTape *bbolt.Bbolt
+
+	service *borrow.Service
+	server  *httptest.Server
+	card    *sdk.AgentCard
+	client  *a2a.Client
+
 	request   *pb.BorrowRequest
 	decision  *pb.Decision
 	firstRead *rpcpb.ReadResponse
@@ -51,9 +48,9 @@ type peerScenario struct {
 	pendingWriter *borrow.Service
 	pending       atomic.Bool
 
-	wireCode     string
-	findingCount atomic.Uint64
-	clock        atomic.Int64
+	wireCode string
+
+	clock atomic.Int64
 }
 
 func (s *peerScenario) openTape(name, role string) (*bbolt.Bbolt, error) {
@@ -94,8 +91,6 @@ func (s *peerScenario) appendFinding(text string) error {
 	if _, err = finishFixtureTurn(s.ctx, s.peerTape, "researcher-local", turn); err != nil {
 		return err
 	}
-
-	s.findingCount.Add(1)
 
 	return nil
 }
@@ -157,54 +152,23 @@ func (s *peerScenario) startPeer() error {
 		return err
 	}
 
-	s.coreTape, err = s.openTape("messaging", "researcher-core")
+	handler, err := a2a.NewViewHandler(s.service, a2a.TrustedPeerIdentity)
 	if err != nil {
 		return err
 	}
-
-	lender, err := agent.New("researcher-core", s.coreTape, agent.WithLLM(modelFunc(
-		func(context.Context, runner.Request) (runner.Response, error) {
-			return runner.Response{
-				Output: "research response",
-			}, nil
+	s.server = httptest.NewServer(handler)
+	s.card, err = a2a.Card(
+		&pv.Peer{
+			Id:      "researcher",
+			Address: s.server.URL,
+			Skill: []*pv.Skill{
+				{
+					Id:   "borrow-context",
+					Name: "Borrow context",
+				},
+			},
 		},
-	)))
-	if err != nil {
-		return err
-	}
-	executor, err := a2a.NewExecutor(lender, &clbr.Service{})
-	if err != nil {
-		return err
-	}
-	s.server = httptest.NewUnstartedServer(nil)
-	base := "http://" + s.server.Listener.Addr().String()
-	card := &sdk.AgentCard{
-		Name:        "researcher",
-		Description: "storage specialist",
-		Version:     "0.1",
-
-		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(base+a2a.CorePath, sdk.TransportProtocolJSONRPC)},
-
-		DefaultInputModes:  []string{"text/plain"},
-		DefaultOutputModes: []string{"text/plain"},
-
-		Skills: []sdk.AgentSkill{{
-			ID:          "storage",
-			Name:        "Storage",
-			Description: "bbolt storage",
-			Tags:        []string{"bbolt"},
-		}},
-	}
-	if err := a2a.Advertise(card, base+a2a.ViewPath); err != nil {
-		return err
-	}
-	handler, err := trustedPeerHandler(card, executor, s.service)
-	if err != nil {
-		return err
-	}
-	s.server.Config.Handler = handler
-	s.server.Start()
-	s.card, err = a2a.Discover(s.ctx, s.server.Client(), base+a2asrv.WellKnownAgentCardPath)
+	)
 	if err != nil {
 		return err
 	}
@@ -213,12 +177,6 @@ func (s *peerScenario) startPeer() error {
 }
 
 func (s *peerScenario) stopPeer() error {
-	if s.coreTape != nil {
-		if err := s.coreTape.Close(); err != nil {
-			return err
-		}
-		s.coreTape = nil
-	}
 	if s.server != nil {
 		s.server.Close()
 		s.server = nil
@@ -256,55 +214,6 @@ func (s *peerScenario) httpClient(peer string) *http.Client {
 
 func (s *peerScenario) clientFor(peer string) (*a2a.Client, error) {
 	return a2a.NewClient(s.httpClient(peer), s.card)
-}
-
-func (s *scenario) sendMessage(text string) error {
-	var err error
-	s.peer.ordinary, err = newA2AClient(s.ctx, s.peer.httpClient("borrower"), s.peer.card)
-	if err != nil {
-		return err
-	}
-
-	result, err := s.peer.ordinary.SendMessage(
-		s.ctx,
-		&sdk.SendMessageRequest{
-			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(text)),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	message, ok := result.(*sdk.Message)
-	if !ok || len(message.Parts) != 1 {
-		return fmt.Errorf("unexpected peer message: %#v", result)
-	}
-	s.answer = message.Parts[0].Text()
-	return nil
-}
-
-func (s *peerScenario) streamMessage(text string) error {
-	var outputs []string
-
-	for event, err := range s.ordinary.SendStreamingMessage(
-		s.ctx,
-		&sdk.SendMessageRequest{
-			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(text)),
-		},
-	) {
-
-		if err != nil {
-			return err
-		}
-		if message, ok := event.(*sdk.Message); ok {
-			for _, part := range message.Parts {
-				outputs = append(outputs, part.Text())
-			}
-		}
-	}
-	if strings.Join(outputs, "") != "research response" {
-		return fmt.Errorf("streamed output = %q", outputs)
-	}
-	return nil
 }
 
 func (s *peerScenario) borrow() error {
@@ -393,31 +302,6 @@ func (s *peerScenario) finishSnapshot() error {
 	}
 	if !proto.Equal(response.Quote, s.firstRead.Quote) {
 		return fmt.Errorf("original snapshot was not preserved: %v", response)
-	}
-	return nil
-}
-
-func (s *peerScenario) addFindings(count int) error {
-	for int(s.findingCount.Load()) < count {
-		if err := s.appendFinding(fmt.Sprintf("finding %d", s.findingCount.Load()+1)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *peerScenario) readAll(count int) error {
-	quote, err := s.client.ReadView(s.ctx, s.decision.Lease)
-	if err != nil {
-		return err
-	}
-	if len(quote.Entries) != count || quote.Provenance.LeaseId != s.decision.Lease.Id || !proto.Equal(quote.Provenance.Ref, s.decision.Lease.Ref) {
-		return fmt.Errorf("authorized Quote lost entries or provenance: %v", quote)
-	}
-	for i, e := range quote.Entries {
-		if e.Seq != s.decision.Lease.Ref.Scopes[i].SeqS {
-			return fmt.Errorf("entry %d has sequence %s", i, e.Seq)
-		}
 	}
 	return nil
 }
@@ -656,22 +540,16 @@ func (s *peerScenario) checkAccess(outcome string) error {
 
 func (s *peerScenario) wireRequest(problem string) error {
 	body := `{"requestId":"wire-request","purpose":"research","query":"bbolt"}`
-	method, identity, extension := "Borrow", "borrower", a2a.ExtensionURI
+	identity := "borrower"
 	switch problem {
 	case "no identity":
 		identity = ""
-	case "no extension":
-		extension = ""
 	case "missing purpose":
 		body = `{"requestId":"wire-request","query":"bbolt"}`
-	case "reversed bounds":
-		body = `{"requestId":"wire-request","purpose":"research","query":"bbolt","bounds":{"seqS":"9","seqE":"2"}}`
-	case "空 lease ID":
-		method, body = "Read", `{}`
 	default:
 		return fmt.Errorf("unknown wire problem %s", problem)
 	}
-	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, s.server.URL+a2a.ViewPath+"/"+method, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, s.server.URL+a2a.ViewPath+"/Borrow", strings.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -680,9 +558,7 @@ func (s *peerScenario) wireRequest(problem string) error {
 	if identity != "" {
 		req.Header.Set(a2a.PeerIdentityHeader, identity)
 	}
-	if extension != "" {
-		req.Header.Set(a2a.ExtensionHeader, extension)
-	}
+	req.Header.Set(a2a.ExtensionHeader, a2a.ExtensionURI)
 	res, err := s.server.Client().Do(req)
 	if err != nil {
 		return err

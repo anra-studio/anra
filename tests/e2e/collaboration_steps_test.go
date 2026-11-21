@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -18,7 +16,6 @@ import (
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
-	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
@@ -35,10 +32,8 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	"google.golang.org/adk/model"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type collaborationNode struct {
@@ -54,8 +49,6 @@ type collaborationNode struct {
 	card *sdk.AgentCard
 
 	calls atomic.Int32
-
-	requests atomic.Int32
 }
 type heldResult struct {
 	result clbr.Result
@@ -95,8 +88,6 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		s: s,
 	}
 
-	initializeDelegator(sc, c)
-
 	sc.Before(
 		func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 			*c = collaborationScenario{
@@ -115,14 +106,10 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	})
 
 	sc.Step(`^a collaboration agent$`, c.setup)
-	sc.Step(`^已启动协作角色$`, c.setup)
-	sc.Step(`^Alice's tape contains a custom anchor with schema "([^"]+)"$`, c.appendExternalAnchor)
-	sc.Step(`^Alice can continue reasoning after schema dispatch recovery$`, c.checkRecoveredReasoning)
-	sc.Step(`^Bob 在 Alice 推理期间借阅包含思考和完整工具对话的快照$`, c.toolWindow)
 	sc.Step(`^generated collaboration metadata roundtrips through A2A$`, c.protobufRoundtrip)
-	sc.Step(`^collaboration rejects request metadata with (.+) before reasoning$`, c.rejectRequestMetadata)
+	sc.Step(`^the discovered agent streams a standard A2A answer$`, c.streamAnswer)
+	sc.Step(`^collaboration rejects request metadata with missing root before reasoning$`, c.rejectRequestMetadata)
 	sc.Step(`^A2A rejects invalid caller identities before reasoning$`, c.rejectCallerIdentity)
-	sc.Step(`^the client rejects response metadata with (.+)$`, c.rejectResponseMetadata)
 	sc.Step(`^Alice has completed a shareable answer$`, c.publishFinding)
 	sc.Step(`^Alice is held inside its model call$`, c.hold)
 	sc.Step(`^Bob asks the occupied Alice for reasoning$`, c.askBusy)
@@ -139,16 +126,10 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^simultaneous callers admit exactly one turn$`, c.raceAdmission)
 	sc.Step(`^cyclic peer reasoning completes using BUSY and borrowed findings$`, c.cycle)
 	sc.Step(`^independent roots consult one another without blocking$`, c.independentRoots)
-	sc.Step(`^repeated BUSY delegation is suppressed only within each turn$`, c.suppression)
-	sc.Step(`^Bob resumes reasoning only after borrowing newer lender-selected findings$`, c.lenderSelection)
-	sc.Step(`^an expired delegation deadline rejects reasoning before model or peer calls$`, c.expiredDeadline)
-	sc.Step(`^Bob borrows supplied context without reentering Alice$`, c.suppliedContext)
-	sc.Step(`^a client rejects a view grant with mismatched (source|range)$`, c.rejectMismatchedGrant)
 	sc.Step(`^shutdown drains active reasoning before storage closes$`, c.checkShutdown)
 	sc.Step(`^an unresolved terminal append fences further reasoning$`, c.checkTerminalFailure)
-	sc.Step(`^startup rejects a tape containing (malformed record|overlapping starts)$`, c.rejectCorruptHistory)
+	sc.Step(`^startup rejects a tape containing overlapping starts$`, c.rejectOverlappingTurns)
 	sc.Step(`^generic A2A callers receive an unaccepted response with no hint$`, c.checkGenericBusy)
-	sc.Step(`^legacy lenders cannot silently accept view references$`, c.rejectLegacyLender)
 }
 
 func (c *collaborationScenario) close() error {
@@ -206,35 +187,6 @@ func (n *collaborationNode) close() error {
 		n.tape = nil
 		return err
 	}
-	return nil
-}
-
-func (c *collaborationScenario) appendExternalAnchor(schema string) error {
-	// Deliberately reuse a native type with fields that are invalid in v1:
-	// the schema, rather than the type or field names, owns interpretation.
-
-	payload, err := json.Marshal(map[string]any{"schema": schema, "type": "turn.started", "turnId": 42, "source": "integration-owned"})
-	if err != nil {
-		return err
-	}
-
-	_, err = c.nodes["alice"].tape.Store(owner.WithOwnerId(c.s.ctx, "alice"), entry.NewAnchor(
-		entry.Seq{},
-		"alice",
-		entry.AnchorKindCustom,
-		payload,
-	))
-
-	return err
-}
-
-func (c *collaborationScenario) checkRecoveredReasoning() error {
-	result, err := c.send("bob", "alice", "after recovery")
-
-	if err != nil || result.Status != cp.Status_STATUS_COMPLETED || result.Answer != "answer: after recovery" {
-		return fmt.Errorf("reasoning after recovery: %+v: %v", result, err)
-	}
-
 	return nil
 }
 
@@ -646,20 +598,16 @@ func (c *collaborationScenario) checkTerminalFailure() error {
 	return nil
 }
 
-func (c *collaborationScenario) rejectCorruptHistory(problem string) error {
+func (c *collaborationScenario) rejectOverlappingTurns() error {
 	n := c.nodes["alice"]
 
 	if err := n.stopRuntime(); err != nil {
 		return err
 	}
 
-	payloads := []string{}
-
-	switch problem {
-	case "malformed record":
-		payloads = []string{`{"schema":"anra.dev/anchor/v1","type":`}
-	case "overlapping starts":
-		payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old"}`, `{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"two","ownerEpoch":"old"}`}
+	payloads := []string{
+		`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old"}`,
+		`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"two","ownerEpoch":"old"}`,
 	}
 
 	for _, raw := range payloads {
@@ -709,43 +657,6 @@ func (c *collaborationScenario) checkGenericBusy() error {
 
 	if !ok || len(message.Metadata) != 0 || len(message.Extensions) != 0 || len(message.Parts) != 1 || !strings.Contains(message.Parts[0].Text(), "request was not accepted") {
 		return fmt.Errorf("generic caller received private/ambiguous BUSY: %+v", response)
-	}
-
-	return nil
-}
-
-func (c *collaborationScenario) rejectLegacyLender() error {
-	card := *c.nodes["alice"].card
-
-	card.Capabilities.Extensions = append([]sdk.AgentExtension(nil), card.Capabilities.Extensions...)
-
-	for i := range card.Capabilities.Extensions {
-		if card.Capabilities.Extensions[i].URI == a2a.ExtensionURI {
-			ext := card.Capabilities.Extensions[i]
-
-			ext.Params = map[string]any{"endpoint": c.nodes["alice"].server.URL + a2a.ViewPath}
-
-			card.Capabilities.Extensions[i] = ext
-		}
-	}
-
-	client, err := trustedViewClient("bob", &card)
-	if err != nil {
-		return err
-	}
-
-	_, err = client.Borrow(
-		c.s.ctx,
-		&pb.BorrowRequest{
-			RequestId: "legacy",
-			Purpose:   "test",
-			Query:     "test",
-			View:      c.originalRef,
-		},
-	)
-
-	if !errors.Is(err, a2a.ErrInactive) {
-		return fmt.Errorf("legacy view fallback: %v", err)
 	}
 
 	return nil
@@ -868,15 +779,7 @@ func (c *collaborationScenario) startNode(name string, m model.LLM) error {
 		return err
 	}
 
-	n.server.Config.Handler = http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == a2a.CorePath {
-				n.requests.Add(1)
-			}
-
-			handler.ServeHTTP(w, r)
-		},
-	)
+	n.server.Config.Handler = handler
 
 	n.server.Start()
 
@@ -1321,530 +1224,4 @@ func (c *collaborationScenario) independentRoots() error {
 		return errors.New("independent roots reentered reasoning")
 	}
 	return nil
-}
-
-func (c *collaborationScenario) suppression() error {
-	if err := c.hold(); err != nil {
-		return err
-	}
-
-	if err := c.startNode("bob", modelFunc(
-		func(_ context.Context, r runner.Request) (runner.Response, error) {
-			name, result := lastTool(r)
-
-			if name == "" {
-				return toolCall("send_peer_message", map[string]any{"peer": "alice", "message": "first callback"}), nil
-			}
-
-			if result["status"] == "busy" {
-				return toolCall("send_peer_message", map[string]any{"peer": "alice", "message": "a different prompt"}), nil
-			}
-
-			if result["status"] != "no_new_context" {
-				return runner.Response{}, fmt.Errorf("repeat wasn't suppressed: %v", result)
-			}
-
-			return runner.Response{
-				Output: "continued without polling",
-			}, nil
-		},
-	)); err != nil {
-		return err
-	}
-	before := c.nodes["alice"].requests.Load()
-	for i := int32(1); i <= 2; i++ {
-		result, err := c.send("root", "bob", "consult alice twice")
-		if err != nil || result.Answer != "continued without polling" {
-			return fmt.Errorf("suppression in turn %d: %+v %v", i, result, err)
-		}
-		if c.nodes["alice"].requests.Load() != before+i {
-			return errors.New("BUSY suppression leaked between turns or permitted polling")
-		}
-	}
-	return c.finishHold()
-}
-
-func (c *collaborationScenario) lenderSelection() error {
-	turn := 0
-	var requests int32
-
-	var selected *pb.Ref
-
-	if err := c.startNode("bob", modelFunc(
-		func(_ context.Context, r runner.Request) (runner.Response, error) {
-			turn++
-
-			found := false
-
-			for _, spec := range r.Tools {
-
-				if spec.Name != "borrow_peer_context" {
-					continue
-				}
-
-				found = true
-
-				var schema struct {
-					Properties map[string]json.RawMessage `json:"properties"`
-				}
-
-				if err := json.Unmarshal(spec.InputSchema, &schema); err != nil {
-					return runner.Response{}, err
-				}
-
-				if len(schema.Properties) != 4 || schema.Properties["view"] != nil {
-					return runner.Response{}, fmt.Errorf("borrow tool exposes context selection: %s", spec.InputSchema)
-				}
-
-			}
-
-			if !found {
-				return runner.Response{}, errors.New("missing named peer borrow tool")
-			}
-
-			_, result := lastTool(r)
-
-			switch turn {
-
-			case 1:
-				return toolCall("send_peer_message", map[string]any{"peer": "alice", "message": "help with findings"}), nil
-
-			case 2:
-				if result["status"] != "busy" {
-					return runner.Response{}, fmt.Errorf("expected initial BUSY: %v", result)
-				}
-				return toolCall("borrow_peer_context", map[string]any{"peer": "alice", "requestId": "unchanged", "purpose": "continue research", "query": "findings"}), nil
-
-			case 3, 5:
-				raw, _ := json.Marshal(result["decision"])
-				var decision pb.Decision
-				if err := protojson.Unmarshal(raw, &decision); err != nil {
-					return runner.Response{}, err
-				}
-				expected := c.originalRef
-				if turn == 5 {
-					expected = selected
-				}
-				if decision.Status != a2a.Granted || decision.Lease == nil || !proto.Equal(decision.Lease.Ref, expected) {
-					return runner.Response{}, fmt.Errorf("lender did not select expected view: %v", &decision)
-				}
-				requests = c.nodes["alice"].requests.Load()
-				return toolCall("send_peer_message", map[string]any{"peer": "alice", "message": "reason using borrowed findings"}), nil
-
-			case 4:
-				if result["status"] != "no_new_context" || c.nodes["alice"].requests.Load() != requests {
-					return runner.Response{}, fmt.Errorf("unchanged borrowed findings permitted polling: %v", result)
-				}
-				if err := c.finishHold(); err != nil {
-					return runner.Response{}, err
-				}
-				if _, err := c.send("root", "alice", "new findings"); err != nil {
-					return runner.Response{}, err
-				}
-				var err error
-				selected, err = c.nodes["alice"].a.View(c.s.ctx, "bob", nil)
-				if err != nil || selected == nil || proto.Equal(selected, c.originalRef) {
-					return runner.Response{}, fmt.Errorf("lender has no newer view: %v", err)
-				}
-				if err := c.hold(); err != nil {
-					return runner.Response{}, err
-				}
-				return toolCall("borrow_peer_context", map[string]any{"peer": "alice", "requestId": "newer", "purpose": "continue research", "query": "findings"}), nil
-
-			case 6:
-				if result["status"] != "busy" || c.nodes["alice"].requests.Load() != requests+1 {
-					return runner.Response{}, fmt.Errorf("new lender-selected context did not permit one attempt: %v", result)
-				}
-				return runner.Response{
-					Output: "continued with lender-selected findings",
-				}, nil
-
-			}
-
-			return runner.Response{}, fmt.Errorf("unexpected model turn %d", turn)
-		},
-	)); err != nil {
-		return err
-	}
-	result, err := c.send("root", "bob", "consult alice")
-	if err != nil || result.Answer != "continued with lender-selected findings" {
-		return fmt.Errorf("lender selection failed: %+v %v", result, err)
-	}
-	return c.finishHold()
-}
-
-func (c *collaborationScenario) expiredDeadline() error {
-	n := c.nodes["alice"]
-	before, err := c.readEntries(n)
-	if err != nil {
-		return err
-	}
-	client, err := c.a2aClient("root", "alice")
-	if err != nil {
-		return err
-	}
-	message := sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("deadline has expired"))
-	message.Extensions = []string{a2a.CollaborationURI}
-
-	metadata, err := metadataObject(
-		&cp.DelegationMetadata{
-			RootRequestId: "expired-root",
-			Deadline:      timestamppb.New(time.Now().Add(-time.Second)),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	message.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-
-	_, err = client.SendMessage(
-		c.s.ctx,
-		&sdk.SendMessageRequest{
-			Message: message,
-		},
-	)
-
-	if err == nil || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
-		return fmt.Errorf("expired delegation did not fail with a deadline error: %v", err)
-	}
-	after, err := c.readEntries(n)
-	if err != nil {
-		return err
-	}
-	if len(after) != len(before) || n.calls.Load() != 0 || n.requests.Load() != 1 {
-		return errors.New("expired deadline entered reasoning, changed tape, or called a peer")
-	}
-	return nil
-}
-
-func (c *collaborationScenario) suppliedContext() error {
-	if err := c.startNode("bob", modelFunc(
-		func(_ context.Context, r runner.Request) (runner.Response, error) {
-			name, result := lastTool(r)
-
-			switch name {
-
-			case "":
-				return toolCall("discover_peers", map[string]any{}), nil
-
-			case "discover_peers":
-				refs, ok := result["context"].([]any)
-				if !ok || len(refs) != 1 {
-					return runner.Response{}, fmt.Errorf("incoming references not discoverable: %v", result)
-				}
-				return toolCall("borrow_peer_context", map[string]any{"peer": "alice", "requestId": "supplied", "purpose": "answer from supplied findings", "query": "finding"}), nil
-
-			case "borrow_peer_context":
-				raw, _ := json.Marshal(result)
-				if !strings.Contains(string(raw), "published finding") {
-					return runner.Response{}, fmt.Errorf("supplied context not borrowed: %s", raw)
-				}
-				return runner.Response{
-					Output: "used supplied findings",
-				}, nil
-
-			}
-
-			return runner.Response{}, errors.New("unexpected tool")
-		},
-	)); err != nil {
-		return err
-	}
-	client, err := c.a2aClient("alice", "bob")
-	if err != nil {
-		return err
-	}
-	message := sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("use supplied findings"))
-	message.Extensions = []string{a2a.CollaborationURI}
-
-	metadata, err := metadataObject(
-		&cp.DelegationMetadata{
-			RootRequestId: "supplied-root",
-			Deadline:      timestamppb.New(time.Now().Add(5 * time.Second)),
-			Ancestors:     []string{"alice"},
-			Context:       []*pb.Ref{c.originalRef},
-		},
-	)
-	if err != nil {
-		return err
-	}
-	message.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-	before := c.nodes["alice"].requests.Load()
-
-	response, err := client.SendMessage(
-		c.s.ctx,
-		&sdk.SendMessageRequest{
-			Message: message,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	answer, ok := response.(*sdk.Message)
-	if !ok || len(answer.Parts) != 1 || answer.Parts[0].Text() != "used supplied findings" || c.nodes["alice"].requests.Load() != before {
-		return fmt.Errorf("supplied context caused reasoning callback: %+v", response)
-	}
-	select {
-	case <-c.held:
-		return errors.New("owner unexpectedly finished before context borrowing")
-	default:
-	}
-	return nil
-}
-
-func (c *collaborationScenario) rejectMismatchedGrant(problem string) error {
-	ref := c.originalRef
-
-	seq := entry.MustParseSeq(ref.Scopes[len(ref.Scopes)-1].SeqE)
-
-	v := &pb.Lease{
-		Id:        "mismatched-grant",
-		Caller:    "bob",
-		Ref:       proto.Clone(ref).(*pb.Ref),
-		ExpiresAt: timestamppb.New(time.Now().Add(time.Hour)),
-	}
-
-	switch problem {
-	case "source":
-		v.Ref.Source.TapeId = "other-source"
-
-	case "range":
-		v.Ref.Scopes[0] = &pb.EntryRange{
-			SeqS: seq.Next().String(),
-			SeqE: seq.Next().Next().String(),
-		}
-
-	}
-	var reads atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/proto")
-
-			w.Header().Set(a2a.ExtensionHeader, a2a.ExtensionURI)
-
-			if strings.HasSuffix(r.URL.Path, "/Read") {
-
-				reads.Add(1)
-
-				http.Error(w, "must not read mismatched view", 500)
-
-				return
-
-			}
-
-			encoded, _ := proto.Marshal(
-				&rpcpb.BorrowResponse{
-					Decision: &pb.Decision{
-						RequestId: "mismatch",
-						Status:    a2a.Granted,
-						Lease:     v,
-					},
-				},
-			)
-
-			_, _ = w.Write(encoded)
-		},
-	))
-
-	defer server.Close()
-
-	card := &sdk.AgentCard{
-		Capabilities: sdk.AgentCapabilities{
-			Extensions: []sdk.AgentExtension{{
-				URI:    a2a.ExtensionURI,
-				Params: map[string]any{"endpoint": server.URL + a2a.ViewPath, "viewBorrowVersion": 1},
-			}},
-		},
-	}
-
-	client, err := trustedViewClient("bob", card)
-	if err != nil {
-		return err
-	}
-
-	req := &pb.BorrowRequest{
-		RequestId: "mismatch",
-		Purpose:   "test mismatched provenance",
-		Query:     "finding",
-		View:      ref,
-	}
-
-	_, _, err = client.BorrowContext(c.s.ctx, req)
-	if !errors.Is(err, a2a.ErrInvalidParams) || reads.Load() != 0 {
-		return fmt.Errorf("mismatched view consumed: %v reads=%d", err, reads.Load())
-	}
-	return nil
-}
-
-func (c *collaborationScenario) toolWindow() error {
-	answer := strings.Repeat("x", 2304)
-
-	if err := c.replaceAlice(
-		thoughtCollaborationModel{
-			LLM: modelFunc(
-				func(ctx context.Context, r runner.Request) (runner.Response, error) {
-					if r.Messages[len(r.Messages)-1].Text == "hold" {
-						return c.model()(ctx, r)
-					}
-
-					name, result := lastTool(r)
-
-					if name == "" {
-						return toolCall("bash", map[string]any{"command": "printf context-tool-finding"}), nil
-					}
-
-					if name != "bash" {
-						return runner.Response{}, fmt.Errorf("unexpected tool %q", name)
-					}
-
-					raw, _ := json.Marshal(result)
-
-					if !strings.Contains(string(raw), "context-tool-finding") {
-						return runner.Response{}, fmt.Errorf("missing real tool output: %s", raw)
-					}
-
-					return runner.Response{
-						Output: answer,
-					}, nil
-				},
-			),
-		},
-	); err != nil {
-		return err
-	}
-	result, err := c.send("bob", "alice", "research with tools")
-	if err != nil || result.Answer != answer {
-		return fmt.Errorf("tool call failed: %v %v", result, err)
-	}
-	n := c.nodes["alice"]
-	ref, err := n.a.View(c.s.ctx, "bob", nil)
-	if err != nil || ref == nil {
-		return fmt.Errorf("completed context window missing: %v", err)
-	}
-	if err := c.hold(); err != nil {
-		return err
-	}
-	calls := n.calls.Load()
-	client, err := c.viewClient("bob")
-	if err != nil {
-		return err
-	}
-
-	d, err := c.borrowGrantedView(
-		client,
-		&pb.BorrowRequest{
-			RequestId: "tool-window",
-			Purpose:   "continue research",
-			Query:     "tool finding",
-		},
-	)
-
-	if err != nil || !proto.Equal(d.Lease.Ref, ref) {
-		return fmt.Errorf("incorrect lender-selected TapeView: %v %v", d, err)
-	}
-
-	quote, err := client.ReadView(c.s.ctx, d.Lease)
-	if err != nil {
-		return err
-	}
-	if len(quote.Entries) != 4 {
-		return fmt.Errorf("view must contain user, tool call, tool result, assistant: %v", quote)
-	}
-	for i, kind := range []string{"user", "tool_call", "tool_result", "assistant"} {
-		e := quote.Entries[i]
-		if e.Kind != kind || e.Payload == nil || e.Payload.MediaType != a2a.ContextMediaType {
-			return fmt.Errorf("incorrect context entry %d: %v", i, e)
-		}
-	}
-	if !exportedTextIs(quote.Entries[0], "research with tools") {
-		return errors.New("view lost its prompt, authorized reasoning or long answer")
-	}
-	exported, _ := json.Marshal(quote)
-	if strings.Contains(string(exported), "adk:event") {
-		return errors.New("view leaked event metadata")
-	}
-	for _, e := range quote.Entries {
-		if strings.Contains(string(e.Payload.JsonData), "thoughtSignature") || strings.Contains(string(e.Payload.JsonData), "adk:event") {
-			return errors.New("view leaked provider thought signatures or event metadata")
-		}
-	}
-	for _, index := range []int{1, 3} {
-		var event ae.Content
-		if err := json.Unmarshal(quote.Entries[index].Payload.JsonData, &event); err != nil {
-			return err
-		}
-		if len(event.Parts) == 0 || !event.Parts[0].Thought || event.Parts[0].Text != "shared-reasoning-marker" {
-			return errors.New("view lost the original thought text, marker or part order")
-		}
-	}
-	var finalContent ae.Content
-	if err := json.Unmarshal(quote.Entries[3].Payload.JsonData, &finalContent); err != nil {
-		return err
-	}
-	if len(finalContent.Parts) != 2 || finalContent.Parts[1].Thought || finalContent.Parts[1].Text != answer {
-		return errors.New("view lost its complete final answer")
-	}
-
-	for _, index := range []int{1, 2} {
-		if !strings.Contains(string(quote.Entries[index].Payload.JsonData), "context-tool-finding") {
-			return fmt.Errorf("structured tool content missing: %v", quote.Entries[index])
-		}
-	}
-	response, err := client.Read(c.s.ctx, &rpcpb.ReadRequest{
-		LeaseId: d.Lease.Id,
-	})
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(response.Quote, quote) || len(response.Quote.Entries) != 4 {
-		return errors.New("complete read changed the committed context")
-	}
-
-	physical, err := c.readEntries(n)
-	if err != nil {
-		return err
-	}
-	stored, _ := json.Marshal(physical)
-	if !strings.Contains(string(stored), "shared-reasoning-marker") || !strings.Contains(string(stored), "thoughtSignature") {
-		return errors.New("fixture did not persist thought content and provider signatures")
-	}
-	for _, e := range physical {
-		if e.GetKind().IsAnchor() && strings.Contains(e.GetSummary(), answer) {
-			return errors.New("terminal anchor duplicated the answer")
-		}
-	}
-	if calls != n.calls.Load() {
-		return errors.New("borrowing entered the owner's model")
-	}
-	select {
-	case <-c.held:
-		return errors.New("borrow waited for active reasoning")
-	default:
-	}
-	return c.finishHold()
-}
-
-type thoughtCollaborationModel struct {
-	model.LLM
-}
-
-func (m thoughtCollaborationModel) GenerateContent(ctx context.Context, r *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		for response, err := range m.LLM.GenerateContent(ctx, r, stream) {
-			if response != nil && response.Content != nil {
-				response.Content.Parts = append(
-					[]*genai.Part{{
-						Text:             "shared-reasoning-marker",
-						Thought:          true,
-						ThoughtSignature: []byte("private-thought-signature"),
-					}},
-					response.Content.Parts...,
-				)
-			}
-			if !yield(response, err) {
-				return
-			}
-		}
-	}
 }

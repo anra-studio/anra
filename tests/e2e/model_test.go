@@ -205,13 +205,6 @@ func newModelServer(control *modelGate) *httptest.Server {
 			// Report the configured instruction before ADK's appended agent metadata.
 			message["content"] = strings.Join(strings.Fields(role), " ")
 		}
-		if input == "report requested model" {
-			if r.URL.Path != "/gateway/v1/chat/completions" {
-				http.NotFound(w, r)
-				return
-			}
-			message["content"] = request.Model
-		}
 		finish := "stop"
 		last := request.Messages[len(request.Messages)-1]
 		if input == "recall the peer answer" {
@@ -229,6 +222,10 @@ func newModelServer(control *modelGate) *httptest.Server {
 			}
 		}
 		if input == "run the built-in bash tool" {
+			if r.URL.Path != "/gateway/v1/chat/completions" || request.Model != "custom-model" {
+				http.Error(w, "wrong path or model for configured Bash turn", http.StatusBadRequest)
+				return
+			}
 			if last.Role == "tool" {
 				var result struct {
 					Output string `json:"output"`

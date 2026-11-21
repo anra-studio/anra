@@ -30,8 +30,14 @@ func TestDecodeCollaborationRequestMetadata(t *testing.T) {
 		t.Errorf("invalid timestamp returned %v", err)
 	}
 
-	// Each ancestor is valid on its own. Only the metadata envelope exceeds the limit.
 	value["deadline"] = deadline
+	value["caller"] = "body-controlled-identity"
+	if err := decodeCollaborationMetadata(value, new(cp.DelegationMetadata)); !errors.Is(err, ErrInvalidParams) {
+		t.Errorf("unknown delegation field returned %v", err)
+	}
+	delete(value, "caller")
+
+	// Each ancestor is valid on its own. Only the metadata envelope exceeds the limit.
 	ancestors := make([]string, maxCollaborationMetadataBytes/128+1)
 	for i := range ancestors {
 		ancestors[i] = strings.Repeat("x", 128)

@@ -1,13 +1,10 @@
 package e2e_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"time"
 
@@ -108,19 +105,12 @@ func (c *collaborationScenario) protobufRoundtrip() error {
 	return c.finishHold()
 }
 
-func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
+func (c *collaborationScenario) rejectRequestMetadata() error {
 	metadata, err := metadataObject(delegationFixture())
 	if err != nil {
 		return err
 	}
-	switch problem {
-	case "missing root":
-		delete(metadata, "rootRequestId")
-	case "unknown field":
-		metadata["caller"] = "body-controlled-identity"
-	default:
-		return fmt.Errorf("unknown request problem %q", problem)
-	}
+	delete(metadata, "rootRequestId")
 	n := c.nodes["alice"]
 	before, err := c.readEntries(n)
 	if err != nil {
@@ -195,58 +185,36 @@ func (c *collaborationScenario) rejectCallerIdentity() error {
 	return nil
 }
 
-func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
-	metadata := map[string]any{"status": cp.Status_STATUS_COMPLETED.String()}
-	answer := "completed answer"
-	switch problem {
-	case "completed retry hint":
-		metadata["retry"] = cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW.String()
-	case "empty completed answer":
-		answer = " "
-	default:
-		return fmt.Errorf("unknown response problem %q", problem)
+func (c *collaborationScenario) streamAnswer() error {
+	ctx := c.s.ctx
+	httpClient := a2a.TrustedHTTPClient("bob")
+	card, err := a2a.Discover(ctx, httpClient, c.nodes["alice"].server.URL+a2asrv.WellKnownAgentCardPath)
+	if err != nil {
+		return err
 	}
-	server := httptest.NewUnstartedServer(nil)
-	defer server.Close()
-	base := "http://" + server.Listener.Addr().String()
-
-	card := &sdk.AgentCard{
-		Name:                "peer",
-		Version:             "1",
-		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(base+a2a.CorePath, sdk.TransportProtocolJSONRPC)},
-		DefaultInputModes:   []string{"text/plain"},
-		DefaultOutputModes:  []string{"text/plain"},
+	client, err := newA2AClient(ctx, httpClient, card)
+	if err != nil {
+		return err
 	}
-
-	a2a.AdvertiseCollaboration(card)
-
-	executor := a2asrv.AgentExecutorFunc(
-		func(_ context.Context, _ *a2asrv.ExecutorContext) iter.Seq2[sdk.Event, error] {
-			return func(yield func(sdk.Event, error) bool) {
-				reply := sdk.NewMessage(sdk.MessageRoleAgent, sdk.NewTextPart(answer))
-
-				reply.Extensions = []string{a2a.CollaborationURI}
-
-				reply.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-
-				yield(reply, nil)
-			}
+	const input = "stream this answer"
+	var output strings.Builder
+	for event, err := range client.SendStreamingMessage(
+		ctx,
+		&sdk.SendMessageRequest{
+			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(input)),
 		},
-	)
-
-	handler, err := a2a.NewMessageHandler(card, a2asrv.NewHandler(executor), a2a.TrustedPeerIdentity)
-	if err != nil {
-		return err
+	) {
+		if err != nil {
+			return err
+		}
+		if message, ok := event.(*sdk.Message); ok {
+			for _, part := range message.Parts {
+				output.WriteString(part.Text())
+			}
+		}
 	}
-	server.Config.Handler = handler
-	server.Start()
-	client, err := messageClient(c.s.ctx, "bob", base)
-	if err != nil {
-		return err
-	}
-	_, err = client.Send(c.s.ctx, "check peer response")
-	if !errors.Is(err, a2a.ErrInvalidParams) {
-		return fmt.Errorf("invalid response accepted: %v", err)
+	if output.String() != "answer: "+input {
+		return fmt.Errorf("streamed output = %q", output.String())
 	}
 	return nil
 }

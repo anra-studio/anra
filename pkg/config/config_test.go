@@ -12,6 +12,8 @@ func TestDecodeFileRejectsInvalidAgentTables(t *testing.T) {
 
 	for name, input := range map[string]string{
 		"malformed TOML": "[agents.alice",
+		"unknown field": `[lobby]
+adress = "http://127.0.0.1:8080"`,
 		"wrong field type": `[agents.alice]
 provider = 123`,
 		"invalid agent ID": `[agents."../outside"]`,

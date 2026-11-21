@@ -93,6 +93,10 @@ func (r *MessageClient) Send(ctx context.Context, input string) (clbr.Result, er
 	if err != nil {
 		return clbr.Result{}, err
 	}
+	return decodeMessageResponse(result, r.collaboration)
+}
+
+func decodeMessageResponse(result sdk.SendMessageResult, collaboration bool) (clbr.Result, error) {
 	message, ok := result.(*sdk.Message)
 	if !ok || message.Role != sdk.MessageRoleAgent {
 		return clbr.Result{}, errors.New("peer returned no direct answer")
@@ -108,7 +112,7 @@ func (r *MessageClient) Send(ctx context.Context, input string) (clbr.Result, er
 		parts = append(parts, part.Text())
 	}
 	output := strings.Join(parts, "\n")
-	if r.collaboration {
+	if collaboration {
 		if !collaborationEnabled(message) {
 			return clbr.Result{}, ErrInactive
 		}

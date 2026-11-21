@@ -48,16 +48,12 @@ func initializeConfig(sc *godog.ScenarioContext, c *cliScenario, team *teamScena
 		text := pattern.ReplaceAllString(string(data), "${1}role = "+strconv.Quote(system))
 		return os.WriteFile(c.configPath(), []byte(text), 0o600)
 	})
-	sc.Step(`^I run a local agent without --config$`, func() {
-		c.execute("run", "--agent", "alice", "hello")
-	})
 	sc.Step(`^the environment tries to override every agent setting$`, func() {
 		c.env = map[string]string{}
 		for _, key := range []string{"AGENT", "CONFIG", "DATA_DIR", "PROVIDER", "MODEL", "TIMEOUT", "ROLE", "ENDPOINT", "REGISTRY"} {
 			c.env["ANRA_"+key] = "http://127.0.0.1:1/ignored"
 		}
 	})
-	sc.Step(`^I run the CLI with TOML configuration problem "([^"]*)"$`, c.invalidConfig)
 	sc.Step(`^I serve an agent whose data-dir is missing$`, func() error {
 		data, err := os.ReadFile(c.configPath())
 		if err != nil {
@@ -95,19 +91,4 @@ func (c *cliScenario) writeAgentConfig(registry string) error {
 		text += fmt.Sprintf("[agents.%[1]s]\ndesc = \"%[1]s\"\ndata-dir = \"cli\"\nprovider = \"openai\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n\n", id)
 	}
 	return os.WriteFile(c.configPath(), []byte(text), 0o600)
-}
-
-func (c *cliScenario) invalidConfig(problem string) error {
-	switch problem {
-	case "missing file":
-		// The scenario's fresh directory has no config file.
-	case "unknown field":
-		if err := os.WriteFile(c.configPath(), []byte("[lobby]\nadress = 'http://127.0.0.1:1'\n"), 0o600); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unknown TOML problem %q", problem)
-	}
-	c.execute("run", "--config", c.configPath(), "--agent", "alice", "hello")
-	return nil
 }

@@ -81,12 +81,6 @@ func (p *mcpProviders) setRole(r anramcp.RoleDefinition) {
 	p.roles[r.RoleRef] = r
 }
 
-func (p *mcpProviders) revoke(credential string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.credentials, credential)
-}
-
 func (p *mcpProviders) review(ctx context.Context, _ string, _ *pb.BorrowRequest) (borrow.Selection, error) {
 	if err := ctx.Err(); err != nil {
 		return borrow.Selection{}, err
@@ -132,25 +126,6 @@ func (m *mcpScenario) useJSONLTape() error {
 	}
 	m.server.Close()
 	m.server = nil
-	m.handoffTape = tape
-
-	err = m.configureViews(tape)
-	if err != nil {
-		return err
-	}
-	m.serve()
-	return nil
-}
-
-func (m *mcpScenario) restartJSONLTape() error {
-	m.server.Close()
-	tape, err := jsonl.NewJSONLStorage("mcp-session", filepath.Join(m.s.root, "jsonl-tape"))
-	if err != nil {
-		return err
-	}
-	if err := tape.Init(m.tapeContext()); err != nil {
-		return err
-	}
 	m.handoffTape = tape
 
 	err = m.configureViews(tape)

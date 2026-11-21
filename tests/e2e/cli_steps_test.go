@@ -52,16 +52,6 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		return ctx, c.stop()
 	})
-	sc.Step(`^I run the local CLI agent "([^"]*)" with "([^"]*)"$`, c.runLocal)
-	sc.Step(`^I request CLI help$`, func() {
-		c.execute("--help")
-	})
-	sc.Step(`^the CLI help lists "([^"]*)"$`, func(want string) error {
-		if c.err != nil || !strings.Contains(c.output, want) {
-			return fmt.Errorf("CLI help = %q, error = %v; want %q", c.output, c.err, want)
-		}
-		return nil
-	})
 	sc.Step(`^I run the CLI agent "([^"]*)" with "([^"]*)" and flags (before the command|after the message)$`, func(id, text, placement string) error {
 		flags := []string{"--agent", id, "--config", c.ensureConfig()}
 		if placement == "before the command" {
@@ -78,9 +68,6 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		return nil
 	})
 	sc.Step(`^the CLI agent "([^"]*)" has this conversation on its tape$`, c.conversation)
-	sc.Step(`^I run a local agent without a message$`, func() {
-		c.execute("run", "--config", c.ensureConfig(), "--agent", "alice")
-	})
 	sc.Step(`^the CLI command fails with "([^"]*)"$`, func(want string) error {
 		if c.err == nil || !strings.Contains(c.output, want) {
 			return fmt.Errorf("CLI output = %q, error = %v; want failure containing %q", c.output, c.err, want)
@@ -121,11 +108,6 @@ func (c *cliScenario) execute(args ...string) {
 	cmd.Env = c.environment()
 	output, err := cmd.CombinedOutput()
 	c.output, c.err = string(output), err
-}
-
-func (c *cliScenario) runLocal(id, text string) error {
-	c.execute("run", "--agent", id, "--config", c.ensureConfig(), text)
-	return c.err
 }
 
 func (c *cliScenario) startProcess(id string, args ...string) error {

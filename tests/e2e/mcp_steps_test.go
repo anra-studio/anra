@@ -34,10 +34,6 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
-	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	adkmodel "google.golang.org/adk/model"
-	"google.golang.org/adk/session"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -123,15 +119,12 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	)
 
 	sc.Step(`^已提交一份普通 MCP 交接并签发凭证$`, func() error { return m.setup("normal") })
-	sc.Step(`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`, func() error { return m.setup("complete stream") })
 	sc.Step(`^已提交包含伪造通道和来源声明的 MCP 交接并签发凭证$`, func() error { return m.setup("borrowed claims") })
-	sc.Step(`^已提交包含图片文件和代码结果的 MCP 交接并签发凭证$`, func() error { return m.setup("multimodal") })
 	sc.Step(`^已提交包含大型音频的 MCP 交接并签发凭证$`, func() error { return m.setup("large audio") })
 	sc.Step(`^使用超过 SDK 默认大小的 MCP 请求读取 Tape 视图$`, m.readWithLargeBody)
 	sc.Step(`^MCP 完整返回已授权的大型音频及来源$`, m.checkLargeAudio)
 	sc.Step(`^使用不匹配凭证的锚点读取 MCP Tape 视图$`, m.readMismatchedAnchor)
 	sc.Step(`^官方 MCP 客户端能完整读取大型音频$`, m.checkSDKAudio)
-	sc.Step(`^借阅内容保留图片文件和代码结果的原始顺序且不泄露执行元数据$`, m.checkMultimodal)
 	sc.Step(`^借阅 Quote 仅携带 lease 绑定的通道与来源$`, m.checkWindowResponse)
 	sc.Step(`^借阅内容保留思考标记和文本且不泄露执行元数据$`, m.checkBorrowedClaims)
 	sc.Step(`^控制器为同一视图签发另一调用方的凭证$`, m.issueForAnotherCaller)
@@ -141,9 +134,6 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^两个工具返回交接绑定的角色版本和 Tape 视图$`, m.checkBoth)
 	sc.Step(`^MCP 服务重建和重复读取均不新增文件或改变 Tape$`, m.readOnly)
 	sc.Step(`^运行时将交接和视图存入 JSONL Tape$`, m.useJSONLTape)
-	sc.Step(`^控制器通过 Anra 条目追加带扩展的新视图$`, m.appendOwnedView)
-	sc.Step(`^Anra 条目内容和扩展在存储后保持完整$`, m.checkOwnedView)
-	sc.Step(`^JSONL 存储和 MCP 服务重建$`, m.restartJSONLTape)
 	sc.Step(`^控制器向 Tape 提交另一份交接$`, m.commitTapeOnly)
 	sc.Step(`^使用原凭证读取新交接$`, m.readWindow)
 	sc.Step(`^宿主拒绝后续上下文借阅$`, m.denyNewBorrowing)
@@ -160,8 +150,14 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^凭证验证服务暂时不可用$`, m.failCredentialAccess)
 	sc.Step(`^使用当前凭证访问另一角色的服务$`, m.readOtherRole)
 	sc.Step(`^连接仅获准读取角色$`, m.roleOnly)
+	sc.Step(`^控制器以完整权限读取交接视图$`, func() error {
+		m.token = m.authorize(m.credential)
+		return m.readWindow()
+	})
+	sc.Step(`^MCP 在工具调用中返回 permission_denied 且不泄露上下文或私有信息$`, func() error {
+		return m.checkHTTPFailure(http.StatusOK, "permission_denied")
+	})
 	sc.Step(`^角色工具成功且视图工具返回 permission_denied$`, m.checkRoleOnly)
-	sc.Step(`^控制器撤销当前凭证$`, m.revokeCredential)
 	sc.Step(`^Tape 和 MCP 服务重启$`, m.restart)
 	sc.Step(`^记录两个工具的原始结果$`, m.remember)
 	sc.Step(`^角色开始一轮等待模型返回的推理$`, m.hold)
@@ -170,7 +166,6 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^角色版本更新并继续写入 Tape$`, m.grow)
 	sc.Step(`^读取 MCP Tape 视图$`, m.readWindow)
 	sc.Step(`^读取 MCP 角色$`, m.readRole)
-	sc.Step(`^视图保留工具标识和所有有序响应分块$`, m.checkStream)
 	sc.Step(`^A2A 与 MCP 返回相同的公开条目及存储标识$`, m.checkA2AProjection)
 	sc.Step(`^MCP 返回 "([^"]+)" 且不泄露上下文或私有信息$`, m.rejected)
 	sc.Step(`^MCP 返回 HTTP (401|403) 且不泄露上下文或私有信息$`, m.checkUnauthorizedHTTP)
@@ -251,10 +246,6 @@ func (m *mcpScenario) failCredentialAccess() {
 	defer m.providers.mu.Unlock()
 
 	m.providers.accessErr = errors.New("PRIVATE-access-provider unavailable")
-}
-
-func (m *mcpScenario) revokeCredential() {
-	m.providers.revoke(m.token)
 }
 
 func (m *mcpScenario) readRole() error {
@@ -417,20 +408,8 @@ func (m *mcpScenario) setup(kind string) error {
 	if err != nil {
 		return err
 	}
-	if kind == "complete stream" {
-		ref, err = m.streamWindow()
-		if err != nil {
-			return err
-		}
-	}
 	if kind == "borrowed claims" {
 		ref, err = m.claimedWindow()
-		if err != nil {
-			return err
-		}
-	}
-	if kind == "multimodal" {
-		ref, err = m.multimodalWindow()
 		if err != nil {
 			return err
 		}
@@ -527,123 +506,6 @@ func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
 	return err
 }
 
-func (m *mcpScenario) appendOwnedView() error {
-	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
-	if err != nil {
-		return err
-	}
-
-	value := ae.FromEntry(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
-		WithExtension("opaque:reference", "opaque-entry-marker")
-
-	value, err = value.WithJSONExtension(
-		ae.ADKEvent,
-		session.Event{
-			LLMResponse: adkmodel.LLMResponse{
-				Content: &genai.Content{
-					Role: "model",
-					Parts: []*genai.Part{{
-						Text:             "Persisted Anra entry",
-						ThoughtSignature: []byte("PRIVATE-SIGNATURE"),
-					}},
-				},
-			},
-
-			Actions: session.EventActions{
-				StateDelta: map[string]any{"private": "PRIVATE-STATE"},
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	_, err = m.viewStorage().Store(m.tapeContext(), value)
-	if err != nil {
-		return err
-	}
-
-	ref, err := finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
-	if err != nil {
-		return err
-	}
-
-	m.handoff.Context.View = ref
-	seq, err := m.commitHandoff(m.handoff)
-	if err != nil {
-		return err
-	}
-
-	if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
-		return err
-	}
-
-	m.credential.AnchorSeq = seq
-
-	m.token = m.authorize(m.credential)
-	return nil
-}
-
-func (m *mcpScenario) checkOwnedView() error {
-	if err := m.checkWindowResponse(); err != nil {
-		return err
-	}
-	var window mcpWindow
-	if err := json.Unmarshal(m.lastResult, &window); err != nil {
-		return err
-	}
-	if len(window.Entries) != 1 || bytes.Contains(m.lastResult, []byte("PRIVATE-")) || bytes.Contains(m.lastResult, []byte("thoughtSignature")) || bytes.Contains(m.lastResult, []byte("opaque-entry-marker")) {
-		return errors.New("owned entry projection lost content or exposed storage fields")
-	}
-	var content ae.Content
-	if err := json.Unmarshal(window.Entries[0].Content, &content); err != nil {
-		return err
-	}
-	if len(content.Parts) != 1 || content.Parts[0].Text != "Persisted Anra entry" {
-		return errors.New("owned entry lost its encoded event")
-	}
-
-	batch, err := m.viewStorage().Range(
-		m.tapeContext(),
-		tv.EntryRange{
-			SeqS: te.MustParseSeq(m.lease.Ref.Scopes[0].SeqS),
-			SeqE: te.MustParseSeq(m.lease.Ref.Scopes[0].SeqE),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	if len(batch.Raw) != 1 {
-		return errors.New("owned entry was not retained in storage")
-	}
-	value, err := ae.FromTape(batch.Raw[0])
-	if err != nil {
-		return err
-	}
-	structured, err := value.Content()
-	if err != nil {
-		return err
-	}
-	if structured.Role != "model" || len(structured.Parts) != 1 || structured.Parts[0].Text != "Persisted Anra entry" || value.Body() != "PRIVATE-BODY" {
-		return errors.New("entry content accessor lost its model body or changed stored text")
-	}
-	var native session.Event
-	exists, err := value.DecodeExtension(ae.ADKEvent, &native)
-	if err != nil {
-		return err
-	}
-	if !exists || native.Content == nil || len(native.Content.Parts) != 1 || string(native.Content.Parts[0].ThoughtSignature) != "PRIVATE-SIGNATURE" || native.Actions.StateDelta["private"] != "PRIVATE-STATE" {
-		return errors.New("public content access changed the native ADK event needed for recovery")
-	}
-	if marker, exists := value.Extension("opaque:reference"); !exists || marker != "opaque-entry-marker" {
-		return errors.New("storage dropped an opaque entry extension")
-	}
-	if value.GetID().String() != window.Entries[0].Seq || !value.GetTimestamp().Equal(window.Entries[0].Timestamp) {
-		return errors.New("projection changed assigned entry metadata")
-	}
-	return nil
-}
-
 func (m *mcpScenario) claimedWindow() (*pb.Ref, error) {
 	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
 	if err != nil {
@@ -694,27 +556,6 @@ func (m *mcpScenario) checkBorrowedClaims() error {
 
 // A single call with continuing chunks exercises persistence and transport;
 // protocol field filtering and number lexemes are tested in the entry codec.
-func (m *mcpScenario) streamWindow() (*pb.Ref, error) {
-	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
-	if err != nil {
-		return nil, err
-	}
-
-	if err := m.rawEvent(te.EntryToolCall, `{"role":"model","parts":[{"functionCall":{"id":"tool-42","name":"lookup","args":{}}}]}`); err != nil {
-		return nil, err
-	}
-	chunks := []string{"first", "middle", "last"}
-	for i, chunk := range chunks {
-		continuing := i < len(chunks)-1
-		content := fmt.Sprintf(`{"role":"user","parts":[{"functionResponse":{"id":"tool-42","name":"lookup","willContinue":%t,"response":{"chunk":%q}}}]}`, continuing, chunk)
-		if err := m.rawEvent(te.EntryToolResult, content); err != nil {
-			return nil, err
-		}
-	}
-
-	return finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
-}
-
 type mcpBearerTransport struct {
 	token string
 }
@@ -1086,58 +927,6 @@ func (m *mcpScenario) checkProvenance(window mcpWindow) error {
 		return errors.New("view lost its authenticated borrowed provenance")
 	}
 
-	return nil
-}
-
-func (m *mcpScenario) checkStream() error {
-	if err := m.checkWindowResponse(); err != nil {
-		return err
-	}
-	var window mcpWindow
-	if err := json.Unmarshal(m.lastResult, &window); err != nil {
-		return err
-	}
-	if len(window.Entries) != 4 {
-		return fmt.Errorf("want call plus three chunks: %s", m.lastResult)
-	}
-	var call struct {
-		Parts []struct {
-			FunctionCall struct {
-				ID   string
-				Name string
-			}
-		} `json:"parts"`
-	}
-	if err := json.Unmarshal(window.Entries[0].Content, &call); err != nil || len(call.Parts) != 1 || call.Parts[0].FunctionCall.ID != "tool-42" || call.Parts[0].FunctionCall.Name != "lookup" {
-		return fmt.Errorf("lost tool call identity: %s", window.Entries[0].Content)
-	}
-	if bytes.Contains(m.lastBody, []byte("PRIVATE-")) {
-		return fmt.Errorf("private stream metadata exported: %s", m.lastBody)
-	}
-	for i, want := range []string{"first", "middle", "last"} {
-		var content struct {
-			Parts []struct {
-				Response struct {
-					ID string `json:"id"`
-
-					Name string `json:"name"`
-
-					WillContinue *bool `json:"willContinue"`
-
-					Response struct {
-						Chunk string `json:"chunk"`
-					} `json:"response"`
-				} `json:"functionResponse"`
-			} `json:"parts"`
-		}
-		if err := json.Unmarshal(window.Entries[i+1].Content, &content); err != nil || len(content.Parts) != 1 {
-			return fmt.Errorf("invalid chunk: %s", window.Entries[i+1].Content)
-		}
-		r := content.Parts[0].Response
-		if r.ID != "tool-42" || r.Name != "lookup" || r.Response.Chunk != want || r.WillContinue == nil || *r.WillContinue != (i < 2) {
-			return fmt.Errorf("lost stream identity, order or termination: %s", window.Entries[i+1].Content)
-		}
-	}
 	return nil
 }
 

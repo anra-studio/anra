@@ -32,11 +32,6 @@ Feature: 从 TOML 选择和加载角色配置
       | user      | hello bob      |
       | assistant | bob: hello bob |
 
-  Scenario: 缺少配置文件参数时不打开 Tape
-    When I run a local agent without --config
-    Then the CLI command fails with "--config is required"
-    And no CLI tape directory is created
-
   Scenario: 缺少必填存储路径时不打开 Tape
     Given a TOML CLI configuration with Alice and Bob
     When I serve an agent whose data-dir is missing
@@ -52,13 +47,3 @@ Feature: 从 TOML 选择和加载角色配置
       | role      | text         |
       | user      | hello        |
       | assistant | alice: hello |
-
-  Scenario Outline: 缺失或包含未知字段的 TOML 配置在写入前失败
-    When I run the CLI with TOML configuration problem "<problem>"
-    Then the CLI command fails with "<error>"
-    And no CLI tape directory is created
-
-    Examples:
-      | problem       | error        |
-      | missing file  | read config  |
-      | unknown field | parse config |

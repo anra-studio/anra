@@ -31,7 +31,7 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		c.env = map[string]string{"OPENAI_BASE_URL": c.s.modelServer.URL + basePath}
 		return nil
 	})
-	sc.Step(`^the environment attempts to select an injected tool$`, func() { c.env = map[string]string{"ANRA_TOOLS": "injected"} })
+	sc.Step(`^the environment attempts to select an injected tool$`, func() { c.env["ANRA_TOOLS"] = "injected" })
 	sc.Step(`^an agent with persisted legacy model and tool history$`, func() error {
 		s := c.s
 		if err := s.openLocalTape(); err != nil {

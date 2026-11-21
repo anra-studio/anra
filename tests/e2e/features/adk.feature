@@ -1,11 +1,6 @@
 Feature: ADK 使用配置的模型和内置工具
   确定性模型通过真实 HTTP 接收请求，工具调用与结果写入 Tape。
 
-  Scenario: 请求发往配置的 OpenAI 兼容路径和模型
-    Given an OpenAI-compatible endpoint with base path "/gateway/v1" and model "custom-model"
-    When I run the local CLI agent "alice" with "report requested model"
-    Then the CLI answer is "custom-model"
-
   Scenario: 模型通过工具发现并联系节点，重启后可回忆答复
     Given a running team Peer directory
     And team agents "alice" and "bob" are serving
@@ -25,8 +20,9 @@ Feature: ADK 使用配置的模型和内置工具
       | user      | hello from alice      |
       | assistant | bob: hello from alice |
 
-  Scenario: 同一轮推理记录 ADK 的模型调用和 Bash 工具结果
-    Given the environment attempts to select an injected tool
+  Scenario: 配置的 OpenAI 路径和模型执行 Bash 并记录完整轮次
+    Given an OpenAI-compatible endpoint with base path "/gateway/v1" and model "custom-model"
+    And the environment attempts to select an injected tool
     When I run the local CLI agent with its built-in Bash tool
     Then the CLI answer is "anra-bash-test"
     And agent "alice" has persisted these ADK tool calls and results
