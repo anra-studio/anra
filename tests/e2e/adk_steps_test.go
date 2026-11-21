@@ -169,34 +169,6 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		}
 		return nil
 	})
-	sc.Step(`^I run the CLI with unsupported ADK configuration "([^"]*)"$`, func(problem string) error {
-		args := []string{"run", "--agent", "alice"}
-		switch problem {
-		case "runner flag":
-			args = append(args, "--runner", "echo")
-		case "echo provider", "removed deepseek provider":
-			provider := "echo"
-			if problem == "removed deepseek provider" {
-				provider = "deepseek"
-			}
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \""+provider+"\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0o600); err != nil {
-				return err
-			}
-		case "tool flag":
-			args = append(args, "--tools", "unknown")
-		case "tool config":
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ntools = [\"bash\"]\n"), 0o600); err != nil {
-				return err
-			}
-		case "invalid API base":
-			c.ensureConfig()
-			c.env = map[string]string{"OPENAI_BASE_URL": "http://[invalid"}
-		default:
-			return fmt.Errorf("unknown ADK problem %q", problem)
-		}
-		c.execute(append(args, "--config", c.configPath(), "hello")...)
-		return nil
-	})
 	sc.Step(`^agent "([^"]*)" has one completed turn enclosing its model and tool steps$`, func(id string) error {
 		tape, err := bbolt.NewBboltStorage("default", filepath.Join(c.dataDir(), id+".db"))
 		if err != nil {

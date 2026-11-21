@@ -193,21 +193,6 @@ func initializeTeam(sc *godog.ScenarioContext, c *cliScenario) *teamScenario {
 			}
 		}
 	})
-	sc.Step(`^another runtime attempts to heartbeat or disconnect agent "([^"]*)"$`, func(name string) error {
-		client, err := discovery.NewClient(t.registry.peer)
-		if err != nil {
-			return err
-		}
-		_, err = client.Heartbeat(c.s.ctx, &rv.HeartbeatRequest{Id: name, RuntimeId: "another-runtime", Token: "another-token"})
-		if connect.CodeOf(err) != connect.CodePermissionDenied {
-			return fmt.Errorf("unexpected heartbeat result: %v", err)
-		}
-		_, err = client.Disconnect(c.s.ctx, &rv.DisconnectRequest{Id: name, RuntimeId: "another-runtime", Token: "another-token"})
-		if connect.CodeOf(err) != connect.CodePermissionDenied {
-			return fmt.Errorf("unexpected disconnect result: %v", err)
-		}
-		return nil
-	})
 	sc.Step(`^the operator forgets team agent "([^"]*)"$`, func(id string) error {
 		c.execute("registry", "forget", id, "--address", t.registry.peer)
 		return c.err

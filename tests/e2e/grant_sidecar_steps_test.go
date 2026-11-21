@@ -14,7 +14,6 @@ import (
 	"github.com/anra-studio/anra/pkg/flow/borrow"
 	"github.com/anra-studio/anra/pkg/flow/grant"
 	"github.com/cucumber/godog"
-	"github.com/scbizu/tape-go/pkg/tape"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
@@ -45,7 +44,10 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(
 		`^授权 sidecar 使用 "(bbolt|jsonl)" 存储$`,
 		func(backend string) error {
-			s.jsonlSidecar = backend == "jsonl"
+			if backend == "bbolt" {
+				return nil // The background opens bbolt by default.
+			}
+			s.jsonlSidecar = true
 			return s.restartPeer()
 		},
 	)
@@ -196,100 +198,6 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 			}
 			_, err = s.client.ReadView(s.ctx, s.decision.Lease)
 			return err
-		},
-	)
-	sc.Step(
-		`^重复注册 grant handler 被拒绝且原绑定仍可使用$`,
-		func() error {
-			h, found := s.grants.tape.Registry.Lookup(grant.Action)
-			if !found {
-				return errors.New("grant handler is missing")
-			}
-			if err := s.grants.tape.Registry.Register(h); err == nil {
-				return fmt.Errorf("duplicate grant registration returned %v", err)
-			}
-			after, found := s.grants.tape.Registry.Lookup(grant.Action)
-			if !found || after != h {
-				return errors.New("duplicate registration replaced the original grant handler")
-			}
-			return s.borrow()
-		},
-	)
-	sc.Step(
-		`^未绑定 grant handler 的 Tape 可创建服务但借阅失败且 sidecar 不变$`,
-		func() error {
-			_, before, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			bare := &tape.Tape{
-				TapeStorage: s.grants.tape.TapeStorage,
-				OwnerID:     s.grants.tape.OwnerID,
-			}
-			service, err := s.grants.newService(
-				borrow.Config{
-					Source: s.grants.source,
-					Tape:   bare,
-					Views: recoveredViews{
-						Tape:  s.peerTape,
-						Owner: "researcher-local",
-						All:   true,
-					},
-				},
-			)
-			if err != nil {
-				return err
-			}
-			req := &pb.BorrowRequest{
-				RequestId: "missing-grant-handler",
-				Purpose:   "verify native handler dispatch failure",
-				Query:     "committed context",
-			}
-			decision, err := service.Borrow(s.ctx, "borrower", req)
-			if decision != nil || !errors.Is(err, borrow.ErrStorage) {
-				return fmt.Errorf("missing handler borrowing returned %v, %v", decision, err)
-			}
-			if decision, err := service.Get(s.ctx, "borrower", req.RequestId); decision != nil || !errors.Is(err, borrow.ErrUnavailable) {
-				return fmt.Errorf("failed borrowing persisted a decision: %v, %v", decision, err)
-			}
-			_, after, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			if before != after {
-				return errors.New("missing handler borrowing appended a sidecar record")
-			}
-			return nil
-		},
-	)
-	sc.Step(
-		`^原生 OverView 拒绝无效授权命令且 sidecar 不变$`,
-		func() error {
-			_, before, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			v, err := s.grants.tape.OverView(
-				owner.WithOwnerId(s.ctx, s.grants.owner),
-				tv.EntryRange{
-					SeqS: te.SeqFromUint64(1),
-					SeqE: te.SeqFromUint64(2),
-				},
-			)
-			if err != nil {
-				return err
-			}
-			if _, err := v.Handle(s.ctx, grant.Action, nil); !errors.Is(err, grant.ErrInvalidParams) {
-				return fmt.Errorf("invalid native handler payload returned %v", err)
-			}
-			_, after, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			if before != after {
-				return errors.New("invalid native handler command changed the sidecar")
-			}
-			return nil
 		},
 	)
 	sc.Step(

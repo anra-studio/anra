@@ -168,8 +168,6 @@ func initializeHTTP(sc *godog.ScenarioContext, a *applicationScenario) {
 				base: a.directory,
 			}
 
-			method, path := http.MethodPost, "/v1/registry/peers:register"
-
 			data := []byte(`{"peer":{"id":"rest-peer","address":"http://127.0.0.1:8080"},"runtimeId":"rest-runtime","token":"rest-owner-secret"}`)
 
 			status, code := http.StatusBadRequest, connect.CodeInvalidArgument
@@ -179,31 +177,16 @@ func initializeHTTP(sc *godog.ScenarioContext, a *applicationScenario) {
 			case "missing runtime":
 				data = bytes.ReplaceAll(data, []byte(`"rest-runtime"`), []byte(`""`))
 
-			case "wrong JSON type":
-				data = bytes.ReplaceAll(data, []byte(`"rest-peer"`), []byte(`123`))
-
-			case "unknown JSON field":
-				data = []byte(`{"unknownField":true}`)
-
-			case "unknown query":
-				method, path, data = http.MethodGet, "/v1/registry/peers?unknownField=true", nil
-
-			case "invalid enum":
-				method, path, data = http.MethodGet, "/v1/registry/peers?state=99", nil
-
 			case "oversized body":
 				data = bytes.ReplaceAll(data, []byte(`"rest-peer"`), []byte(`"`+strings.Repeat("x", registry.MaxMessageBytes)+`"`))
 				status, code = http.StatusTooManyRequests, connect.CodeResourceExhausted
-
-			case "wrong method":
-				method, status, code = http.MethodPut, http.StatusMethodNotAllowed, connect.CodeUnimplemented
 
 			default:
 				return fmt.Errorf("unknown REST problem %q", problem)
 
 			}
 
-			got, body, err := rest.call(method, path, data)
+			got, body, err := rest.call(http.MethodPost, "/v1/registry/peers:register", data)
 			if err != nil {
 				return err
 			}

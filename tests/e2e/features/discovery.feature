@@ -1,14 +1,14 @@
-Feature: Identified Peers retain metadata and communicate by name
-  Alice and Bob both serve their own tape-backed runtimes. They discover one
-  another through the team's directory and exchange messages directly.
+Feature: 按名称发现并联系节点
+  目录按节点身份保留元数据和在线状态，角色之间直接通信。
 
   Background:
     Given a running team Peer directory
 
-  Scenario: Both servers discover each other and exchange greetings in both directions
+  Scenario: 两个节点无需共享凭证即可相互发现和通信
     Given team agents "alice" and "bob" are serving
     When I read the team directory
     Then the team directory lists "alice" and "bob"
+    And the team cards require no bearer credential
     When running agent "alice" sends "hello from alice" to "bob"
     Then the CLI answer is "bob: hello from alice"
     When running agent "bob" sends "hello from bob" to "alice"
@@ -27,12 +27,12 @@ Feature: Identified Peers retain metadata and communicate by name
       | user      | ask alice: hello from bob |
       | assistant | alice: hello from bob     |
 
-  Scenario: Concurrent greetings finish with peer findings or BUSY
+  Scenario: 并发消息返回节点答复或 BUSY
     Given team agents "alice" and "bob" are serving
     When both team agents send greetings simultaneously
     Then both team agents finish their reasoning without blocking
 
-  Scenario: A restarted server registers its new address and retains its tape
+  Scenario: 节点重启后重新注册并继续此前对话
     Given team agents "alice" and "bob" are serving
     When running agent "alice" sends "first hello" to "bob"
     Then the CLI answer is "bob: first hello"
@@ -48,7 +48,7 @@ Feature: Identified Peers retain metadata and communicate by name
       | user      | hello after restart      |
       | assistant | bob: hello after restart |
 
-  Scenario: A stopped Peer remains known and offline
+  Scenario: 正常停止的节点保留身份并标为离线
     Given team agents "alice" and "bob" are serving
     When I stop team agent "bob"
     And running agent "alice" attempts to greet "bob"
@@ -59,26 +59,26 @@ Feature: Identified Peers retain metadata and communicate by name
       | user      | ask bob: hello                            |
       | assistant | Unable to consult peer: peer bob is offline |
 
-  Scenario: Running agents register again after the directory restarts
+  Scenario: 目录重启后运行中的节点自动重新注册
     Given team agents "alice" and "bob" are serving
     When I restart the team directory at the same address
     Then both team agents eventually register again
     When running agent "alice" sends "hello after directory restart" to "bob"
     Then the CLI answer is "bob: hello after directory restart"
 
-  Scenario: A CLI sender must itself be a running registered server
+  Scenario: 发信角色必须是已注册且正在运行的节点
     When running agent "alice" attempts to greet "bob"
     Then the CLI command fails with "peer is not registered"
     And no CLI tape directory is created
 
-  Scenario: A running agent name cannot be taken by another server
+  Scenario: 新进程无法抢占运行中节点的名称
     Given team agents "alice" and "bob" are serving
     When another server attempts to register as "alice"
     Then the CLI command fails with "agent name is already registered"
     When running agent "bob" sends "still alice" to "alice"
     Then the CLI answer is "alice: still alice"
 
-  Scenario: A crashed Peer remains known with unknown presence
+  Scenario: 崩溃节点保留身份且在线状态变为未知
     Given team agents "alice" and "bob" are serving
     When team agent "bob" crashes
     Then its presence eventually becomes unknown
@@ -86,28 +86,14 @@ Feature: Identified Peers retain metadata and communicate by name
     When running agent "alice" attempts to greet "bob"
     Then the CLI answer is "Unable to consult peer: peer bob is unknown"
 
-  Scenario: Trusted agents register and communicate without a shared credential
-    Given team agents "alice" and "bob" are serving
-    When I read the team directory
-    Then the team directory lists "alice" and "bob"
-    And the team cards require no bearer credential
-    When running agent "alice" sends "hello without a token" to "bob"
-    Then the CLI answer is "bob: hello without a token"
-
-  Scenario: A different runtime cannot heartbeat or disconnect a Peer
-    Given team agents "alice" and "bob" are serving
-    When another runtime attempts to heartbeat or disconnect agent "alice"
-    And I read the team directory
-    Then the team directory lists "alice" and "bob"
-
-  Scenario: The operator explicitly retires a stopped Peer through the CLI
+  Scenario: 管理员可通过 CLI 移除已停止的节点
     Given team agents "alice" and "bob" are serving
     When I stop team agent "bob"
     And the operator forgets team agent "bob"
     Then team agent "bob" is forgotten
     And team agent "alice" is still registered
 
-  Scenario: Reasoning BUSY does not interrupt heartbeat maintenance
+  Scenario: 推理处于 BUSY 时仍按时续报心跳
     Given team agents "alice" and "bob" are serving
     And Alice is interrupted while reasoning after a published answer
     Then the busy agent keeps online presence across a heartbeat window

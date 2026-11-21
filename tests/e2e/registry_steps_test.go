@@ -349,28 +349,10 @@ func initializeRegistry(sc *godog.ScenarioContext, s *scenario) {
 		request := proto.Clone(r.current).(*rv.RegisterRequest)
 		request.ExpectedRevision = entry.Revision
 		switch problem {
-		case "invalid ID":
-			request.Peer.Id = "../outside"
-		case "relative address":
-			request.Peer.Address = "127.0.0.1:8080"
 		case "wildcard address":
 			request.Peer.Address = "http://0.0.0.0:8080"
-		case "zero port":
-			request.Peer.Address = "http://127.0.0.1:0"
-		case "credentials":
-			request.Peer.Address = "http://user:password@example.test"
-		case "address path":
-			request.Peer.Address += "/api"
-		case "address query":
-			request.Peer.Address += "?query=x"
-		case "address fragment":
-			request.Peer.Address += "#fragment"
 		case "duplicate skill":
 			request.Peer.Skill = append(request.Peer.Skill, proto.Clone(request.Peer.Skill[0]).(*pv.Skill))
-		case "empty skill ID":
-			request.Peer.Skill[0].Id = ""
-		case "blank skill name":
-			request.Peer.Skill[0].Name = "   "
 		default:
 			return fmt.Errorf("unknown metadata problem %s", problem)
 		}

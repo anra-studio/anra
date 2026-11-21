@@ -169,6 +169,10 @@ func newModelServer(control *providerControl) *httptest.Server {
 			message["content"] = strings.Join(strings.Fields(role), " ")
 		}
 		if input == "report requested model" {
+			if r.URL.Path != "/gateway/v1/chat/completions" {
+				http.NotFound(w, r)
+				return
+			}
 			message["content"] = request.Model
 		}
 		finish := "stop"

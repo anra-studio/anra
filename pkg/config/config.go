@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -65,13 +66,19 @@ func Load(path string) (*File, error) {
 	if path == "" {
 		return nil, errors.New("config path is required")
 	}
-	config := File{path: path}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
 	defer file.Close()
-	if err := toml.NewDecoder(file).DisallowUnknownFields().Decode(&config); err != nil {
+	return decodeFile(path, file)
+}
+
+func decodeFile(path string, input io.Reader) (*File, error) {
+	config := File{
+		path: path,
+	}
+	if err := toml.NewDecoder(input).DisallowUnknownFields().Decode(&config); err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
 	for id := range config.Agents {

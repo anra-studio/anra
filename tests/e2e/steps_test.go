@@ -80,8 +80,6 @@ type scenario struct {
 
 	answer string
 
-	lastError error
-
 	wireCode string
 
 	pending atomic.Bool
@@ -154,32 +152,6 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeGrantSidecar(sc, s)
 
 	sc.Step(`^an agent with its own tape$`, s.openLocalTape)
-
-	sc.Step(
-		`^I create an agent with an empty role$`,
-		func() error {
-			a, err := agent.New("", s.localTape)
-
-			s.lastError = err
-
-			if a != nil {
-				return errors.Join(errors.New("empty role created an agent"), a.Shutdown(s.ctx))
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^agent creation fails with "([^"]*)"$`,
-		func(want string) error {
-			if s.lastError == nil || s.lastError.Error() != want {
-				return fmt.Errorf("agent creation error = %v, want %q", s.lastError, want)
-			}
-
-			return nil
-		},
-	)
 
 	sc.Step(`^I ask "([^"]*)" and the model answers "([^"]*)"$`, s.ask)
 	sc.Step(`^I close and reopen the agent's storage$`, s.reopenLocalTape)

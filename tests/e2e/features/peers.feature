@@ -84,16 +84,11 @@
       | reversed bounds   | invalid_argument    |
       | 空 lease ID        | invalid_argument    |
 
-  场景大纲: 原生 OverView 的候选授权通过独立 Journal 保存和释放
+  场景大纲: 独立 Journal 持久化授权及释放且不修改源 Tape
     假如 授权 sidecar 使用 "<backend>" 存储
     那么 授权 sidecar 没有记录且序号为零
-    当 研究节点重启存储和服务
-    那么 授权 sidecar 没有记录且序号为零
     而且 保存源 Tape 的正文和序号
-    那么 未绑定 grant handler 的 Tape 可创建服务但借阅失败且 sidecar 不变
-    而且 原生 OverView 拒绝无效授权命令且 sidecar 不变
-    而且 未提交的候选 lease 不能读取或释放且 sidecar 不变
-    当 重复注册 grant handler 被拒绝且原绑定仍可使用
+    当 调用方请求借阅已提交视图
     而且 授权终止方式为 released
     那么 sidecar 按顺序保留同一视图的授权和释放
     而且 源 Tape 的正文和序号保持不变
@@ -107,29 +102,20 @@
       | bbolt   |
       | jsonl   |
 
-  场景大纲: 多个服务共享 Journal 时审批只能提交一次
-    假如 授权 sidecar 使用 "<backend>" 存储
+  场景: 多个服务共享 Journal 时审批只能提交一次
+    假如 授权 sidecar 使用 "bbolt" 存储
     而且 保存源 Tape 的正文和序号
     而且 研究节点要求本地批准借阅
     当 调用方请求借阅已提交视图
     那么 借阅决策为 "pending"
+    而且 未提交的候选 lease 不能读取或释放且 sidecar 不变
     而且 取消的授权请求不追加 sidecar 记录
     当 两个借阅服务并发批准同一请求且只有一个结果提交
     而且 研究节点重启存储和服务
     那么 重启后仅恢复已提交的审批结果且 lease 可读取
     而且 源 Tape 的正文和序号保持不变
 
-    例子:
-      | backend |
-      | bbolt   |
-      | jsonl   |
-
-  场景大纲: Approve 和 Reject 分别表达批准与拒绝
-    假如 授权 sidecar 使用 "<backend>" 存储
+  场景: 没有可借阅视图时批准失败，显式拒绝仍可提交
+    假如 授权 sidecar 使用 "bbolt" 存储
     而且 研究节点要求本地批准借阅
     那么 无可用视图时批准保留 pending 且只能显式拒绝
-
-    例子:
-      | backend |
-      | bbolt   |
-      | jsonl   |

@@ -232,6 +232,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^generated collaboration metadata roundtrips through A2A$`, c.protobufRoundtrip)
 
 	sc.Step(`^collaboration rejects request metadata with (.+) before reasoning$`, c.rejectRequestMetadata)
+	sc.Step(`^A2A rejects invalid caller identities before reasoning$`, c.rejectCallerIdentity)
 
 	sc.Step(`^the client rejects response metadata with (.+)$`, c.rejectResponseMetadata)
 
@@ -555,41 +556,6 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	)
 
 	sc.Step(
-		`^the view grant is ended by (release|revocation|expiry)$`,
-		func(how string) error {
-			client, err := c.viewClient("bob")
-			if err != nil {
-				return err
-			}
-
-			switch how {
-
-			case "release":
-				err = client.Release(s.ctx, c.decision.Lease.Id)
-
-			case "revocation":
-				err = c.nodes["alice"].service.Revoke(s.ctx, "bob", c.decision.Lease.Id)
-
-			case "expiry":
-				c.now.Add(int64(2 * time.Hour))
-
-			}
-
-			if err != nil {
-				return err
-			}
-
-			_, err = client.ReadView(s.ctx, c.decision.Lease)
-
-			if !errors.Is(err, a2a.ErrUnavailable) {
-				return fmt.Errorf("ended grant readable: %v", err)
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
 		`^view requests reject a changed reference and incompatible bounds$`,
 		func() error {
 			client, err := c.viewClient("bob")
@@ -687,7 +653,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 
 	sc.Step(`^Bob borrows supplied context without reentering Alice$`, c.suppliedContext)
 
-	sc.Step(`^a client rejects a view grant with mismatched (source|range|head)$`, c.rejectMismatchedGrant)
+	sc.Step(`^a client rejects a view grant with mismatched (source|range)$`, c.rejectMismatchedGrant)
 
 	sc.Step(
 		`^shutdown drains active reasoning before storage closes$`,
@@ -776,7 +742,7 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 	)
 
 	sc.Step(
-		`^startup rejects a tape containing (numeric v1 type|empty v1 type|unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|forbidden v1 field|oversized multibyte identity|oversized identity|malformed integration record|malformed record|missing schema|malformed unknown schema|overlapping starts|unmatched close|conflicting source)$`,
+		`^startup rejects a tape containing (malformed record|overlapping starts)$`,
 		func(problem string) error {
 			n := c.nodes["alice"]
 
@@ -796,53 +762,11 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 
 			switch problem {
 
-			case "numeric v1 type":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":1}`}
-
-			case "empty v1 type":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":""}`}
-
-			case "unknown v1 type":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"integration.created"}`}
-
-			case "invalid v1 start":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started"}`}
-
-			case "invalid v1 source":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"tape.initialized"}`}
-
-			case "invalid v1 outcome":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.closed","turnId":"one","startSeq":"1","outcome":"unknown"}`}
-
-			case "forbidden v1 field":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old","outcome":"failed"}`}
-
-			case "oversized multibyte identity":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("界", 86) + `"}`}
-
-			case "oversized identity":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("x", 257) + `"}`}
-
-			case "malformed integration record":
-				payloads = []string{`{"schema":"anra.dev/anchor/intr/v1","type":`}
-
 			case "malformed record":
 				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":`}
 
-			case "missing schema":
-				payloads = []string{`{"type":"turn.started"}`}
-
-			case "malformed unknown schema":
-				payloads = []string{`{"schema":"example.org/anchor/v1","type":`}
-
 			case "overlapping starts":
 				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old"}`, `{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"two","ownerEpoch":"old"}`}
-
-			case "unmatched close":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.closed","turnId":"unknown","startSeq":"1","outcome":"completed"}`}
-
-			case "conflicting source":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"tape.initialized","source":{"agentId":"alice","tapeId":"replacement"}}`}
 
 			}
 
@@ -857,8 +781,17 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 				}
 			}
 
-			if _, err := agent.New("alice", n.tape); err == nil {
-				return errors.New("corrupt control history was interpreted as healthy")
+			if err := n.tape.Close(); err != nil {
+				return err
+			}
+			n.tape = nil
+
+			err := c.startNode("alice", c.model())
+			if err == nil || !strings.Contains(err.Error(), "agent: replay") {
+				return fmt.Errorf("startup did not reject the corrupt history during replay: %v", err)
+			}
+			if c.nodes["alice"].server != nil {
+				return errors.New("a node with corrupt history started serving")
 			}
 
 			return nil

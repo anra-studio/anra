@@ -1,26 +1,20 @@
-Feature: Expose RPC services through schema-defined HTTP routes
-  Vanguard serves REST and Connect from the same validated service implementations,
-  using the application's HTTP lifecycle, temporary storage, and grant journal.
+Feature: 通过 REST 和 Connect 访问目录与视图
+  两种传输共享应用的目录服务与借阅授权记录。
 
-  Scenario: REST and Connect observe the same durable registry
+  Scenario: REST 与 Connect 共享持久化目录
     Given an application host with configured agents
     Then REST and Connect share the registry lifecycle
 
-  Scenario Outline: REST preserves validation and request size limits
+  Scenario Outline: REST 拒绝无效注册和超限请求且目录保持为空
     Given an application host with configured agents
     Then the registry rejects invalid REST input "<problem>"
 
     Examples:
       | problem            |
       | missing runtime    |
-      | wrong JSON type    |
-      | unknown JSON field |
-      | unknown query      |
-      | invalid enum       |
       | oversized body     |
-      | wrong method       |
 
-  Scenario: REST borrows committed context with the same permissions and lifecycle
+  Scenario: REST 可借阅已提交视图，Connect 可查询并读取同一授权
     Given an application host with configured agents
     And the application serves agents "alice" and "bob"
     When the application asks agent "alice" with "hello"

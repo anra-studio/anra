@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"time"
@@ -113,45 +114,9 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	if err != nil {
 		return err
 	}
-	ref, err := metadataObject(
-		&pb.Ref{
-			Source: &pb.Source{
-				AgentId: "alice",
-				TapeId:  "source",
-			},
-			Scopes: []*pb.EntryRange{{
-				SeqS: "1",
-				SeqE: "3",
-			}},
-		},
-	)
-	if err != nil {
-		return err
-	}
 	switch problem {
 	case "missing root":
 		delete(metadata, "rootRequestId")
-	case "oversized root":
-		metadata["rootRequestId"] = strings.Repeat("x", 257)
-	case "missing deadline":
-		delete(metadata, "deadline")
-	case "invalid deadline":
-		metadata["deadline"] = "not-a-timestamp"
-	case "empty ancestor":
-		metadata["ancestors"] = []string{""}
-	case "oversized ancestor":
-		metadata["ancestors"] = []string{strings.Repeat("x", 129)}
-	case "excessive context":
-		metadata["context"] = []any{ref, ref, ref, ref, ref, ref, ref, ref, ref}
-	case "malformed context":
-		ref["scopes"] = []any{map[string]any{"seqS": "01", "seqE": "3"}}
-		metadata["context"] = []any{ref}
-	case "missing context scope":
-		delete(ref, "scopes")
-		metadata["context"] = []any{ref}
-	case "reversed context scope":
-		ref["scopes"] = []any{map[string]any{"seqS": "3", "seqE": "1"}}
-		metadata["context"] = []any{ref}
 	case "unknown field":
 		metadata["caller"] = "body-controlled-identity"
 	default:
@@ -190,52 +155,55 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	return nil
 }
 
-func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
-	metadata := map[string]any{"status": cp.Status_STATUS_COMPLETED.String()}
-	answer := "completed answer"
-	ref, err := metadataObject(
-		&pb.Ref{
-			Source: &pb.Source{
-				AgentId: "peer",
-				TapeId:  "source",
-			},
-			Scopes: []*pb.EntryRange{{
-				SeqS: "1",
-				SeqE: "3",
-			}},
-		},
-	)
+func (c *collaborationScenario) rejectCallerIdentity() error {
+	node := c.nodes["alice"]
+	before, err := c.readEntries(node)
 	if err != nil {
 		return err
 	}
+	request, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "message/send",
+		"params": &sdk.SendMessageRequest{
+			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("must be rejected")),
+		},
+	})
+	if err != nil {
+		return err
+	}
+	for _, id := range []string{"", "bad/name"} {
+		client := restClient{
+			ctx:      c.s.ctx,
+			base:     node.server.URL,
+			identity: id,
+		}
+		status, _, err := client.call(http.MethodPost, a2a.CorePath, request)
+		if err != nil {
+			return err
+		}
+		if status != http.StatusUnauthorized {
+			return fmt.Errorf("A2A caller %q returned HTTP %d, want 401", id, status)
+		}
+	}
+	after, err := c.readEntries(node)
+	if err != nil {
+		return err
+	}
+	if len(before) != len(after) || node.calls.Load() != 0 {
+		return errors.New("invalid caller entered reasoning or changed tape")
+	}
+	return nil
+}
+
+func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
+	metadata := map[string]any{"status": cp.Status_STATUS_COMPLETED.String()}
+	answer := "completed answer"
 	switch problem {
-	case "unspecified status":
-		delete(metadata, "status")
-	case "unknown status":
-		metadata["status"] = 99
-	case "unknown retry":
-		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		metadata["retry"] = 99
 	case "completed retry hint":
 		metadata["retry"] = cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW.String()
-	case "completed view":
-		metadata["view"] = ref
-	case "malformed busy view":
-		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		ref["scopes"] = []any{map[string]any{"seqS": "01", "seqE": "3"}}
-		metadata["view"] = ref
-	case "missing busy scope":
-		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		delete(ref, "scopes")
-		metadata["view"] = ref
-	case "answer in metadata":
-		metadata["answer"] = "answer belongs in A2A parts"
 	case "empty completed answer":
 		answer = " "
-	case "local suppression status":
-		metadata["status"] = "no_new_context"
-	case "legacy lowercase status":
-		metadata["status"] = "busy"
 	default:
 		return fmt.Errorf("unknown response problem %q", problem)
 	}

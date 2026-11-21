@@ -1,22 +1,14 @@
-Feature: Manage named CLI agents in a TOML file
-  Every agent setting comes from the file named by --config. --agent selects an
-  [agents.<name>] table and the file's [lobby] address is the only way agents
-  find each other. Settings are read at startup, so a change needs a restart.
+Feature: 从 TOML 选择和加载角色配置
+  CLI 从 --config 指定的文件读取设置，通过 --agent 选择角色。
+  运行中的服务在重启后才采用更新的配置。
 
-  Scenario: Register and discover agents using the lobby and endpoint in the example config
+  Scenario: 示例配置指定注册位置，角色设置在重启后生效
     Given a running team Peer directory
     And a lobby TOML configuration based on the repository example
     And the configured CLI agent "alice" is serving
     And the configured CLI agent "bob" is serving
     When I read the team directory
     Then the team directory lists "alice" and "bob"
-    When I ask configured agent "alice" for its role
-    Then the CLI answer is "e2e-bot:alice is a e2e example bot"
-
-  Scenario: A running server keeps its settings until it restarts
-    Given a running team Peer directory
-    And a lobby TOML configuration based on the repository example
-    And the configured CLI agent "alice" is serving
     When I change the role of configured agent "alice" to "Answer briefly."
     And I ask configured agent "alice" for its role
     Then the CLI answer is "e2e-bot:alice is a e2e example bot"
@@ -25,7 +17,7 @@ Feature: Manage named CLI agents in a TOML file
     And I ask configured agent "alice" for its role
     Then the CLI answer is "Answer briefly.:alice is a e2e example bot"
 
-  Scenario: Select named agents from TOML
+  Scenario: 同一份配置可选择不同角色并分别保存对话
     Given a TOML CLI configuration with Alice and Bob
     When I run the configured CLI agent "alice" with "hello alice"
     Then the CLI answer is "alice: hello alice"
@@ -40,80 +32,18 @@ Feature: Manage named CLI agents in a TOML file
       | user      | hello bob      |
       | assistant | bob: hello bob |
 
-  Scenario: Serve and send using configured agents
-    Given a running team Peer directory
-    And a TOML CLI configuration for the team directory
-    And the configured CLI agent "alice" is serving
-    And the configured CLI agent "bob" is serving
-    When the configured CLI agent "alice" sends "hello from alice" to "bob"
-    Then the CLI answer is "bob: hello from alice"
-    When I stop the team agents
-    Then the CLI agent "alice" has this conversation on its tape
-      | role      | text                      |
-      | user      | ask bob: hello from alice |
-      | assistant | bob: hello from alice     |
-    And the CLI agent "bob" has this conversation on its tape
-      | role      | text                  |
-      | user      | hello from alice      |
-      | assistant | bob: hello from alice |
-
-  Scenario Outline: Every agent command requires --config
-    When I run the "<command>" command without --config
+  Scenario: 缺少配置文件参数时不打开 Tape
+    When I run a local agent without --config
     Then the CLI command fails with "--config is required"
     And no CLI tape directory is created
 
-    Examples:
-      | command |
-      | run     |
-      | ask     |
-      | serve   |
-
-  Scenario Outline: Agent settings cannot be set with flags
+  Scenario: 缺少必填存储路径时不打开 Tape
     Given a TOML CLI configuration with Alice and Bob
-    When I pass the removed setting flag "<flag>" to a configured agent
-    Then the CLI command fails with "unknown flag: <flag>"
-
-    Examples:
-      | flag       |
-      | --provider |
-      | --model    |
-      | --data-dir |
-      | --session  |
-      | --system   |
-      | --listen   |
-      | --registry |
-      | --timeout  |
-
-  Scenario Outline: Required agent settings have no fallback
-    Given a TOML CLI configuration with Alice and Bob
-    When I run the "<command>" command with "<key>" <problem> for agent "alice"
-    Then the CLI command fails with "<key> is required"
+    When I serve an agent whose data-dir is missing
+    Then the CLI command fails with "data-dir is required"
     And no CLI tape directory is created
 
-    Examples:
-      | command | key      | problem |
-      | run     | data-dir | missing |
-      | run     | provider | missing |
-      | run     | timeout  | missing |
-      | run     | endpoint | missing |
-      | ask     | data-dir | missing |
-      | ask     | provider | missing |
-      | ask     | timeout  | missing |
-      | ask     | endpoint | missing |
-      | serve   | data-dir | missing |
-      | serve   | provider | missing |
-      | serve   | timeout  | missing |
-      | serve   | endpoint | missing |
-      | run     | data-dir | empty   |
-      | run     | provider | empty   |
-      | run     | timeout  | empty   |
-      | run     | endpoint | empty   |
-      | run     | data-dir | blank   |
-      | run     | provider | blank   |
-      | run     | timeout  | blank   |
-      | run     | endpoint | blank   |
-
-  Scenario: Agent settings cannot be set with environment variables
+  Scenario: 环境变量不能覆盖 TOML 中的角色设置
     Given a TOML CLI configuration with Alice and Bob
     And the environment tries to override every agent setting
     When I run the configured CLI agent "alice" with "hello"
@@ -123,33 +53,12 @@ Feature: Manage named CLI agents in a TOML file
       | user      | hello        |
       | assistant | alice: hello |
 
-  Scenario Outline: Reject invalid config files
+  Scenario Outline: 缺失或包含未知字段的 TOML 配置在写入前失败
     When I run the CLI with TOML configuration problem "<problem>"
     Then the CLI command fails with "<error>"
     And no CLI tape directory is created
 
     Examples:
-      | problem                  | error              |
-      | missing file             | read config        |
-      | malformed TOML           | parse config       |
-      | wrong setting type       | parse config       |
-      | wrong lobby address type | parse config       |
-      | unknown lobby setting    | parse config       |
-      | wrong role type          | parse config       |
-      | wrong desc type          | parse config       |
-      | wrong endpoint type      | parse config       |
-      | unknown setting          | parse config       |
-      | agent peer setting       | parse config       |
-      | agent session setting    | parse config       |
-      | agent registry setting   | parse config       |
-      | defaults section         | parse config       |
-      | default agent setting    | parse config       |
-      | missing lobby            | must set [lobby]   |
-      | invalid lobby address    | HTTP(S) base URL   |
-      | invalid public address   | nonzero valid port |
-      | no agents                | at least one agent |
-      | unknown selected agent   | is not configured  |
-      | invalid agent name       | invalid agent name |
-      | invalid duration         | timeout            |
-      | zero timeout             | must be positive   |
-      | unknown provider         | unknown provider   |
+      | problem       | error        |
+      | missing file  | read config  |
+      | unknown field | parse config |

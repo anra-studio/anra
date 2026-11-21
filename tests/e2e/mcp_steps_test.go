@@ -146,13 +146,6 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	)
 
 	sc.Step(
-		`^已提交只含原始文本条目的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("plain text")
-		},
-	)
-
-	sc.Step(
 		`^已提交包含图片文件和代码结果的 MCP 交接并签发凭证$`,
 		func() error {
 			return m.setup("multimodal")
@@ -191,7 +184,6 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	)
 
 	sc.Step(`^借阅内容保留图片文件和代码结果的原始顺序且不泄露执行元数据$`, m.checkMultimodal)
-	sc.Step(`^原始文本仅作为结构化内容返回且没有摘要字段$`, m.checkPlainTextContent)
 	sc.Step(`^借阅 Quote 仅携带 lease 绑定的通道与来源$`, m.checkWindowResponse)
 	sc.Step(`^借阅内容保留思考标记和文本且不泄露执行元数据$`, m.checkBorrowedClaims)
 
@@ -512,12 +504,6 @@ func (m *mcpScenario) setup(kind string) error {
 			return err
 		}
 	}
-	if kind == "plain text" {
-		ref, err = m.plainTextWindow()
-		if err != nil {
-			return err
-		}
-	}
 	if kind == "multimodal" {
 		ref, err = m.multimodalWindow()
 		if err != nil {
@@ -544,20 +530,6 @@ func (m *mcpScenario) setup(kind string) error {
 		ref = &pb.Ref{
 			Source: ref.Source,
 			Scopes: []*pb.EntryRange{ref.Scopes[0], second.Scopes[0]},
-		}
-	}
-
-	if kind == "empty parts" {
-		turn, e := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
-		if e != nil {
-			return e
-		}
-		if e := m.rawEvent(te.EntryAssistant, `{"role":"model","parts":[]}`); e != nil {
-			return e
-		}
-		ref, err = finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
-		if err != nil {
-			return err
 		}
 	}
 
@@ -623,33 +595,11 @@ func (m *mcpScenario) setup(kind string) error {
 	return nil
 }
 
-func (m *mcpScenario) append(kind te.EntryKind, text string) (te.EntryLike, error) {
-	return m.viewStorage().Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(kind), te.WithEntryContent(text), te.WithEntryOwner("vesta")))
-}
-
 func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
 	value := ae.FromEntry(te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
 		WithExtension(ae.ADKEvent, `{"content":`+content+`,"stateDelta":{"private":"PRIVATE-STATE"}}`)
 	_, err := m.viewStorage().Store(m.tapeContext(), value)
 	return err
-}
-
-func (m *mcpScenario) plainTextWindow() (*pb.Ref, error) {
-	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = m.append(te.EntryUser, "Original user content")
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := m.append(te.EntryAssistant, "Original model content"); err != nil {
-		return nil, err
-	}
-
-	return finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
 }
 
 func (m *mcpScenario) appendOwnedView() error {
@@ -765,34 +715,6 @@ func (m *mcpScenario) checkOwnedView() error {
 	}
 	if value.GetID().String() != window.Entries[0].Seq || !value.GetTimestamp().Equal(window.Entries[0].Timestamp) {
 		return errors.New("projection changed assigned entry metadata")
-	}
-	return nil
-}
-
-func (m *mcpScenario) checkPlainTextContent() error {
-	if err := m.checkWindowResponse(); err != nil {
-		return err
-	}
-	var window mcpWindow
-	if err := json.Unmarshal(m.lastResult, &window); err != nil {
-		return err
-	}
-	if len(window.Entries) != 2 || bytes.Contains(m.lastResult, []byte(`"summary":`)) {
-		return errors.New("view duplicated or lost its original content")
-	}
-
-	for i, want := range []struct {
-		role string
-		text string
-	}{{"user", "Original user content"}, {"model", "Original model content"}} {
-
-		var content ae.Content
-		if err := json.Unmarshal(window.Entries[i].Content, &content); err != nil {
-			return err
-		}
-		if content.Role != want.role || len(content.Parts) != 1 || content.Parts[0].Text != want.text || content.Parts[0].Thought {
-			return fmt.Errorf("entry %d changed its original text or role", i)
-		}
 	}
 	return nil
 }

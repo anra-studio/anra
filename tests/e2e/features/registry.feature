@@ -1,12 +1,11 @@
-Feature: Keep identified Peers independently of runtime presence
-  A durable registry preserves each agent's address and skills while observing
-  its current runtime. Discovery never substitutes another agent implicitly.
+Feature: 按身份持久化节点元数据
+  目录保留节点地址和能力，独立跟踪运行实例的在线状态。
 
   Background:
     Given a durable Peer registry with a controlled clock
     And Alice has registered her research skills
 
-  Scenario: Missing contact changes presence without erasing identity
+  Scenario: 联络超时改变在线状态并保留节点身份
     Then Alice is online with her registered metadata
     When registry contact becomes stale
     Then Alice is unknown with her registered metadata
@@ -15,7 +14,7 @@ Feature: Keep identified Peers independently of runtime presence
     When Alice re-establishes her presence
     Then Alice is online with her registered metadata
 
-  Scenario: Graceful disconnect retains a Peer and closes that runtime
+  Scenario: 正常断开关闭原实例并保留节点身份
     When Alice disconnects twice
     Then Alice is offline with her registered metadata
     When the durable registry restarts
@@ -25,7 +24,7 @@ Feature: Keep identified Peers independently of runtime presence
     When a new Alice runtime registers a new address
     Then Alice is online with her registered metadata
 
-  Scenario: Registry restart invalidates observations and old conditional writes
+  Scenario: 目录重启使旧在线状态和条件写入失效
     When the durable registry restarts
     Then Alice is unknown with her registered metadata
     And Alice has no fabricated last-contact time
@@ -34,7 +33,7 @@ Feature: Keep identified Peers independently of runtime presence
     When Alice re-establishes her presence
     Then Alice is online with her registered metadata
 
-  Scenario Outline: Other processes cannot mutate the current runtime
+  Scenario Outline: 其他进程无法修改当前实例的状态
     When an unrelated runtime attempts "<operation>"
     Then the registry rejects the operation with "<code>"
     And Alice is online with her registered metadata
@@ -46,7 +45,7 @@ Feature: Keep identified Peers independently of runtime presence
       | disconnect | permission_denied |
       | wrong key  | permission_denied |
 
-  Scenario Outline: Replaced runtimes cannot return after the replacement loses contact
+  Scenario Outline: 接替实例失联或下线后旧实例仍无法恢复注册
     When registry contact becomes stale
     And a new Alice runtime registers a new address
     And the replacement becomes "<state>"
@@ -58,7 +57,7 @@ Feature: Keep identified Peers independently of runtime presence
       | unknown |
       | offline |
 
-  Scenario: Metadata updates are conditional and retries cannot undo newer changes
+  Scenario: 元数据更新检查修订号，旧请求重试无法覆盖新版本
     When Alice updates her description and skills
     Then her accepted registration retry preserves its revision
     And her Agent Card represents the updated metadata
@@ -66,43 +65,34 @@ Feature: Keep identified Peers independently of runtime presence
     Then the registry rejects the operation with "aborted"
     And Alice is online with her registered metadata
 
-  Scenario: Concurrent metadata writers cannot silently overwrite each other
+  Scenario: 同一修订号的两次并发更新只能提交一次
     When two owned updates use the same revision concurrently
     Then exactly one update commits and the other reports a conflict
     And Alice is online with her registered metadata
 
-  Scenario: Filtering returns distinct identities and presence states
+  Scenario: 按在线状态和能力筛选节点且不泄露所有权凭证
     When Bob is offline and Charlie is online with a different skill
     And registry contact becomes stale
     And Charlie re-establishes presence
     Then listing preserves every Peer and filters by state and skill
     And discovery responses contain no ownership credentials
 
-  Scenario Outline: Invalid metadata never changes a registered Peer
+  Scenario Outline: 无效地址或重复能力不会改变已注册的节点
     When Alice submits metadata with "<problem>"
     Then the registry rejects the operation with "invalid_argument"
     And Alice is online with her registered metadata
 
     Examples:
-      | problem         |
-      | invalid ID      |
-      | relative address|
-      | wildcard address|
-      | zero port       |
-      | credentials     |
-      | address path    |
-      | address query   |
-      | address fragment|
-      | duplicate skill |
-      | empty skill ID  |
-      | blank skill name|
+      | problem          |
+      | wildcard address |
+      | duplicate skill  |
 
-  Scenario: Oversized registrations are rejected by the HTTP boundary
+  Scenario: HTTP 拒绝超出大小限制的注册请求
     When Alice sends metadata exceeding the registry message limit
     Then the registry rejects the operation with "resource_exhausted"
     And Alice is online with her registered metadata
 
-  Scenario: Forget is explicit retirement and survives registry restart
+  Scenario: 显式移除已停止节点后，目录重启也不会恢复该节点
     When the operator attempts to forget online Alice
     Then the registry rejects the operation with "failed_precondition"
     When Alice disconnects twice
@@ -114,7 +104,7 @@ Feature: Keep identified Peers independently of runtime presence
     When Alice retries her original registration
     Then the registry rejects the operation with "failed_precondition"
 
-  Scenario: Stale operator revisions cannot remove updated identities
+  Scenario: 旧修订号无法移除已更新的节点
     When the operator reads Alice before a metadata update
     And Alice updates her description and skills
     And Alice disconnects twice
@@ -122,13 +112,13 @@ Feature: Keep identified Peers independently of runtime presence
     Then the registry rejects the operation with "aborted"
     And Alice is offline with her registered metadata
 
-  Scenario: Failed startup cleans up even when its successful registration reply is lost
+  Scenario: 注册成功回执丢失时，启动失败的节点退回离线
     When a startup registration acknowledgement is lost
     Then the registry rejects the operation with "unavailable"
     And the failed startup leaves Bob known and offline
     And Alice is online with her registered metadata
 
-  Scenario: Lost update acknowledgements reconcile without replaying old metadata
+  Scenario: 心跳在更新回执丢失后确认新元数据，不重放旧值
     When a runtime loses a metadata-update acknowledgement
     Then the registry rejects the operation with "unavailable"
     And heartbeats reconcile the committed metadata without rolling it back

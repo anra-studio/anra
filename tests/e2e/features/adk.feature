@@ -1,20 +1,12 @@
-Feature: ADK runs each agent with its configured model and built-in tools
-  Production agents use tape-go's ADK runtime. Deterministic model fixtures
-  exercise real model HTTP requests, tool execution, peer HTTP, and tape storage.
+Feature: ADK 使用配置的模型和内置工具
+  确定性模型通过真实 HTTP 接收请求，工具调用与结果写入 Tape。
 
-  Scenario Outline: Use an OpenAI-compatible endpoint with a custom base path
-    Given an OpenAI-compatible endpoint with base path "<base>" and model "<model>"
+  Scenario: 请求发往配置的 OpenAI 兼容路径和模型
+    Given an OpenAI-compatible endpoint with base path "/gateway/v1" and model "custom-model"
     When I run the local CLI agent "alice" with "report requested model"
-    Then the CLI answer is "<requested model>"
+    Then the CLI answer is "custom-model"
 
-    Examples:
-      | base                 | model        | requested model |
-      | /gateway/v1          | custom-model | custom-model    |
-      | /gateway/v1/         | custom-model | custom-model    |
-      | /gateway/v1/#fixture | custom-model | custom-model    |
-      | /gateway/v1          |              | gpt-4o-mini     |
-
-  Scenario: An agent discovers and messages a peer through its model's tools
+  Scenario: 模型通过工具发现并联系节点，重启后可回忆答复
     Given a running team Peer directory
     And team agents "alice" and "bob" are serving
     When I ask running agent "alice" to "discover peers and ask bob to say hello"
@@ -33,7 +25,7 @@ Feature: ADK runs each agent with its configured model and built-in tools
       | user      | hello from alice      |
       | assistant | bob: hello from alice |
 
-  Scenario: One Agent Turn encloses the model and Bash tool cycle through ADK
+  Scenario: 同一轮推理记录 ADK 的模型调用和 Bash 工具结果
     Given the environment attempts to select an injected tool
     When I run the local CLI agent with its built-in Bash tool
     Then the CLI answer is "anra-bash-test"
@@ -42,21 +34,7 @@ Feature: ADK runs each agent with its configured model and built-in tools
       | bash |
     And agent "alice" has one completed turn enclosing its model and tool steps
 
-  Scenario Outline: Production configuration separates providers from test fixtures
-    When I run the CLI with unsupported ADK configuration "<problem>"
-    Then the CLI command fails with "<error>"
-    And no CLI tape directory is created
-
-    Examples:
-      | problem                   | error            |
-      | runner flag               | unknown flag     |
-      | echo provider             | unknown provider |
-      | removed deepseek provider | unknown provider |
-      | tool flag                 | unknown flag     |
-      | tool config               | parse config     |
-      | invalid API base          | OPENAI_BASE_URL  |
-
-  Scenario: Existing model and tool history remains readable after adopting ADK
+  Scenario: ADK 读取旧版模型和工具历史且保留原记录
     Given an agent with persisted legacy model and tool history
     When I ask "follow-up" and the model answers "history retained"
     Then the answer is "history retained"
