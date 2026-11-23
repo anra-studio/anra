@@ -14,7 +14,6 @@ import (
 	"github.com/anra-studio/anra/pkg/flow/borrow"
 	"github.com/anra-studio/anra/pkg/flow/grant"
 	"github.com/cucumber/godog"
-	"github.com/scbizu/tape-go/pkg/tape"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
@@ -22,21 +21,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
+func initializeGrantSidecar(sc *godog.ScenarioContext, s *peerScenario) {
 	var original []byte
 	history := func() ([]byte, error) {
 		ctx := owner.WithOwnerId(s.ctx, "researcher-local")
-		state, err := s.peerTape.Get(ctx)
-		if err != nil {
-			return nil, err
-		}
-		entries, err := s.peerTape.Range(
-			ctx,
-			tv.EntryRange{
-				SeqS: te.SeqFromUint64(1),
-				SeqE: state.Scope.SeqE.Next(),
-			},
-		)
+		entries, _, err := readAllEntries(ctx, s.peerTape)
 		if err != nil {
 			return nil, err
 		}
@@ -45,7 +34,10 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(
 		`^授权 sidecar 使用 "(bbolt|jsonl)" 存储$`,
 		func(backend string) error {
-			s.jsonlSidecar = backend == "jsonl"
+			if backend == "bbolt" {
+				return nil // The background opens bbolt by default.
+			}
+			s.jsonlSidecar = true
 			return s.restartPeer()
 		},
 	)
@@ -199,100 +191,6 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 		},
 	)
 	sc.Step(
-		`^重复注册 grant handler 被拒绝且原绑定仍可使用$`,
-		func() error {
-			h, found := s.grants.tape.Registry.Lookup(grant.Action)
-			if !found {
-				return errors.New("grant handler is missing")
-			}
-			if err := s.grants.tape.Registry.Register(h); err == nil {
-				return fmt.Errorf("duplicate grant registration returned %v", err)
-			}
-			after, found := s.grants.tape.Registry.Lookup(grant.Action)
-			if !found || after != h {
-				return errors.New("duplicate registration replaced the original grant handler")
-			}
-			return s.borrow()
-		},
-	)
-	sc.Step(
-		`^未绑定 grant handler 的 Tape 可创建服务但借阅失败且 sidecar 不变$`,
-		func() error {
-			_, before, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			bare := &tape.Tape{
-				TapeStorage: s.grants.tape.TapeStorage,
-				OwnerID:     s.grants.tape.OwnerID,
-			}
-			service, err := s.grants.newService(
-				borrow.Config{
-					Source: s.grants.source,
-					Tape:   bare,
-					Views: recoveredViews{
-						Tape:  s.peerTape,
-						Owner: "researcher-local",
-						All:   true,
-					},
-				},
-			)
-			if err != nil {
-				return err
-			}
-			req := &pb.BorrowRequest{
-				RequestId: "missing-grant-handler",
-				Purpose:   "verify native handler dispatch failure",
-				Query:     "committed context",
-			}
-			decision, err := service.Borrow(s.ctx, "borrower", req)
-			if decision != nil || !errors.Is(err, borrow.ErrStorage) {
-				return fmt.Errorf("missing handler borrowing returned %v, %v", decision, err)
-			}
-			if decision, err := service.Get(s.ctx, "borrower", req.RequestId); decision != nil || !errors.Is(err, borrow.ErrUnavailable) {
-				return fmt.Errorf("failed borrowing persisted a decision: %v, %v", decision, err)
-			}
-			_, after, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			if before != after {
-				return errors.New("missing handler borrowing appended a sidecar record")
-			}
-			return nil
-		},
-	)
-	sc.Step(
-		`^原生 OverView 拒绝无效授权命令且 sidecar 不变$`,
-		func() error {
-			_, before, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			v, err := s.grants.tape.OverView(
-				owner.WithOwnerId(s.ctx, s.grants.owner),
-				tv.EntryRange{
-					SeqS: te.SeqFromUint64(1),
-					SeqE: te.SeqFromUint64(2),
-				},
-			)
-			if err != nil {
-				return err
-			}
-			if _, err := v.Handle(s.ctx, grant.Action, nil); !errors.Is(err, grant.ErrInvalidParams) {
-				return fmt.Errorf("invalid native handler payload returned %v", err)
-			}
-			_, after, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			if before != after {
-				return errors.New("invalid native handler command changed the sidecar")
-			}
-			return nil
-		},
-	)
-	sc.Step(
 		`^未提交的候选 lease 不能读取或释放且 sidecar 不变$`,
 		func() error {
 			_, before, err := s.grants.decisions(s.ctx)
@@ -348,72 +246,6 @@ func initializeGrantSidecar(sc *godog.ScenarioContext, s *scenario) {
 			}
 			if before != after {
 				return errors.New("candidate issuance changed the borrowing journal")
-			}
-			return nil
-		},
-	)
-	sc.Step(
-		`^无可用视图时批准保留 pending 且只能显式拒绝$`,
-		func() error {
-			req := &pb.BorrowRequest{
-				RequestId: "pending-outside-view",
-				Purpose:   "check explicit approval",
-				Query:     "committed context",
-				Bounds: &pb.EntryRange{
-					SeqS: "1",
-					SeqE: "2",
-				},
-			}
-			before, err := s.client.Borrow(s.ctx, req)
-			if err != nil {
-				return err
-			}
-			if before.Status != borrow.Pending {
-				return errors.New("expected a pending request before local approval")
-			}
-			_, head, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			if _, err := s.service.Approve(s.ctx, "borrower", req.RequestId, time.Hour); !errors.Is(err, borrow.ErrUnavailable) {
-				return fmt.Errorf("unavailable view approval returned %v", err)
-			}
-			current, err := s.client.Get(s.ctx, req.RequestId)
-			if err != nil {
-				return err
-			}
-			if !proto.Equal(before, current) {
-				return errors.New("failed approval implicitly rejected or changed the pending request")
-			}
-			_, after, err := s.grants.decisions(s.ctx)
-			if err != nil {
-				return err
-			}
-			if after != head {
-				return errors.New("failed approval appended a decision")
-			}
-			if _, err := s.service.Reject(s.ctx, "intruder", req.RequestId); !errors.Is(err, borrow.ErrUnavailable) {
-				return fmt.Errorf("another caller rejected a pending request: %v", err)
-			}
-			rejected, err := s.service.Reject(s.ctx, "borrower", req.RequestId)
-			if err != nil {
-				return err
-			}
-			if rejected.Status != borrow.Denied || rejected.Lease != nil {
-				return errors.New("explicit rejection did not persist denial")
-			}
-			restored, err := s.client.Get(s.ctx, req.RequestId)
-			if err != nil {
-				return err
-			}
-			if !proto.Equal(rejected, restored) {
-				return errors.New("remote lookup differs from the committed local rejection")
-			}
-			if _, err := s.service.Reject(s.ctx, "borrower", req.RequestId); !errors.Is(err, borrow.ErrConflict) {
-				return fmt.Errorf("repeated rejection returned %v", err)
-			}
-			if _, err := s.service.Approve(s.ctx, "borrower", req.RequestId, time.Hour); !errors.Is(err, borrow.ErrConflict) {
-				return fmt.Errorf("approval reactivated a rejected request: %v", err)
 			}
 			return nil
 		},

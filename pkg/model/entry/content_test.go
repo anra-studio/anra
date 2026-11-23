@@ -107,3 +107,36 @@ func TestThoughtContentRetainsMarkersAndOmitsExecutionMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestContentRetainsCodeAndOrderedToolResponseParts(t *testing.T) {
+	t.Parallel()
+
+	raw := eventEntry(`{"role":"model","parts":[{"executableCode":{"id":"code-1","language":"PYTHON","code":"print(1)"},"thoughtSignature":"PRIVATE-SIGNATURE"},{"codeExecutionResult":{"id":"code-1","outcome":"OUTCOME_OK","output":"1\n"}},{"functionResponse":{"id":"tool-42","name":"lookup","willContinue":true,"response":{"chunk":"first"}}},{"functionResponse":{"id":"tool-42","name":"lookup","willContinue":false,"response":{"chunk":"last"}}}]}`)
+	content, err := raw.Content()
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := json.Marshal(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded genai.Content
+	if err := json.Unmarshal(public, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Parts) != 4 || bytes.Contains(public, []byte("PRIVATE-")) {
+		t.Fatalf("incorrect public parts: %s", public)
+	}
+	code, result := decoded.Parts[0].ExecutableCode, decoded.Parts[1].CodeExecutionResult
+	if code == nil || code.ID != "code-1" || code.Language != genai.LanguagePython || code.Code != "print(1)" ||
+		result == nil || result.ID != code.ID || result.Outcome != genai.OutcomeOK || result.Output != "1\n" {
+		t.Fatalf("public code or result changed: %s", public)
+	}
+	for i, chunk := range []string{"first", "last"} {
+		part := decoded.Parts[i+2].FunctionResponse
+		if part == nil || part.ID != "tool-42" || part.Name != "lookup" || part.Response["chunk"] != chunk ||
+			part.WillContinue == nil || *part.WillContinue != (i == 0) {
+			t.Errorf("tool chunk %d changed: %s", i, public)
+		}
+	}
+}

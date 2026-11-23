@@ -93,7 +93,7 @@ func (p *peerContentScenario) checkLazyReader() error {
 	return nil
 }
 
-func initializeBorrowRead(sc *godog.ScenarioContext, s *scenario) {
+func initializeBorrowRead(sc *godog.ScenarioContext, s *peerScenario) {
 	sc.Step(`^授权视图后一段的正文丢失并重启存储$`, s.loseLastFinding)
 	sc.Step(
 		`^读取缺失的授权视图失败且不返回部分内容$`,
@@ -119,7 +119,7 @@ func initializeBorrowRead(sc *godog.ScenarioContext, s *scenario) {
 
 // Remove a real persisted content record while retaining its committed View
 // and lease. Recovery must not silently skip that hole during an authorized read.
-func (s *scenario) loseLastFinding() error {
+func (s *peerScenario) loseLastFinding() error {
 	seq := te.MustParseSeq(s.decision.Lease.Ref.Scopes[1].SeqS)
 	if err := s.stopPeer(); err != nil {
 		return err

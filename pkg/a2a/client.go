@@ -164,14 +164,21 @@ func (c *Client) Borrow(ctx context.Context, r *pb.BorrowRequest) (*pb.Decision,
 		return nil, err
 	}
 	d := res.GetDecision()
-	if err := validateMessage(d); err != nil {
+	if err := validateBorrowDecision(r, d); err != nil {
 		return nil, err
+	}
+	return d, nil
+}
+
+func validateBorrowDecision(r *pb.BorrowRequest, d *pb.Decision) error {
+	if err := validateMessage(d); err != nil {
+		return err
 	}
 
 	if d.RequestId != r.RequestId || (d.Status == Granted && r.View != nil && !viewMatches(r.View, d.Lease)) {
-		return nil, ErrInvalidParams
+		return ErrInvalidParams
 	}
-	return d, nil
+	return nil
 }
 
 // BorrowContext requests a grant and reads its complete permitted view. Denied
@@ -239,14 +246,23 @@ func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) (*pb.Quote, erro
 		return nil, err
 	}
 	quote := response.Quote
+	if err := validateQuoteForLease(lease, quote); err != nil {
+		return nil, err
+	}
+	return quote, nil
+}
+
+// Both messages have passed schema validation before comparing their provenance
+// and verifying that the quote covers every granted entry exactly once.
+func validateQuoteForLease(lease *pb.Lease, quote *pb.Quote) error {
 	if quote.Provenance.LeaseId != lease.Id || quote.Provenance.Caller != lease.Caller || !proto.Equal(quote.Provenance.Ref, lease.Ref) {
-		return nil, ErrInvalidParams
+		return ErrInvalidParams
 	}
 	scopeIndex := 0
 	expected := te.MustParseSeq(lease.Ref.Scopes[0].SeqS)
 	for _, e := range quote.Entries {
 		if scopeIndex >= len(lease.Ref.Scopes) || e.Seq != expected.String() {
-			return nil, ErrInvalidParams
+			return ErrInvalidParams
 		}
 		expected = expected.Next()
 		if expected.String() == lease.Ref.Scopes[scopeIndex].SeqE {
@@ -257,9 +273,9 @@ func (c *Client) ReadView(ctx context.Context, lease *pb.Lease) (*pb.Quote, erro
 		}
 	}
 	if scopeIndex != len(lease.Ref.Scopes) {
-		return nil, ErrInvalidParams
+		return ErrInvalidParams
 	}
-	return quote, nil
+	return nil
 }
 
 func (c *Client) Release(ctx context.Context, id string) error {

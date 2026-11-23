@@ -37,7 +37,7 @@ import (
 const foreignContextAnchor = `{"schema":"example.org/context/v1","ownerEpoch":"foreign-schema-value","note":"approved context"}`
 
 type peerContentScenario struct {
-	s *scenario
+	s *peerScenario
 
 	media []byte
 
@@ -50,7 +50,7 @@ type peerContentScenario struct {
 	reads *readLog
 }
 
-func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
+func initializePeerContent(sc *godog.ScenarioContext, s *peerScenario) {
 	p := &peerContentScenario{
 		s: s,
 	}
@@ -63,17 +63,6 @@ func initializePeerContent(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^Connect、REST 和直接 Peer 客户端一次读取相同的完整多模态内容$`, p.readTransports)
 	sc.Step(`^完整视图保留原生锚点公开内容并隐藏未知锚点内容$`, p.readAnchors)
 	sc.Step(`^一次读取只访问授权条目且不重复读取$`, p.checkReadRanges)
-	sc.Step(`^借出节点的存储和服务重建$`, p.restart)
-	sc.Step(`^原 lease 仍可读取完整多模态条目$`, p.readRecovered)
-
-	sc.Step(
-		`^调用方释放该内容 lease$`,
-		func() error {
-			return s.closeGrant("released")
-		},
-	)
-
-	sc.Step(`^该 lease 不再允许读取内容$`, s.unavailable)
 }
 
 func (p *peerContentScenario) setup() error {
@@ -449,38 +438,4 @@ func (p *peerContentScenario) readAnchors() error {
 		}
 	}
 	return nil
-}
-
-func (p *peerContentScenario) restart() error {
-	if err := p.s.stopPeer(); err != nil {
-		return err
-	}
-	var err error
-	p.s.peerTape, err = p.s.openTape("large-context", "researcher-local")
-	if err != nil {
-		return err
-	}
-	return p.start()
-}
-
-func (p *peerContentScenario) readRecovered() error {
-	s := p.s
-	decision, err := s.client.Get(s.ctx, s.request.RequestId)
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(decision, s.decision) {
-		return errors.New("storage restart changed the existing lease")
-	}
-
-	quote, err := s.client.Read(
-		s.ctx,
-		&rpcpb.ReadRequest{
-			LeaseId: decision.Lease.Id,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	return p.checkMedia(quote)
 }

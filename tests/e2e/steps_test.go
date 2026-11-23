@@ -5,34 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
-	"github.com/anra-studio/anra/pkg/flow/clbr"
-
-	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2aclient"
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	a2a "github.com/anra-studio/anra/pkg/a2a"
 	"github.com/anra-studio/anra/pkg/agent"
 	"github.com/anra-studio/anra/pkg/flow/borrow"
-	ae "github.com/anra-studio/anra/pkg/model/entry"
 	bv "github.com/anra-studio/anra/pkg/model/view"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/runner"
-	entry "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
-	"github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -40,55 +28,18 @@ import (
 // Only the model and permission decision are deterministic fixtures. Agent,
 // tape, journal, discovery, SDK, Connect, and HTTP all use real implementations.
 type scenario struct {
-	root string
-
-	ctx context.Context
-
+	root   string
+	ctx    context.Context
 	cancel context.CancelFunc
 
-	localTape *bbolt.Bbolt
-	peerTape  *bbolt.Bbolt
-
-	coreTape *bbolt.Bbolt
-
-	service *borrow.Service
-
-	server *httptest.Server
-
-	modelServer *httptest.Server
-
-	providerControl *providerControl
-
-	card *sdk.AgentCard
-
-	client *a2a.Client
-
-	ordinary *a2aclient.Client
-
-	request *pb.BorrowRequest
-
-	decision *pb.Decision
-
-	grants       *grantFixture
-	jsonlSidecar bool
-
-	pendingWriter *borrow.Service
-
-	firstRead *rpcpb.ReadResponse
-
+	localTape   *bbolt.Bbolt
 	lastRequest runner.Request
+	answer      string
 
-	answer string
+	modelServer     *httptest.Server
+	providerControl *modelGate
 
-	lastError error
-
-	wireCode string
-
-	pending atomic.Bool
-
-	findingCount atomic.Uint64
-
-	clock atomic.Int64
+	peer peerScenario
 }
 
 func initializeScenario(sc *godog.ScenarioContext) {
@@ -96,7 +47,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	initializeCLI(sc, s)
 	initializeRegistry(sc, s)
 	initializeCollaboration(sc, s)
-	initializeBorrowRead(sc, s)
+	initializeBorrowRead(sc, &s.peer)
 
 	sc.Before(
 		func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
@@ -109,13 +60,17 @@ func initializeScenario(sc *godog.ScenarioContext) {
 				root: root,
 			}
 
-			s.providerControl = newProviderControl()
+			s.providerControl = newModelGate(1)
 
 			s.modelServer = newModelServer(s.providerControl)
 
 			s.ctx, s.cancel = context.WithTimeout(ctx, 20*time.Second)
 
-			s.clock.Store(time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC).UnixNano())
+			s.peer = peerScenario{
+				root: root,
+				ctx:  s.ctx,
+			}
+			s.peer.clock.Store(time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC).UnixNano())
 
 			return s.ctx, nil
 		},
@@ -123,7 +78,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 
 	sc.After(
 		func(ctx context.Context, sc *godog.Scenario, scenarioErr error) (context.Context, error) {
-			err := s.stopPeer()
+			err := s.peer.stopPeer()
 
 			if s.modelServer != nil {
 
@@ -151,102 +106,69 @@ func initializeScenario(sc *godog.ScenarioContext) {
 		},
 	)
 
-	initializeGrantSidecar(sc, s)
+	initializeGrantSidecar(sc, &s.peer)
 
 	sc.Step(`^an agent with its own tape$`, s.openLocalTape)
-
-	sc.Step(
-		`^I create an agent with an empty role$`,
-		func() error {
-			a, err := agent.New("", s.localTape)
-
-			s.lastError = err
-
-			if a != nil {
-				return errors.Join(errors.New("empty role created an agent"), a.Shutdown(s.ctx))
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^agent creation fails with "([^"]*)"$`,
-		func(want string) error {
-			if s.lastError == nil || s.lastError.Error() != want {
-				return fmt.Errorf("agent creation error = %v, want %q", s.lastError, want)
-			}
-
-			return nil
-		},
-	)
 
 	sc.Step(`^I ask "([^"]*)" and the model answers "([^"]*)"$`, s.ask)
 	sc.Step(`^I close and reopen the agent's storage$`, s.reopenLocalTape)
 	sc.Step(`^another member uses the same database for a private conversation$`, s.otherMember)
 	sc.Step(`^the model sees the conversation in order$`, s.conversation)
 	sc.Step(`^the answer is "([^"]*)"$`, s.answerIs)
-	sc.Step(`^研究节点已提交两份发现并持久化授权记录$`, s.setupPeer)
-	sc.Step(`^调用方发现研究节点并发送 "([^"]*)"$`, s.sendMessage)
-	sc.Step(`^节点回答 "([^"]*)"$`, s.answerIs)
-	sc.Step(`^节点也能流式回答 "([^"]*)"$`, s.streamMessage)
-	sc.Step(`^研究者节点提供两条发现和持久化授权$`, s.setupPeer)
+	sc.Step(`^研究节点已提交两份发现并持久化授权记录$`, s.peer.setupPeer)
+	sc.Step(`^研究者节点提供两条发现和持久化授权$`, s.peer.setupPeer)
 	sc.Step(`^本地角色借阅研究者上下文$`, s.borrowWithAgent)
 	sc.Step(`^借阅回答为 "([^"]*)"$`, s.answerIs)
 	sc.Step(`^模型仅在带来源凭据的借阅工具结果中收到上下文$`, s.checkBorrowedContext)
 	sc.Step(`^借阅角色的存储重启$`, s.reopenLocalTape)
 	sc.Step(`^模型仍以借阅工具结果回忆上下文$`, s.recallBorrowedContext)
 	sc.Step(`^所有持久化条目仍归借阅角色所有$`, s.checkLocalOwnership)
-	sc.Step(`^调用方请求借阅已提交视图$`, s.borrow)
-	sc.Step(`^借阅决策为 "([^"]*)"$`, s.decisionIs)
-	sc.Step(`^调用方读取完整授权视图$`, s.readFirst)
+	sc.Step(`^调用方请求借阅已提交视图$`, s.peer.borrow)
+	sc.Step(`^借阅决策为 "([^"]*)"$`, s.peer.decisionIs)
+	sc.Step(`^调用方读取完整授权视图$`, s.peer.readFirst)
 
 	sc.Step(
 		`^研究节点在授权后提交新的发现$`,
 		func() error {
-			return s.appendFinding("new finding outside the snapshot")
+			return s.peer.appendFinding("new finding outside the snapshot")
 		},
 	)
 
-	sc.Step(`^研究节点重启存储和服务$`, s.restartPeer)
-	sc.Step(`^重试同一请求仍返回原 lease$`, s.retryGrant)
-	sc.Step(`^调用方再次读取相同的原有授权视图$`, s.finishSnapshot)
-	sc.Step(`^研究节点已提交 (\d+) 条发现$`, s.addFindings)
-	sc.Step(`^调用方完整读出全部 (\d+) 条发现$`, s.readAll)
-	sc.Step(`^调用方保持请求 ID 但修改用途、查询和范围$`, s.retryChangedBorrow)
-	sc.Step(`^返回原有借阅决定且 lease 仍可读取$`, s.readFirst)
+	sc.Step(`^研究节点重启存储和服务$`, s.peer.restartPeer)
+	sc.Step(`^使用原请求 ID 修改用途、查询和范围仍返回原 lease$`, s.peer.retryChangedBorrow)
+	sc.Step(`^调用方再次读取相同的原有授权视图$`, s.peer.finishSnapshot)
 
-	sc.Step(`^其他调用方不能查询读取或释放该 lease$`, s.checkIntruder)
-	sc.Step(`^其他调用方自己的请求被拒绝且不返回内容$`, s.checkDenied)
-	sc.Step(`^授权终止方式为 (released|revoked|expired)$`, s.closeGrant)
-	sc.Step(`^调用方不能继续读取该 lease$`, s.unavailable)
-	sc.Step(`^记录的决策仍标识原 lease$`, s.recoverGrant)
+	sc.Step(`^其他调用方不能查询读取或释放该 lease$`, s.peer.checkIntruder)
+	sc.Step(`^其他调用方自己的请求被拒绝且不返回内容$`, s.peer.checkDenied)
+	sc.Step(`^授权终止方式为 (released|revoked|expired)$`, s.peer.closeGrant)
+	sc.Step(`^调用方不能继续读取该 lease$`, s.peer.unavailable)
+	sc.Step(`^记录的决策仍标识原 lease$`, s.peer.recoverGrant)
 
 	sc.Step(
 		`^研究节点要求本地批准借阅$`,
 		func() {
-			s.pending.Store(true)
+			s.peer.pending.Store(true)
 		},
 	)
 
-	sc.Step(`^恢复后的决策仍为 "([^"]*)"$`, s.recoverDecision)
-	sc.Step(`^研究节点将请求处理为 "([^"]*)"$`, s.completePending)
-	sc.Step(`^读取结果符合 "([^"]*)" 决策$`, s.checkAccess)
-	sc.Step(`^另一借阅服务读取当前待审批决策$`, s.rememberPendingDecision)
-	sc.Step(`^另一服务的审批和重复借阅均不能改写结果$`, s.rejectStaleDecision)
+	sc.Step(`^恢复后的决策仍为 "([^"]*)"$`, s.peer.recoverDecision)
+	sc.Step(`^研究节点将请求处理为 "([^"]*)"$`, s.peer.completePending)
+	sc.Step(`^读取结果符合 "([^"]*)" 决策$`, s.peer.checkAccess)
+	sc.Step(`^另一借阅服务读取当前待审批决策$`, s.peer.rememberPendingDecision)
+	sc.Step(`^另一服务的审批和重复借阅均不能改写结果$`, s.peer.rejectStaleDecision)
 	sc.Step(`^审批租期无效时原待审批决策不变$`, func() error {
-		return s.rejectApproval(0, borrow.ErrInvalidParams)
+		return s.peer.rejectApproval(0, borrow.ErrInvalidParams)
 	})
 	sc.Step(`^已完成的请求不能再次审批且原决策不变$`, func() error {
-		return s.rejectApproval(time.Hour, borrow.ErrConflict)
+		return s.peer.rejectApproval(time.Hour, borrow.ErrConflict)
 	})
-	sc.Step(`^节点提交包含 "([^"]*)" 的协议请求$`, s.wireRequest)
+	sc.Step(`^节点提交包含 "([^"]*)" 的协议请求$`, s.peer.wireRequest)
 
 	sc.Step(
 		`^返回协议错误 "([^"]*)"$`,
 		func(want string) error {
-			if s.wireCode != want {
-				return fmt.Errorf("wire error = %q, want %q", s.wireCode, want)
+			if s.peer.wireCode != want {
+				return fmt.Errorf("wire error = %q, want %q", s.peer.wireCode, want)
 			}
 
 			return nil
@@ -254,7 +176,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	)
 
 	initializeMCP(sc, s)
-	initializePeerContent(sc, s)
+	initializePeerContent(sc, &s.peer)
 }
 
 // Called after closing the databases so the saved files can be reopened safely.
@@ -272,8 +194,8 @@ func (s *scenario) saveFailure(name string, failure error) error {
 	}
 	data, err := json.MarshalIndent(map[string]any{
 		"scenario": name, "error": failure.Error(), "answer": s.answer,
-		"model_request": s.lastRequest, "borrow_request": s.request,
-		"decision": s.decision, "read_response": s.firstRead,
+		"model_request": s.lastRequest, "borrow_request": s.peer.request,
+		"decision": s.peer.decision, "read_response": s.peer.firstRead,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -281,17 +203,8 @@ func (s *scenario) saveFailure(name string, failure error) error {
 	return os.WriteFile(filepath.Join(dir, "failure.json"), data, 0o644)
 }
 
-type modelFunc func(context.Context, runner.Request) (runner.Response, error)
-
 func (s *scenario) openTape(name, role string) (*bbolt.Bbolt, error) {
-	tape, err := bbolt.NewBboltStorage("session", filepath.Join(s.root, name+".db"))
-	if err != nil {
-		return nil, err
-	}
-	if err := tape.Init(owner.WithOwnerId(s.ctx, role)); err != nil {
-		return nil, errors.Join(err, tape.Close())
-	}
-	return tape, nil
+	return openFixtureTape(s.ctx, s.root, name, role)
 }
 
 func (s *scenario) openLocalTape() error {
@@ -369,607 +282,13 @@ func (s *scenario) answerIs(want string) error {
 	return nil
 }
 
-func (s *scenario) setupPeer() error {
-	s.request = &pb.BorrowRequest{
-		RequestId: "research-request",
-		Purpose:   "fix storage concurrency",
-		Query:     "bbolt",
-	}
-
-	var err error
-	s.peerTape, err = s.openTape("researcher", "researcher-local")
-	if err != nil {
-		return err
-	}
-	for _, finding := range []string{"bbolt requires a single writer", "concurrent updates need version checks"} {
-		if err := s.appendFinding(finding); err != nil {
-			return err
-		}
-	}
-	return s.startPeer()
-}
-
-func (s *scenario) appendFinding(text string) error {
-	turn, err := beginFixtureTurn(s.ctx, s.peerTape, "researcher-local")
-	if err != nil {
-		return err
-	}
-
-	_, err = s.peerTape.Store(owner.WithOwnerId(s.ctx, "researcher-local"), entry.NewEntry(entry.WithEntryKind(entry.EntryUser), entry.WithEntryOwner("researcher-local"), entry.WithEntryContent(text)))
-	if err != nil {
-		return err
-	}
-
-	if _, err = finishFixtureTurn(s.ctx, s.peerTape, "researcher-local", turn); err != nil {
-		return err
-	}
-
-	s.findingCount.Add(1)
-
-	return nil
-}
-
-func (s *scenario) selection() borrow.Selection {
-	return borrow.Selection{
-		Status: a2a.Granted,
-		TTL:    time.Hour,
-	}
-}
-
-func (s *scenario) startPeer() error {
-	var err error
-
-	sourceAgent, err := agent.New("researcher-local", s.peerTape)
-	if err != nil {
-		return err
-	}
-
-	source := sourceAgent.Source()
-	if err := sourceAgent.Shutdown(s.ctx); err != nil {
-		return err
-	}
-	s.grants, err = openGrantFixture(s.ctx, filepath.Join(s.root, "peer.lease.db"), source, "researcher-local", s.peerTape, func() time.Time {
-		return time.Unix(0, s.clock.Load())
-	}, s.jsonlSidecar)
-	if err != nil {
-		return err
-	}
-
-	s.service, err = s.grants.newService(
-		borrow.Config{
-			Source: source,
-			Tape:   s.grants.tape,
-
-			Views: recoveredViews{
-				Tape:  s.peerTape,
-				Owner: "researcher-local",
-				All:   true,
-			},
-			Exporter: bv.TextExporter{},
-
-			Review: func(_ context.Context, peer string, _ *pb.BorrowRequest) (borrow.Selection, error) {
-				if peer != "borrower" {
-					return borrow.Selection{
-						Status: a2a.Denied,
-					}, nil
-				}
-				if s.pending.Load() {
-					return borrow.Selection{
-						Status: a2a.Pending,
-					}, nil
-				}
-				return s.selection(), nil
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	s.coreTape, err = s.openTape("messaging", "researcher-core")
-	if err != nil {
-		return err
-	}
-
-	lender, err := agent.New("researcher-core", s.coreTape, agent.WithLLM(modelFunc(
-		func(context.Context, runner.Request) (runner.Response, error) {
-			return runner.Response{
-				Output: "research response",
-			}, nil
-		},
-	)))
-	if err != nil {
-		return err
-	}
-	executor, err := a2a.NewExecutor(lender, &clbr.Service{})
-	if err != nil {
-		return err
-	}
-	s.server = httptest.NewUnstartedServer(nil)
-	base := "http://" + s.server.Listener.Addr().String()
-	card := &sdk.AgentCard{
-		Name:        "researcher",
-		Description: "storage specialist",
-		Version:     "0.1",
-
-		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(base+a2a.CorePath, sdk.TransportProtocolJSONRPC)},
-
-		DefaultInputModes:  []string{"text/plain"},
-		DefaultOutputModes: []string{"text/plain"},
-
-		Skills: []sdk.AgentSkill{{
-			ID:          "storage",
-			Name:        "Storage",
-			Description: "bbolt storage",
-			Tags:        []string{"bbolt"},
-		}},
-	}
-	if err := a2a.Advertise(card, base+a2a.ViewPath); err != nil {
-		return err
-	}
-	handler, err := a2a.NewPeerHandler(card, a2asrv.NewHandler(executor), s.service, a2a.TrustedPeerIdentity)
-	if err != nil {
-		return err
-	}
-	s.server.Config.Handler = handler
-	s.server.Start()
-	s.card, err = a2a.Discover(s.ctx, s.server.Client(), base+a2asrv.WellKnownAgentCardPath)
-	if err != nil {
-		return err
-	}
-	s.client, err = s.clientFor("borrower")
-	return err
-}
-
-func (s *scenario) stopPeer() error {
-	if s.coreTape != nil {
-		if err := s.coreTape.Close(); err != nil {
-			return err
-		}
-		s.coreTape = nil
-	}
-	if s.server != nil {
-		s.server.Close()
-		s.server = nil
-	}
-	var err error
-	s.service = nil
-	if s.grants != nil {
-		err = errors.Join(err, s.grants.close())
-		s.grants = nil
-	}
-	if s.peerTape != nil {
-		err = errors.Join(err, s.peerTape.Close())
-		s.peerTape = nil
-	}
-	return err
-}
-
-func (s *scenario) restartPeer() error {
-	if err := s.stopPeer(); err != nil {
-		return err
-	}
-	var err error
-	s.peerTape, err = s.openTape("researcher", "researcher-local")
-	if err != nil {
-		return err
-	}
-	return s.startPeer()
-}
-
-func (s *scenario) httpClient(peer string) *http.Client {
-	client := a2a.TrustedHTTPClient(peer)
-	client.Timeout = 5 * time.Second
-	return client
-}
-
-func (s *scenario) clientFor(peer string) (*a2a.Client, error) {
-	return a2a.NewClient(s.httpClient(peer), s.card)
-}
-
-func (s *scenario) sendMessage(text string) error {
-	var err error
-	s.ordinary, err = a2aclient.NewFromCard(s.ctx, s.card, a2aclient.WithJSONRPCTransport(s.httpClient("borrower")))
-	if err != nil {
-		return err
-	}
-
-	result, err := s.ordinary.SendMessage(
-		s.ctx,
-		&sdk.SendMessageRequest{
-			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(text)),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	message, ok := result.(*sdk.Message)
-	if !ok || len(message.Parts) != 1 {
-		return fmt.Errorf("unexpected peer message: %#v", result)
-	}
-	s.answer = message.Parts[0].Text()
-	return nil
-}
-
-func (s *scenario) streamMessage(text string) error {
-	var outputs []string
-
-	for event, err := range s.ordinary.SendStreamingMessage(
-		s.ctx,
-		&sdk.SendMessageRequest{
-			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(text)),
-		},
-	) {
-
-		if err != nil {
-			return err
-		}
-		if message, ok := event.(*sdk.Message); ok {
-			for _, part := range message.Parts {
-				outputs = append(outputs, part.Text())
-			}
-		}
-	}
-	if strings.Join(outputs, "") != "research response" {
-		return fmt.Errorf("streamed output = %q", outputs)
-	}
-	return nil
-}
-
-func (s *scenario) borrow() error {
-	var err error
-	s.decision, err = s.client.Borrow(s.ctx, s.request)
-	return err
-}
-
-func decisionStatus(name string) pb.DecisionStatus {
-	switch name {
-	case "granted":
-		return a2a.Granted
-	case "denied":
-		return a2a.Denied
-	case "pending":
-		return a2a.Pending
-	}
-	return pb.DecisionStatus_DECISION_STATUS_UNSPECIFIED
-}
-
-func (s *scenario) decisionIs(want string) error {
-	if s.decision == nil || s.decision.Status != decisionStatus(want) {
-		return fmt.Errorf("decision = %v, want %s", s.decision, want)
-	}
-
-	if want != "granted" && s.decision.Lease != nil {
-		return fmt.Errorf("%s decision disclosed a view", want)
-	}
-	return nil
-}
-
-// exportedTextIs checks the complete text payload; structured events must
-// retain a single ordinary text part rather than a flattened derivative.
-func exportedTextIs(e *pb.ExportedEntry, want string) bool {
-	if e == nil || e.Payload == nil {
-		return false
-	}
-	switch e.Payload.MediaType {
-	case a2a.TextMediaType:
-		var text string
-		return json.Unmarshal(e.Payload.JsonData, &text) == nil && text == want
-	case a2a.ContextMediaType:
-		var content ae.Content
-		if json.Unmarshal(e.Payload.JsonData, &content) != nil || len(content.Parts) != 1 || content.Parts[0] == nil {
-			return false
-		}
-		part := content.Parts[0]
-		return !part.Thought && part.Text == want && part.FunctionCall == nil && part.FunctionResponse == nil
-	default:
-		return false
-	}
-}
-
-func (s *scenario) readFirst() error {
-	var err error
-	s.firstRead, err = s.client.Read(s.ctx, &rpcpb.ReadRequest{
-		LeaseId: s.decision.Lease.Id,
-	})
-	if err != nil {
-		return err
-	}
-	entries := s.firstRead.Quote.Entries
-	if len(entries) != 2 || !exportedTextIs(entries[0], "bbolt requires a single writer") || !exportedTextIs(entries[1], "concurrent updates need version checks") {
-		return fmt.Errorf("unexpected authorized content: %v", s.firstRead)
-	}
-	return nil
-}
-
-func (s *scenario) retryGrant() error {
-	got, err := s.client.Borrow(s.ctx, s.request)
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(got, s.decision) {
-		return fmt.Errorf("retry changed decision: got %v, want %v", got, s.decision)
-	}
-	return nil
-}
-
-func (s *scenario) finishSnapshot() error {
-	response, err := s.client.Read(s.ctx, &rpcpb.ReadRequest{
-		LeaseId: s.decision.Lease.Id,
-	})
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(response.Quote, s.firstRead.Quote) {
-		return fmt.Errorf("original snapshot was not preserved: %v", response)
-	}
-	return nil
-}
-
-func (s *scenario) addFindings(count int) error {
-	for int(s.findingCount.Load()) < count {
-		if err := s.appendFinding(fmt.Sprintf("finding %d", s.findingCount.Load()+1)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *scenario) readAll(count int) error {
-	quote, err := s.client.ReadView(s.ctx, s.decision.Lease)
-	if err != nil {
-		return err
-	}
-	if len(quote.Entries) != count || quote.Provenance.LeaseId != s.decision.Lease.Id || !proto.Equal(quote.Provenance.Ref, s.decision.Lease.Ref) {
-		return fmt.Errorf("authorized Quote lost entries or provenance: %v", quote)
-	}
-	for i, e := range quote.Entries {
-		if e.Seq != s.decision.Lease.Ref.Scopes[i].SeqS {
-			return fmt.Errorf("entry %d has sequence %s", i, e.Seq)
-		}
-	}
-	return nil
-}
-
-func (s *scenario) retryChangedBorrow() error {
-	changed := proto.Clone(s.request).(*pb.BorrowRequest)
-	changed.Purpose = "a different purpose"
-	changed.Query = "a different query"
-	changed.Bounds = &pb.EntryRange{
-		SeqS: "1",
-		SeqE: "2",
-	}
-	got, err := s.client.Borrow(s.ctx, changed)
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(got, s.decision) {
-		return fmt.Errorf("retry changed decision: got %v, want %v", got, s.decision)
-	}
-	return nil
-}
-
-func expectError(got, want error) error {
-	if !errors.Is(got, want) {
-		return fmt.Errorf("error = %v, want %v", got, want)
-	}
-	return nil
-}
-
-func (s *scenario) checkIntruder() error {
-	intruder, err := s.clientFor("intruder")
-	if err != nil {
-		return err
-	}
-	_, err = intruder.Get(s.ctx, s.request.RequestId)
-	if err := expectError(err, a2a.ErrUnavailable); err != nil {
-		return fmt.Errorf("lookup: %w", err)
-	}
-
-	_, err = intruder.Read(
-		s.ctx,
-		&rpcpb.ReadRequest{
-			LeaseId: s.decision.Lease.Id,
-		},
-	)
-
-	if err := expectError(err, a2a.ErrUnavailable); err != nil {
-		return fmt.Errorf("read: %w", err)
-	}
-
-	if err := expectError(intruder.Release(s.ctx, s.decision.Lease.Id), a2a.ErrUnavailable); err != nil {
-		return fmt.Errorf("release: %w", err)
-	}
-	// Failed release must leave the authorized borrower's access intact.
-
-	_, err = s.client.ReadView(s.ctx, s.decision.Lease)
-
-	return err
-}
-
-func (s *scenario) checkDenied() error {
-	intruder, err := s.clientFor("intruder")
-	if err != nil {
-		return err
-	}
-	d, err := intruder.Borrow(s.ctx, s.request)
-	if err != nil {
-		return err
-	}
-
-	if d.Status != a2a.Denied || d.Lease != nil {
-		return fmt.Errorf("unauthorized decision = %v", d)
-	}
-	return nil
-}
-
-func (s *scenario) closeGrant(closure string) error {
-	switch closure {
-	case "released":
-		if err := s.client.Release(s.ctx, s.decision.Lease.Id); err != nil {
-			return err
-		}
-		return s.client.Release(s.ctx, s.decision.Lease.Id)
-
-	case "revoked":
-		return s.service.Revoke(s.ctx, "borrower", s.decision.Lease.Id)
-
-	case "expired":
-		s.clock.Add(int64(2 * time.Hour))
-		return nil
-	}
-	return fmt.Errorf("unknown closure %s", closure)
-}
-
-func (s *scenario) unavailable() error {
-	_, err := s.client.Read(
-		s.ctx,
-		&rpcpb.ReadRequest{
-			LeaseId: s.decision.Lease.Id,
-		},
-	)
-
-	return expectError(err, a2a.ErrUnavailable)
-}
-
-func (s *scenario) recoverGrant() error {
-	d, err := s.client.Get(s.ctx, s.request.RequestId)
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(d, s.decision) {
-		return fmt.Errorf("recorded grant changed: %v", d)
-	}
-	return s.retryGrant()
-}
-
-func (s *scenario) recoverDecision(want string) error {
-	var err error
-	s.decision, err = s.client.Get(s.ctx, s.request.RequestId)
-	if err != nil {
-		return err
-	}
-	if err := s.decisionIs(want); err != nil {
-		return err
-	}
-	return s.retryGrant()
-}
-
-func (s *scenario) completePending(outcome string) error {
-	if outcome == "granted" {
-		_, err := s.service.Approve(s.ctx, "borrower", s.request.RequestId, time.Hour)
-		return err
-	}
-	_, err := s.service.Reject(s.ctx, "borrower", s.request.RequestId)
-	return err
-}
-
-func (s *scenario) rejectApproval(ttl time.Duration, want error) error {
-	before, err := s.client.Get(s.ctx, s.request.RequestId)
-	if err != nil {
-		return err
-	}
-	if _, err := s.service.Approve(s.ctx, "borrower", s.request.RequestId, ttl); !errors.Is(err, want) {
-		return fmt.Errorf("Approve returned %v, want %v", err, want)
-	}
-	after, err := s.client.Get(s.ctx, s.request.RequestId)
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(before, after) {
-		return errors.New("failed approval changed the request outcome")
-	}
-	return nil
-}
-
-func (s *scenario) rememberPendingDecision() error {
-	var err error
-	s.pendingWriter, err = s.grants.newService(
-		borrow.Config{
-			Source: s.grants.source,
-			Tape:   s.grants.tape,
-			Views: recoveredViews{
-				Tape:  s.peerTape,
-				Owner: "researcher-local",
-				All:   true,
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
-	d, err := s.pendingWriter.Get(s.ctx, "borrower", s.request.RequestId)
-	if err != nil {
-		return err
-	}
-	if d.Status != borrow.Pending {
-		return errors.New("expected a persisted pending decision")
-	}
-	return nil
-}
-
-func (s *scenario) rejectStaleDecision() error {
-	before, err := s.client.Get(s.ctx, s.request.RequestId)
-	if err != nil {
-		return err
-	}
-	if s.pendingWriter == nil {
-		return errors.New("missing competing borrowing service")
-	}
-	_, head, err := s.grants.decisions(s.ctx)
-	if err != nil {
-		return err
-	}
-	_, err = s.pendingWriter.Reject(s.ctx, "borrower", s.request.RequestId)
-	if !errors.Is(err, borrow.ErrConflict) {
-		return fmt.Errorf("competing resolution returned %v, want conflict", err)
-	}
-	replay, err := s.pendingWriter.Borrow(s.ctx, "borrower", s.request)
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(replay, before) {
-		return errors.New("duplicate borrowing changed the completed decision")
-	}
-	_, afterHead, err := s.grants.decisions(s.ctx)
-	if err != nil {
-		return err
-	}
-	if afterHead != head {
-		return errors.New("rejected and duplicate operations appended sidecar records")
-	}
-	after, err := s.client.Get(s.ctx, s.request.RequestId)
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(before, after) {
-		return fmt.Errorf("conflicting writes changed decision: %v -> %v", before, after)
-	}
-	return nil
-}
-
-func (s *scenario) checkAccess(outcome string) error {
-	if outcome == "denied" {
-		return s.decisionIs(outcome)
-	}
-
-	quote, err := s.client.ReadView(s.ctx, s.decision.Lease)
-	if err != nil {
-		return err
-	}
-	if len(quote.Entries) != 2 {
-		return fmt.Errorf("approved context missing: %v", quote)
-	}
-	return nil
-}
-
 func (s *scenario) borrowWithAgent() error {
 	if err := s.openLocalTape(); err != nil {
 		return err
 	}
 	turns := 0
 
-	a, err := agent.New("borrower-local", s.localTape, agent.WithBorrowClient(s.client), agent.WithLLM(modelFunc(
+	a, err := agent.New("borrower-local", s.localTape, agent.WithBorrowClient(s.peer.client), agent.WithLLM(modelFunc(
 		func(_ context.Context, req runner.Request) (runner.Response, error) {
 			turns++
 
@@ -1111,92 +430,21 @@ func (s *scenario) recallBorrowedContext() error {
 
 func (s *scenario) checkLocalOwnership() error {
 	ctx := owner.WithOwnerId(s.ctx, "borrower-local")
-	head, err := s.localTape.Get(ctx)
+	stored, _, err := readAllEntries(ctx, s.localTape)
 	if err != nil {
 		return err
 	}
-
-	stored, err := s.localTape.Range(
-		ctx,
-		view.EntryRange{
-			SeqS: entry.SeqFromUint64(1),
-			SeqE: head.Scope.SeqE.Next(),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	conversation, err := inspectLifecycle(stored.Raw)
+	conversation, err := inspectLifecycle(stored)
 	if err != nil {
 		return err
 	}
 	if len(conversation) != 4 {
-		return fmt.Errorf("borrower has %d entries, want 4 conversation entries", len(stored.Raw))
+		return fmt.Errorf("borrower has %d entries, want 4 conversation entries", len(stored))
 	}
-	for _, e := range stored.Raw {
+	for _, e := range stored {
 		if e.GetOwner() != "borrower-local" {
 			return fmt.Errorf("imported peer ownership: %s", e.GetOwner())
 		}
 	}
 	return nil
-}
-
-func (s *scenario) wireRequest(problem string) error {
-	body := `{"requestId":"wire-request","purpose":"research","query":"bbolt"}`
-	method, identity, extension := "Borrow", "borrower", a2a.ExtensionURI
-	switch problem {
-	case "no identity":
-		identity = ""
-	case "no extension":
-		extension = ""
-	case "missing purpose":
-		body = `{"requestId":"wire-request","query":"bbolt"}`
-	case "reversed bounds":
-		body = `{"requestId":"wire-request","purpose":"research","query":"bbolt","bounds":{"seqS":"9","seqE":"2"}}`
-	case "空 lease ID":
-		method, body = "Read", `{}`
-	default:
-		return fmt.Errorf("unknown wire problem %s", problem)
-	}
-	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, s.server.URL+a2a.ViewPath+"/"+method, strings.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Connect-Protocol-Version", "1")
-	if identity != "" {
-		req.Header.Set(a2a.PeerIdentityHeader, identity)
-	}
-	if extension != "" {
-		req.Header.Set(a2a.ExtensionHeader, extension)
-	}
-	res, err := s.server.Client().Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	data, err := io.ReadAll(res.Body)
-	if err != nil {
-		return err
-	}
-	var failure struct {
-		Code string `json:"code"`
-	}
-	if err := json.Unmarshal(data, &failure); err != nil {
-		return fmt.Errorf("HTTP %d: %s: %w", res.StatusCode, data, err)
-	}
-	if res.StatusCode < 400 || failure.Code == "" {
-		return fmt.Errorf("request unexpectedly accepted: HTTP %d: %s", res.StatusCode, data)
-	}
-	s.wireCode = failure.Code
-	return nil
-}
-
-// messageClient exercises the external A2A boundary for fixtures holding a URL.
-func messageClient(ctx context.Context, h *http.Client, base string) (*a2a.MessageClient, error) {
-	card, err := a2a.Discover(ctx, h, strings.TrimRight(base, "/")+a2asrv.WellKnownAgentCardPath)
-	if err != nil {
-		return nil, err
-	}
-	return a2a.NewMessageClientFromCard(ctx, h, card)
 }

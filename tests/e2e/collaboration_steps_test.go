@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -17,9 +15,7 @@ import (
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
-	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
 	pv "github.com/anra-studio/anra/gen/anra/peer/v1"
 	"github.com/anra-studio/anra/pkg/a2a"
@@ -35,12 +31,9 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
-	"github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/adk/model"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type collaborationNode struct {
@@ -51,15 +44,11 @@ type collaborationNode struct {
 	tape   *bbolt.Bbolt
 	grants *grantFixture
 
-	service *borrow.Service
-
 	server *httptest.Server
 
 	card *sdk.AgentCard
 
 	calls atomic.Int32
-
-	requests atomic.Int32
 }
 type heldResult struct {
 	result clbr.Result
@@ -77,17 +66,13 @@ type collaborationScenario struct {
 
 	registryStore *registry.Registry
 
-	entered chan struct{}
-
-	release chan struct{}
+	gate *modelGate
 
 	held chan heldResult
 
 	heldCancel context.CancelFunc
 
 	busy clbr.Result
-
-	originalSource *pb.Source
 
 	originalRef *pb.Ref
 
@@ -103,8 +88,6 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		s: s,
 	}
 
-	initializeDelegator(sc, c)
-
 	sc.Before(
 		func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 			*c = collaborationScenario{
@@ -118,822 +101,565 @@ func initializeCollaboration(sc *godog.ScenarioContext, s *scenario) {
 		},
 	)
 
-	sc.After(
-		func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
-			if c.heldCancel != nil {
-				c.heldCancel()
-			}
-
-			if c.release != nil {
-				select {
-
-				case <-c.release:
-
-				default:
-					close(c.release)
-
-				}
-			}
-
-			var err error
-
-			for _, n := range c.nodes {
-
-				if n.server != nil {
-
-					if n.registration != nil {
-						n.registration.Close()
-					}
-
-					n.server.Close()
-
-				}
-
-				if n.a != nil {
-
-					cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-					drainErr := n.a.Shutdown(cleanup)
-
-					cancel()
-
-					if drainErr != nil {
-
-						err = errors.Join(err, drainErr)
-
-						continue
-
-					}
-
-				}
-
-				if n.grants != nil {
-					err = errors.Join(err, n.grants.close())
-				}
-
-				if n.tape != nil {
-					err = errors.Join(err, n.tape.Close())
-				}
-
-			}
-
-			if c.directory != nil {
-				c.directory.Close()
-			}
-
-			if c.registryStore != nil {
-				err = errors.Join(err, c.registryStore.Close())
-			}
-
-			return ctx, err
-		},
-	)
+	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+		return ctx, c.close()
+	})
 
 	sc.Step(`^a collaboration agent$`, c.setup)
-	sc.Step(`^已启动协作角色$`, c.setup)
-
-	sc.Step(
-		`^Alice's tape contains a custom anchor with schema "([^"]+)"$`,
-		func(schema string) error {
-			// Deliberately reuse a native type with fields that are invalid in v1:
-			// the schema, rather than the type or field names, owns interpretation.
-
-			payload, err := json.Marshal(map[string]any{"schema": schema, "type": "turn.started", "turnId": 42, "source": "integration-owned"})
-			if err != nil {
-				return err
-			}
-
-			_, err = c.nodes["alice"].tape.Store(owner.WithOwnerId(s.ctx, "alice"), entry.NewAnchor(
-				entry.Seq{},
-				"alice",
-				entry.AnchorKindCustom,
-				payload,
-			))
-
-			return err
-		},
-	)
-
-	sc.Step(
-		`^Alice can continue reasoning after schema dispatch recovery$`,
-		func() error {
-			result, err := c.send("bob", "alice", "after recovery")
-
-			if err != nil || result.Status != cp.Status_STATUS_COMPLETED || result.Answer != "answer: after recovery" {
-				return fmt.Errorf("reasoning after recovery: %+v: %v", result, err)
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(`^Bob 在 Alice 推理期间借阅包含思考和完整工具对话的快照$`, c.toolWindow)
-
 	sc.Step(`^generated collaboration metadata roundtrips through A2A$`, c.protobufRoundtrip)
-
-	sc.Step(`^collaboration rejects request metadata with (.+) before reasoning$`, c.rejectRequestMetadata)
-
-	sc.Step(`^the client rejects response metadata with (.+)$`, c.rejectResponseMetadata)
-
-	sc.Step(
-		`^Alice has completed a shareable answer$`,
-		func() error {
-			result, err := c.send("bob", "alice", "publish")
-			if err != nil {
-				return err
-			}
-
-			if result.Status != cp.Status_STATUS_COMPLETED || result.Answer != "published finding" {
-				return fmt.Errorf("unexpected view answer: %+v", result)
-			}
-
-			ref, err := c.nodes["alice"].a.View(s.ctx, "bob", nil)
-
-			if err != nil || ref == nil {
-				return fmt.Errorf("missing view: %v", err)
-			}
-
-			c.originalRef = ref
-
-			return nil
-		},
-	)
-
+	sc.Step(`^the discovered agent streams a standard A2A answer$`, c.streamAnswer)
+	sc.Step(`^collaboration rejects request metadata with missing root before reasoning$`, c.rejectRequestMetadata)
+	sc.Step(`^A2A rejects invalid caller identities before reasoning$`, c.rejectCallerIdentity)
+	sc.Step(`^Alice has completed a shareable answer$`, c.publishFinding)
 	sc.Step(`^Alice is held inside its model call$`, c.hold)
-
-	sc.Step(
-		`^Bob asks the occupied Alice for reasoning$`,
-		func() error {
-			var err error
-			c.busy, err = c.send("bob", "alice", "callback")
-			return err
-		},
-	)
-
-	sc.Step(
-		`^the response is BUSY without another turn or model call$`,
-		func() error {
-			n := c.nodes["alice"]
-
-			before, err := c.readEntries(n)
-			if err != nil {
-				return err
-			}
-
-			if c.busy.Status != cp.Status_STATUS_BUSY || c.busy.Answer != "" {
-				return fmt.Errorf("not a BUSY outcome: %+v", c.busy)
-			}
-
-			result, err := c.send("bob", "alice", "different callback")
-
-			if err != nil || result.Status != cp.Status_STATUS_BUSY {
-				return fmt.Errorf("repeat busy: %+v %v", result, err)
-			}
-
-			after, err := c.readEntries(n)
-			if err != nil {
-				return err
-			}
-
-			expected := int32(1)
-
-			if c.originalRef != nil {
-				expected++
-			}
-
-			if len(before) != len(after) || n.calls.Load() != expected {
-				return fmt.Errorf("busy request changed tape/model: %d/%d calls=%d", len(before), len(after), n.calls.Load())
-			}
-
-			users := 0
-
-			for _, e := range after {
-				if e.GetKind() == entry.EntryUser {
-					users++
-				}
-			}
-
-			if users != int(expected) {
-				return fmt.Errorf("rejected request appended a user entry: %d", users)
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^BUSY reveals no view or private control fields$`,
-		func() error {
-			if c.busy.View != nil {
-				return errors.New("view hint disclosed before any answer completed")
-			}
-
-			raw, _ := json.Marshal(c.busy)
-
-			if strings.Contains(string(raw), "epoch") || strings.Contains(string(raw), "turnId") {
-				return errors.New("private control data disclosed")
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^Bob borrows the BUSY view while Alice remains occupied$`,
-		func() error {
-			if c.busy.View == nil {
-				return errors.New("missing busy view")
-			}
-
-			client, err := c.viewClient("bob")
-			if err != nil {
-				return err
-			}
-
-			req := &pb.BorrowRequest{
-				RequestId: "busy-borrow",
-				Purpose:   "complete research",
-				Query:     "finding",
-				View:      c.busy.View,
-			}
-
-			c.decision, err = client.Borrow(s.ctx, req)
-			if err != nil {
-				return err
-			}
-
-			if c.decision.Status != a2a.Granted {
-				return fmt.Errorf("view denied: %v", c.decision)
-			}
-
-			if err := c.checkView(client, c.decision.Lease); err != nil {
-				return err
-			}
-
-			retry, err := client.Borrow(s.ctx, req)
-
-			if err != nil || !proto.Equal(retry, c.decision) {
-				return fmt.Errorf("unstable borrow retry: %v %v", retry, err)
-			}
-
-			select {
-
-			case result := <-c.held:
-				return fmt.Errorf("owner finished before borrowing: %+v", result)
-
-			default:
-
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^the view grant contains exactly the completed context window$`,
-		func() error {
-			client, err := c.viewClient("bob")
-			if err != nil {
-				return err
-			}
-
-			return c.checkView(client, c.decision.Lease)
-		},
-	)
-
-	sc.Step(
-		`^Alice finishes and commits a newer context window$`,
-		func() error {
-			if err := c.finishHold(); err != nil {
-				return err
-			}
-
-			result, err := c.send("bob", "alice", "new answer")
-
-			if err != nil || result.Status != cp.Status_STATUS_COMPLETED {
-				return fmt.Errorf("new answer: %+v %v", result, err)
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^Alice restarts with the same source and the grant remains readable$`,
-		func() error {
-			n := c.nodes["alice"]
-
-			source := n.a.Source()
-
-			if n.registration != nil {
-				n.registration.Close()
-			}
-
-			n.server.Close()
-
-			if err := n.grants.close(); err != nil {
-				return err
-			}
-
-			n.service = nil
-
-			if err := n.tape.Close(); err != nil {
-				return err
-			}
-
-			n.tape = nil
-
-			if err := c.startNode("alice", c.model()); err != nil {
-				return err
-			}
-
-			if !proto.Equal(source, c.nodes["alice"].a.Source()) {
-				return errors.New("restart changed source")
-			}
-
-			client, err := c.viewClient("bob")
-			if err != nil {
-				return err
-			}
-
-			return c.checkView(client, c.decision.Lease)
-		},
-	)
-
-	sc.Step(
-		`^another trusted requester gets its own grant but cannot read or release Bob's grant$`,
-		func() error {
-			client, err := c.viewClient("mallory")
-			if err != nil {
-				return err
-			}
-
-			own, err := client.Borrow(
-				s.ctx,
-				&pb.BorrowRequest{
-					RequestId: "copied-hint",
-					Purpose:   "request own view grant",
-					Query:     "finding",
-					View:      c.originalRef,
-				},
-			)
-
-			if err != nil || own.Status != a2a.Granted || own.Lease == nil || own.Lease.Id == c.decision.Lease.Id {
-				return fmt.Errorf("missing separate requester-bound grant: %v %v", own, err)
-			}
-
-			quote, err := client.ReadView(s.ctx, own.Lease)
-			if err != nil {
-				return err
-			}
-
-			bob, err := c.viewClient("bob")
-			if err != nil {
-				return err
-			}
-
-			original, err := bob.ReadView(s.ctx, c.decision.Lease)
-			if err != nil {
-				return err
-			}
-
-			if len(quote.Entries) != 2 || len(original.Entries) != 2 || !proto.Equal(quote.Entries[0], original.Entries[0]) || !proto.Equal(quote.Entries[1], original.Entries[1]) {
-				return errors.New("separate grants did not return the same immutable view")
-			}
-
-			if _, err = client.ReadView(s.ctx, c.decision.Lease); !errors.Is(err, a2a.ErrUnavailable) {
-				return fmt.Errorf("other requester read: %v", err)
-			}
-
-			if err = client.Release(s.ctx, c.decision.Lease.Id); !errors.Is(err, a2a.ErrUnavailable) {
-				return fmt.Errorf("other requester release: %v", err)
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^a guessed reference cannot obtain private or control entries$`,
-		func() error {
-			client, err := c.viewClient("mallory")
-			if err != nil {
-				return err
-			}
-
-			source := c.nodes["alice"].a.Source()
-
-			for _, seq := range []string{"2", "3", "999"} {
-
-				d, err := client.Borrow(
-					s.ctx,
-					&pb.BorrowRequest{
-						RequestId: "guess-" + seq,
-						Purpose:   "guess",
-						Query:     "private",
-						View: &pb.Ref{
-							Source: source,
-							Scopes: []*pb.EntryRange{{
-								SeqS: "1",
-								SeqE: seq,
-							}},
-						},
-					},
-				)
-				if err != nil {
-					return err
-				}
-
-				if d.Status != a2a.Denied || d.Lease != nil {
-					return errors.New("guessed reference granted")
-				}
-
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^the view grant is ended by (release|revocation|expiry)$`,
-		func(how string) error {
-			client, err := c.viewClient("bob")
-			if err != nil {
-				return err
-			}
-
-			switch how {
-
-			case "release":
-				err = client.Release(s.ctx, c.decision.Lease.Id)
-
-			case "revocation":
-				err = c.nodes["alice"].service.Revoke(s.ctx, "bob", c.decision.Lease.Id)
-
-			case "expiry":
-				c.now.Add(int64(2 * time.Hour))
-
-			}
-
-			if err != nil {
-				return err
-			}
-
-			_, err = client.ReadView(s.ctx, c.decision.Lease)
-
-			if !errors.Is(err, a2a.ErrUnavailable) {
-				return fmt.Errorf("ended grant readable: %v", err)
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^view requests reject a changed reference and incompatible bounds$`,
-		func() error {
-			client, err := c.viewClient("bob")
-			if err != nil {
-				return err
-			}
-
-			changed := anchor.CloneRef(c.busy.View)
-
-			changed.Scopes[0].SeqS = "1"
-
-			if _, err := client.Borrow(
-				s.ctx,
-				&pb.BorrowRequest{
-					RequestId: "busy-borrow",
-					Purpose:   "complete research",
-					Query:     "finding",
-					View:      changed,
-				},
-			); !errors.Is(err, a2a.ErrInvalidParams) {
-				return fmt.Errorf("changed reference: %v", err)
-			}
-
-			req := &pb.BorrowRequest{
-				RequestId: "wrong-source",
-				Purpose:   "research",
-				Query:     "finding",
-				View:      anchor.CloneRef(c.busy.View),
-			}
-
-			req.View.Source.TapeId = "other-incarnation"
-
-			d, err := client.Borrow(s.ctx, req)
-
-			if err != nil || d.Status != a2a.Denied {
-				return fmt.Errorf("wrong source granted: %v %v", d, err)
-			}
-
-			req.RequestId = "expanded-scope"
-
-			req.View = anchor.CloneRef(c.busy.View)
-
-			req.View.Scopes[0].SeqS = "1"
-
-			d, err = client.Borrow(s.ctx, req)
-
-			if err != nil || d.Status != a2a.Denied {
-				return fmt.Errorf("expanded context scope granted: %v %v", d, err)
-			}
-
-			req.RequestId = "wrong-bounds"
-
-			req.View = c.busy.View
-
-			req.Bounds = &pb.EntryRange{
-				SeqS: "1",
-				SeqE: "2",
-			}
-
-			d, err = client.Borrow(s.ctx, req)
-
-			if err != nil || d.Status != a2a.Denied {
-				return fmt.Errorf("incompatible bounds granted: %v %v", d, err)
-			}
-
-			req.RequestId = "malformed"
-
-			req.Bounds = nil
-
-			req.View = anchor.CloneRef(c.busy.View)
-
-			req.View.Scopes[0].SeqE = "01"
-
-			if _, err := client.Borrow(s.ctx, req); !errors.Is(err, a2a.ErrInvalidParams) {
-				return fmt.Errorf("malformed ref: %v", err)
-			}
-
-			return nil
-		},
-	)
-
+	sc.Step(`^Bob asks the occupied Alice for reasoning$`, c.askBusy)
+	sc.Step(`^the response is BUSY without another turn or model call$`, c.checkBusyAdmission)
+	sc.Step(`^BUSY reveals no view or private control fields$`, c.checkBusyPrivacy)
+	sc.Step(`^Bob borrows the BUSY view while Alice remains occupied$`, c.borrowBusyView)
+	sc.Step(`^the view grant contains exactly the completed context window$`, c.checkBorrowedWindow)
+	sc.Step(`^Alice finishes and commits a newer context window$`, c.publishNewerWindow)
+	sc.Step(`^Alice restarts with the same source and the grant remains readable$`, c.restartAndCheckGrant)
+	sc.Step(`^another trusted requester gets its own grant but cannot read or release Bob's grant$`, c.checkOtherRequester)
+	sc.Step(`^a guessed reference cannot obtain private or control entries$`, c.rejectGuessedRef)
+	sc.Step(`^view requests reject a changed reference and incompatible bounds$`, c.rejectChangedView)
 	sc.Step(`^Alice's cancelled turn closes and its partial history is excluded$`, c.cancelAndContinue)
-
 	sc.Step(`^simultaneous callers admit exactly one turn$`, c.raceAdmission)
-
 	sc.Step(`^cyclic peer reasoning completes using BUSY and borrowed findings$`, c.cycle)
-
 	sc.Step(`^independent roots consult one another without blocking$`, c.independentRoots)
+	sc.Step(`^shutdown drains active reasoning before storage closes$`, c.checkShutdown)
+	sc.Step(`^an unresolved terminal append fences further reasoning$`, c.checkTerminalFailure)
+	sc.Step(`^startup rejects a tape containing overlapping starts$`, c.rejectOverlappingTurns)
+	sc.Step(`^generic A2A callers receive an unaccepted response with no hint$`, c.checkGenericBusy)
+}
 
-	sc.Step(`^repeated BUSY delegation is suppressed only within each turn$`, c.suppression)
+func (c *collaborationScenario) close() error {
+	if c.heldCancel != nil {
+		c.heldCancel()
+	}
+	if c.gate != nil {
+		c.gate.unblock()
+	}
+	var err error
+	for _, n := range c.nodes {
+		err = errors.Join(err, n.close())
+	}
+	if c.directory != nil {
+		c.directory.Close()
+	}
+	if c.registryStore != nil {
+		err = errors.Join(err, c.registryStore.Close())
+	}
+	return err
+}
 
-	sc.Step(`^Bob resumes reasoning only after borrowing newer lender-selected findings$`, c.lenderSelection)
+// stopRuntime leaves the Tape open for scenarios that inject persisted history.
+func (n *collaborationNode) stopRuntime() error {
+	if n.registration != nil {
+		n.registration.Close()
+		n.registration = nil
+	}
+	if n.server != nil {
+		n.server.Close()
+		n.server = nil
+	}
+	if n.a != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := n.a.Shutdown(ctx); err != nil {
+			return err
+		}
+		n.a = nil
+	}
+	if n.grants != nil {
+		err := n.grants.close()
+		n.grants = nil
+		return err
+	}
+	return nil
+}
 
-	sc.Step(`^an expired delegation deadline rejects reasoning before model or peer calls$`, c.expiredDeadline)
+func (n *collaborationNode) close() error {
+	if err := n.stopRuntime(); err != nil {
+		return err
+	}
+	if n.tape != nil {
+		err := n.tape.Close()
+		n.tape = nil
+		return err
+	}
+	return nil
+}
 
-	sc.Step(`^Bob borrows supplied context without reentering Alice$`, c.suppliedContext)
+func (c *collaborationScenario) publishFinding() error {
+	result, err := c.send("bob", "alice", "publish")
+	if err != nil {
+		return err
+	}
 
-	sc.Step(`^a client rejects a view grant with mismatched (source|range|head)$`, c.rejectMismatchedGrant)
+	if result.Status != cp.Status_STATUS_COMPLETED || result.Answer != "published finding" {
+		return fmt.Errorf("unexpected view answer: %+v", result)
+	}
 
-	sc.Step(
-		`^shutdown drains active reasoning before storage closes$`,
-		func() error {
-			if err := c.hold(); err != nil {
-				return err
-			}
+	ref, err := c.nodes["alice"].a.View(c.s.ctx, "bob", nil)
 
-			ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	if err != nil || ref == nil {
+		return fmt.Errorf("missing view: %v", err)
+	}
 
-			defer cancel()
+	c.originalRef = ref
 
-			n := c.nodes["alice"]
+	return nil
+}
 
-			if err := n.a.Shutdown(ctx); err != nil {
-				return err
-			}
+func (c *collaborationScenario) askBusy() error {
+	var err error
+	c.busy, err = c.send("bob", "alice", "callback")
+	return err
+}
 
-			if err := n.a.Shutdown(ctx); err != nil {
-				return err
-			}
+func (c *collaborationScenario) checkBusyAdmission() error {
+	n := c.nodes["alice"]
 
-			if _, err := n.a.Run(s.ctx, "too late"); !errors.Is(err, agent.ErrClosing) {
-				return fmt.Errorf("shutdown admitted work: %v", err)
-			}
+	before, err := c.readEntries(n)
+	if err != nil {
+		return err
+	}
 
-			entries, err := c.readEntries(n)
-			if err != nil {
-				return err
-			}
+	if c.busy.Status != cp.Status_STATUS_BUSY || c.busy.Answer != "" {
+		return fmt.Errorf("not a BUSY outcome: %+v", c.busy)
+	}
 
-			value, err := ae.FromTape(entries[len(entries)-1])
-			if err != nil {
-				return err
-			}
-			last, err := anchor.Decode(value)
-			if err != nil {
-				return err
-			}
+	result, err := c.send("bob", "alice", "different callback")
 
-			if last == nil || last.Type != anchor.TurnClosed || last.Outcome != "cancelled" {
-				return fmt.Errorf("shutdown left an open turn: %+v", last)
-			}
+	if err != nil || result.Status != cp.Status_STATUS_BUSY {
+		return fmt.Errorf("repeat busy: %+v %v", result, err)
+	}
 
-			return n.tape.Close()
+	after, err := c.readEntries(n)
+	if err != nil {
+		return err
+	}
+
+	expected := int32(1)
+
+	if c.originalRef != nil {
+		expected++
+	}
+
+	if len(before) != len(after) || n.calls.Load() != expected {
+		return fmt.Errorf("busy request changed tape/model: %d/%d calls=%d", len(before), len(after), n.calls.Load())
+	}
+
+	users := 0
+
+	for _, e := range after {
+		if e.GetKind() == entry.EntryUser {
+			users++
+		}
+	}
+
+	if users != int(expected) {
+		return fmt.Errorf("rejected request appended a user entry: %d", users)
+	}
+
+	return nil
+}
+
+func (c *collaborationScenario) checkBusyPrivacy() error {
+	if c.busy.View != nil {
+		return errors.New("view hint disclosed before any answer completed")
+	}
+
+	raw, _ := json.Marshal(c.busy)
+
+	if strings.Contains(string(raw), "epoch") || strings.Contains(string(raw), "turnId") {
+		return errors.New("private control data disclosed")
+	}
+
+	return nil
+}
+
+func (c *collaborationScenario) borrowBusyView() error {
+	if c.busy.View == nil {
+		return errors.New("missing busy view")
+	}
+
+	client, err := c.viewClient("bob")
+	if err != nil {
+		return err
+	}
+
+	req := &pb.BorrowRequest{
+		RequestId: "busy-borrow",
+		Purpose:   "complete research",
+		Query:     "finding",
+		View:      c.busy.View,
+	}
+
+	c.decision, err = c.borrowGrantedView(client, req)
+	if err != nil {
+		return err
+	}
+
+	if err := c.checkView(client, c.decision.Lease); err != nil {
+		return err
+	}
+
+	retry, err := client.Borrow(c.s.ctx, req)
+
+	if err != nil || !proto.Equal(retry, c.decision) {
+		return fmt.Errorf("unstable borrow retry: %v %v", retry, err)
+	}
+
+	select {
+	case result := <-c.held:
+		return fmt.Errorf("owner finished before borrowing: %+v", result)
+	default:
+	}
+
+	return nil
+}
+
+func (c *collaborationScenario) checkBorrowedWindow() error {
+	client, err := c.viewClient("bob")
+	if err != nil {
+		return err
+	}
+
+	return c.checkView(client, c.decision.Lease)
+}
+
+func (c *collaborationScenario) publishNewerWindow() error {
+	if err := c.finishHold(); err != nil {
+		return err
+	}
+
+	result, err := c.send("bob", "alice", "new answer")
+
+	if err != nil || result.Status != cp.Status_STATUS_COMPLETED {
+		return fmt.Errorf("new answer: %+v %v", result, err)
+	}
+
+	return nil
+}
+
+func (c *collaborationScenario) restartAndCheckGrant() error {
+	source := c.nodes["alice"].a.Source()
+	if err := c.replaceAlice(c.model()); err != nil {
+		return err
+	}
+
+	if !proto.Equal(source, c.nodes["alice"].a.Source()) {
+		return errors.New("restart changed source")
+	}
+
+	return c.checkBorrowedWindow()
+}
+
+func (c *collaborationScenario) checkOtherRequester() error {
+	client, err := c.viewClient("mallory")
+	if err != nil {
+		return err
+	}
+
+	own, err := c.borrowGrantedView(
+		client,
+		&pb.BorrowRequest{
+			RequestId: "copied-hint",
+			Purpose:   "request own view grant",
+			Query:     "finding",
+			View:      c.originalRef,
 		},
 	)
 
-	sc.Step(
-		`^an unresolved terminal append fences further reasoning$`,
-		func() error {
-			if err := c.hold(); err != nil {
-				return err
-			}
+	if err != nil || own.Lease.Id == c.decision.Lease.Id {
+		return fmt.Errorf("missing separate requester-bound grant: %v %v", own, err)
+	}
 
-			n := c.nodes["alice"]
+	quote, err := client.ReadView(c.s.ctx, own.Lease)
+	if err != nil {
+		return err
+	}
 
-			if err := n.tape.Close(); err != nil {
-				return err
-			}
+	bob, err := c.viewClient("bob")
+	if err != nil {
+		return err
+	}
 
-			close(c.release)
+	original, err := bob.ReadView(c.s.ctx, c.decision.Lease)
+	if err != nil {
+		return err
+	}
 
-			select {
+	if len(quote.Entries) != 2 || len(original.Entries) != 2 || !proto.Equal(quote.Entries[0], original.Entries[0]) || !proto.Equal(quote.Entries[1], original.Entries[1]) {
+		return errors.New("separate grants did not return the same immutable view")
+	}
 
-			case result := <-c.held:
-				if result.err == nil {
-					return errors.New("storage failure acknowledged success")
-				}
+	if _, err = client.ReadView(c.s.ctx, c.decision.Lease); !errors.Is(err, a2a.ErrUnavailable) {
+		return fmt.Errorf("other requester read: %v", err)
+	}
 
-			case <-s.ctx.Done():
-				return s.ctx.Err()
+	if err = client.Release(c.s.ctx, c.decision.Lease.Id); !errors.Is(err, a2a.ErrUnavailable) {
+		return fmt.Errorf("other requester release: %v", err)
+	}
 
-			}
+	return nil
+}
 
-			before := n.calls.Load()
+func (c *collaborationScenario) rejectGuessedRef() error {
+	client, err := c.viewClient("mallory")
+	if err != nil {
+		return err
+	}
 
-			_, err := n.a.Run(s.ctx, "must remain fenced")
+	source := c.nodes["alice"].a.Source()
 
-			if !errors.Is(err, agent.ErrFenced) || n.calls.Load() != before {
-				return fmt.Errorf("unresolved close reopened admission: %v", err)
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^startup rejects a tape containing (numeric v1 type|empty v1 type|unknown v1 type|invalid v1 start|invalid v1 source|invalid v1 outcome|forbidden v1 field|oversized multibyte identity|oversized identity|malformed integration record|malformed record|missing schema|malformed unknown schema|overlapping starts|unmatched close|conflicting source)$`,
-		func(problem string) error {
-			n := c.nodes["alice"]
-
-			if n.registration != nil {
-				n.registration.Close()
-			}
-
-			n.server.Close()
-
-			if err := n.grants.close(); err != nil {
-				return err
-			}
-
-			n.service = nil
-
-			payloads := []string{}
-
-			switch problem {
-
-			case "numeric v1 type":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":1}`}
-
-			case "empty v1 type":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":""}`}
-
-			case "unknown v1 type":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"integration.created"}`}
-
-			case "invalid v1 start":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started"}`}
-
-			case "invalid v1 source":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"tape.initialized"}`}
-
-			case "invalid v1 outcome":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.closed","turnId":"one","startSeq":"1","outcome":"unknown"}`}
-
-			case "forbidden v1 field":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old","outcome":"failed"}`}
-
-			case "oversized multibyte identity":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("界", 86) + `"}`}
-
-			case "oversized identity":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","ownerEpoch":"old","turnId":"` + strings.Repeat("x", 257) + `"}`}
-
-			case "malformed integration record":
-				payloads = []string{`{"schema":"anra.dev/anchor/intr/v1","type":`}
-
-			case "malformed record":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":`}
-
-			case "missing schema":
-				payloads = []string{`{"type":"turn.started"}`}
-
-			case "malformed unknown schema":
-				payloads = []string{`{"schema":"example.org/anchor/v1","type":`}
-
-			case "overlapping starts":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old"}`, `{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"two","ownerEpoch":"old"}`}
-
-			case "unmatched close":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"turn.closed","turnId":"unknown","startSeq":"1","outcome":"completed"}`}
-
-			case "conflicting source":
-				payloads = []string{`{"schema":"anra.dev/anchor/v1","type":"tape.initialized","source":{"agentId":"alice","tapeId":"replacement"}}`}
-
-			}
-
-			for _, raw := range payloads {
-				if _, err := n.tape.Store(owner.WithOwnerId(s.ctx, "alice"), entry.NewAnchor(
-					entry.Seq{},
-					"alice",
-					entry.AnchorKindCustom,
-					[]byte(raw),
-				)); err != nil {
-					return err
-				}
-			}
-
-			if _, err := agent.New("alice", n.tape); err == nil {
-				return errors.New("corrupt control history was interpreted as healthy")
-			}
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^generic A2A callers receive an unaccepted response with no hint$`,
-		func() error {
-			client, err := a2aclient.NewFromCard(s.ctx, c.nodes["alice"].card, a2aclient.WithJSONRPCTransport(a2a.TrustedHTTPClient("bob")))
-			if err != nil {
-				return err
-			}
-
-			response, err := client.SendMessage(
-				s.ctx,
-				&sdk.SendMessageRequest{
-					Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("generic callback")),
+	for _, seq := range []string{"2", "3", "999"} {
+		d, err := client.Borrow(
+			c.s.ctx,
+			&pb.BorrowRequest{
+				RequestId: "guess-" + seq,
+				Purpose:   "guess",
+				Query:     "private",
+				View: &pb.Ref{
+					Source: source,
+					Scopes: []*pb.EntryRange{{
+						SeqS: "1",
+						SeqE: seq,
+					}},
 				},
-			)
-			if err != nil {
-				return err
-			}
+			},
+		)
+		if err != nil {
+			return err
+		}
 
-			message, ok := response.(*sdk.Message)
+		if d.Status != a2a.Denied || d.Lease != nil {
+			return errors.New("guessed reference granted")
+		}
+	}
 
-			if !ok || len(message.Metadata) != 0 || len(message.Extensions) != 0 || len(message.Parts) != 1 || !strings.Contains(message.Parts[0].Text(), "request was not accepted") {
-				return fmt.Errorf("generic caller received private/ambiguous BUSY: %+v", response)
-			}
+	return nil
+}
 
-			return nil
+func (c *collaborationScenario) rejectChangedView() error {
+	client, err := c.viewClient("bob")
+	if err != nil {
+		return err
+	}
+
+	changed := anchor.CloneRef(c.busy.View)
+
+	changed.Scopes[0].SeqS = "1"
+
+	if _, err := client.Borrow(
+		c.s.ctx,
+		&pb.BorrowRequest{
+			RequestId: "busy-borrow",
+			Purpose:   "complete research",
+			Query:     "finding",
+			View:      changed,
+		},
+	); !errors.Is(err, a2a.ErrInvalidParams) {
+		return fmt.Errorf("changed reference: %v", err)
+	}
+
+	req := &pb.BorrowRequest{
+		RequestId: "wrong-source",
+		Purpose:   "research",
+		Query:     "finding",
+		View:      anchor.CloneRef(c.busy.View),
+	}
+
+	req.View.Source.TapeId = "other-incarnation"
+
+	d, err := client.Borrow(c.s.ctx, req)
+
+	if err != nil || d.Status != a2a.Denied {
+		return fmt.Errorf("wrong source granted: %v %v", d, err)
+	}
+
+	req.RequestId = "expanded-scope"
+
+	req.View = anchor.CloneRef(c.busy.View)
+
+	req.View.Scopes[0].SeqS = "1"
+
+	d, err = client.Borrow(c.s.ctx, req)
+
+	if err != nil || d.Status != a2a.Denied {
+		return fmt.Errorf("expanded context scope granted: %v %v", d, err)
+	}
+
+	req.RequestId = "wrong-bounds"
+
+	req.View = c.busy.View
+
+	req.Bounds = &pb.EntryRange{
+		SeqS: "1",
+		SeqE: "2",
+	}
+
+	d, err = client.Borrow(c.s.ctx, req)
+
+	if err != nil || d.Status != a2a.Denied {
+		return fmt.Errorf("incompatible bounds granted: %v %v", d, err)
+	}
+
+	req.RequestId = "malformed"
+
+	req.Bounds = nil
+
+	req.View = anchor.CloneRef(c.busy.View)
+
+	req.View.Scopes[0].SeqE = "01"
+
+	if _, err := client.Borrow(c.s.ctx, req); !errors.Is(err, a2a.ErrInvalidParams) {
+		return fmt.Errorf("malformed ref: %v", err)
+	}
+
+	return nil
+}
+
+func (c *collaborationScenario) checkShutdown() error {
+	if err := c.hold(); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(c.s.ctx, 5*time.Second)
+
+	defer cancel()
+
+	n := c.nodes["alice"]
+
+	if err := n.a.Shutdown(ctx); err != nil {
+		return err
+	}
+
+	if err := n.a.Shutdown(ctx); err != nil {
+		return err
+	}
+
+	if _, err := n.a.Run(c.s.ctx, "too late"); !errors.Is(err, agent.ErrClosing) {
+		return fmt.Errorf("shutdown admitted work: %v", err)
+	}
+
+	entries, err := c.readEntries(n)
+	if err != nil {
+		return err
+	}
+
+	value, err := ae.FromTape(entries[len(entries)-1])
+	if err != nil {
+		return err
+	}
+	last, err := anchor.Decode(value)
+	if err != nil {
+		return err
+	}
+
+	if last == nil || last.Type != anchor.TurnClosed || last.Outcome != "cancelled" {
+		return fmt.Errorf("shutdown left an open turn: %+v", last)
+	}
+
+	return n.tape.Close()
+}
+
+func (c *collaborationScenario) checkTerminalFailure() error {
+	if err := c.hold(); err != nil {
+		return err
+	}
+
+	n := c.nodes["alice"]
+
+	if err := n.tape.Close(); err != nil {
+		return err
+	}
+
+	c.gate.unblock()
+
+	select {
+	case result := <-c.held:
+		if result.err == nil {
+			return errors.New("storage failure acknowledged success")
+		}
+	case <-c.s.ctx.Done():
+		return c.s.ctx.Err()
+	}
+
+	before := n.calls.Load()
+
+	_, err := n.a.Run(c.s.ctx, "must remain fenced")
+
+	if !errors.Is(err, agent.ErrFenced) || n.calls.Load() != before {
+		return fmt.Errorf("unresolved close reopened admission: %v", err)
+	}
+
+	return nil
+}
+
+func (c *collaborationScenario) rejectOverlappingTurns() error {
+	n := c.nodes["alice"]
+
+	if err := n.stopRuntime(); err != nil {
+		return err
+	}
+
+	payloads := []string{
+		`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"one","ownerEpoch":"old"}`,
+		`{"schema":"anra.dev/anchor/v1","type":"turn.started","turnId":"two","ownerEpoch":"old"}`,
+	}
+
+	for _, raw := range payloads {
+		if _, err := n.tape.Store(owner.WithOwnerId(c.s.ctx, "alice"), entry.NewAnchor(
+			entry.Seq{},
+			"alice",
+			entry.AnchorKindCustom,
+			[]byte(raw),
+		)); err != nil {
+			return err
+		}
+	}
+
+	if err := n.tape.Close(); err != nil {
+		return err
+	}
+	n.tape = nil
+
+	err := c.startNode("alice", c.model())
+	if err == nil || !strings.Contains(err.Error(), "agent: replay") {
+		return fmt.Errorf("startup did not reject the corrupt history during replay: %v", err)
+	}
+	if c.nodes["alice"].server != nil {
+		return errors.New("a node with corrupt history started serving")
+	}
+
+	return nil
+}
+
+func (c *collaborationScenario) checkGenericBusy() error {
+	client, err := c.a2aClient("bob", "alice")
+	if err != nil {
+		return err
+	}
+
+	response, err := client.SendMessage(
+		c.s.ctx,
+		&sdk.SendMessageRequest{
+			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("generic callback")),
 		},
 	)
+	if err != nil {
+		return err
+	}
 
-	sc.Step(
-		`^legacy lenders cannot silently accept view references$`,
-		func() error {
-			card := *c.nodes["alice"].card
+	message, ok := response.(*sdk.Message)
 
-			card.Capabilities.Extensions = append([]sdk.AgentExtension(nil), card.Capabilities.Extensions...)
+	if !ok || len(message.Metadata) != 0 || len(message.Extensions) != 0 || len(message.Parts) != 1 || !strings.Contains(message.Parts[0].Text(), "request was not accepted") {
+		return fmt.Errorf("generic caller received private/ambiguous BUSY: %+v", response)
+	}
 
-			for i := range card.Capabilities.Extensions {
-				if card.Capabilities.Extensions[i].URI == a2a.ExtensionURI {
-
-					ext := card.Capabilities.Extensions[i]
-
-					ext.Params = map[string]any{"endpoint": c.nodes["alice"].server.URL + a2a.ViewPath}
-
-					card.Capabilities.Extensions[i] = ext
-
-				}
-			}
-
-			client, err := a2a.NewClient(a2a.TrustedHTTPClient("bob"), &card)
-			if err != nil {
-				return err
-			}
-
-			_, err = client.Borrow(
-				s.ctx,
-				&pb.BorrowRequest{
-					RequestId: "legacy",
-					Purpose:   "test",
-					Query:     "test",
-					View:      c.originalRef,
-				},
-			)
-
-			if !errors.Is(err, a2a.ErrInactive) {
-				return fmt.Errorf("legacy view fallback: %v", err)
-			}
-
-			return nil
-		},
-	)
+	return nil
 }
 
 func (c *collaborationScenario) setup() error {
@@ -965,27 +691,10 @@ func (c *collaborationScenario) model() modelFunc {
 			input := r.Messages[len(r.Messages)-1].Text
 
 			if input == "hold" {
-
-				select {
-
-				case c.entered <- struct{}{}:
-
-				case <-ctx.Done():
-					return runner.Response{}, ctx.Err()
-
+				if err := c.gate.block(ctx); err != nil {
+					return runner.Response{}, err
 				}
-
-				select {
-
-				case <-c.release:
-
-				case <-ctx.Done():
-					return runner.Response{}, ctx.Err()
-
-				}
-
 			}
-
 			if input == "publish" {
 				return runner.Response{
 					Output: "published finding",
@@ -1003,16 +712,13 @@ func (c *collaborationScenario) startNode(name string, m model.LLM) error {
 	n := &collaborationNode{}
 	c.nodes[name] = n
 	var err error
-	n.tape, err = bbolt.NewBboltStorage("default", filepath.Join(c.s.root, "collab-"+name+".db"))
+	n.tape, err = openBboltTape(owner.WithOwnerId(c.s.ctx, name), "default", filepath.Join(c.s.root, "collab-"+name+".db"))
 	if err != nil {
-		return err
-	}
-	if err = n.tape.Init(owner.WithOwnerId(c.s.ctx, name)); err != nil {
 		return err
 	}
 
 	opts := []agent.Option{agent.WithLLM(
-		countedCollaborationModel{
+		countedModel{
 			LLM:   m,
 			calls: &n.calls,
 		},
@@ -1037,7 +743,7 @@ func (c *collaborationScenario) startNode(name string, m model.LLM) error {
 	if err != nil {
 		return err
 	}
-	n.service, err = n.grants.newService(
+	borrowing, err := n.grants.newService(
 		borrow.Config{
 			Source:   n.a.Source(),
 			Tape:     n.grants.tape,
@@ -1068,20 +774,12 @@ func (c *collaborationScenario) startNode(name string, m model.LLM) error {
 	if err != nil {
 		return err
 	}
-	handler, err := a2a.NewPeerHandler(n.card, a2asrv.NewHandler(exec), n.service, a2a.TrustedPeerIdentity)
+	handler, err := trustedPeerHandler(n.card, exec, borrowing)
 	if err != nil {
 		return err
 	}
 
-	n.server.Config.Handler = http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == a2a.CorePath {
-				n.requests.Add(1)
-			}
-
-			handler.ServeHTTP(w, r)
-		},
-	)
+	n.server.Config.Handler = handler
 
 	n.server.Start()
 
@@ -1104,12 +802,16 @@ func (c *collaborationScenario) startNode(name string, m model.LLM) error {
 	return err
 }
 
-func (c *collaborationScenario) send(from, to, input string) (clbr.Result, error) {
-	return c.sendCtx(c.s.ctx, from, to, input)
+func (c *collaborationScenario) a2aClient(from, to string) (*a2aclient.Client, error) {
+	return newA2AClient(c.s.ctx, a2a.TrustedHTTPClient(from), c.nodes[to].card)
 }
 
-func (c *collaborationScenario) sendCtx(ctx context.Context, from, to, input string) (clbr.Result, error) {
-	client, err := messageClient(ctx, a2a.TrustedHTTPClient(from), c.nodes[to].server.URL)
+func (c *collaborationScenario) send(from, to, input string) (clbr.Result, error) {
+	return sendPeerMessage(c.s.ctx, from, c.nodes[to].server.URL, input)
+}
+
+func sendPeerMessage(ctx context.Context, caller, endpoint, input string) (clbr.Result, error) {
+	client, err := messageClient(ctx, caller, endpoint)
 	if err != nil {
 		return clbr.Result{}, err
 	}
@@ -1117,31 +819,41 @@ func (c *collaborationScenario) sendCtx(ctx context.Context, from, to, input str
 }
 
 func (c *collaborationScenario) viewClient(peer string) (*a2a.Client, error) {
-	return a2a.NewClient(a2a.TrustedHTTPClient(peer), c.nodes["alice"].card)
+	return trustedViewClient(peer, c.nodes["alice"].card)
+}
+
+func (c *collaborationScenario) borrowGrantedView(client *a2a.Client, req *pb.BorrowRequest) (*pb.Decision, error) {
+	decision, err := client.Borrow(c.s.ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if decision.GetStatus() != a2a.Granted || decision.GetLease() == nil {
+		return decision, fmt.Errorf("borrow %q did not grant a lease: %v", req.RequestId, decision)
+	}
+	return decision, nil
 }
 
 func (c *collaborationScenario) hold() error {
-	c.entered = make(chan struct{}, 1)
-	c.release = make(chan struct{})
-	c.held = make(chan heldResult, 1)
+	c.gate = newModelGate(1)
+	results := make(chan heldResult, 1)
+	c.held = results
 	ctx, cancel := context.WithCancel(c.s.ctx)
 	c.heldCancel = cancel
+	endpoint := c.nodes["alice"].server.URL
 
 	go func() {
-		r, e := c.sendCtx(ctx, "bob", "alice", "hold")
-		c.held <- heldResult{r, e}
+		result, err := sendPeerMessage(ctx, "bob", endpoint, "hold")
+		results <- heldResult{
+			result: result,
+			err:    err,
+		}
 	}()
 
-	select {
-	case <-c.entered:
-		return nil
-	case <-c.s.ctx.Done():
-		return c.s.ctx.Err()
-	}
+	return c.gate.awaitEntry(c.s.ctx)
 }
 
 func (c *collaborationScenario) finishHold() error {
-	close(c.release)
+	c.gate.unblock()
 	select {
 	case r := <-c.held:
 		if r.err != nil {
@@ -1158,20 +870,8 @@ func (c *collaborationScenario) finishHold() error {
 
 func (c *collaborationScenario) readEntries(n *collaborationNode) ([]entry.EntryLike, error) {
 	ctx := owner.WithOwnerId(c.s.ctx, n.a.Source().AgentId)
-	h, err := n.tape.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := n.tape.Range(
-		ctx,
-		view.EntryRange{
-			SeqS: entry.SeqFromUint64(1),
-			SeqE: h.Scope.SeqE.Next(),
-		},
-	)
-
-	return r.Raw, err
+	entries, _, err := readAllEntries(ctx, n.tape)
+	return entries, err
 }
 
 func (c *collaborationScenario) checkView(client *a2a.Client, v *pb.Lease) error {
@@ -1211,23 +911,25 @@ func (c *collaborationScenario) checkView(client *a2a.Client, v *pb.Lease) error
 }
 
 func (c *collaborationScenario) raceAdmission() error {
-	c.entered = make(chan struct{}, 1)
-	c.release = make(chan struct{})
+	c.gate = newModelGate(1)
 	const count = 12
 	start := make(chan struct{})
 	results := make(chan heldResult, count)
-	for i := 0; i < count; i++ {
+	ctx := c.s.ctx
+	endpoint := c.nodes["alice"].server.URL
+	for range count {
 		go func() {
 			<-start
-			r, e := c.send("bob", "alice", "hold")
-			results <- heldResult{r, e}
+			result, err := sendPeerMessage(ctx, "bob", endpoint, "hold")
+			results <- heldResult{
+				result: result,
+				err:    err,
+			}
 		}()
 	}
 	close(start)
-	select {
-	case <-c.entered:
-	case <-c.s.ctx.Done():
-		return c.s.ctx.Err()
+	if err := c.gate.awaitEntry(c.s.ctx); err != nil {
+		return err
 	}
 	for i := 0; i < count-1; i++ {
 		select {
@@ -1242,7 +944,7 @@ func (c *collaborationScenario) raceAdmission() error {
 	if c.nodes["alice"].calls.Load() != 1 {
 		return errors.New("more than one model admitted")
 	}
-	close(c.release)
+	c.gate.unblock()
 	select {
 	case r := <-results:
 		if r.err != nil || r.result.Status != cp.Status_STATUS_COMPLETED {
@@ -1354,19 +1056,9 @@ func lastTool(r runner.Request) (string, map[string]any) {
 }
 
 func (c *collaborationScenario) replaceAlice(m model.LLM) error {
-	n := c.nodes["alice"]
-	if n.registration != nil {
-		n.registration.Close()
-	}
-	n.server.Close()
-	if err := n.grants.close(); err != nil {
+	if err := c.nodes["alice"].close(); err != nil {
 		return err
 	}
-	n.service = nil
-	if err := n.tape.Close(); err != nil {
-		return err
-	}
-	n.tape = nil
 	return c.startNode("alice", m)
 }
 
@@ -1452,22 +1144,11 @@ func (c *collaborationScenario) cycle() error {
 }
 
 func (c *collaborationScenario) independentRoots() error {
-	entered := make(chan struct{}, 2)
-	proceed := make(chan struct{})
-	received := make(chan struct{}, 2)
-	finish := make(chan struct{})
-	defer func() {
-		select {
-		case <-proceed:
-		default:
-			close(proceed)
-		}
-		select {
-		case <-finish:
-		default:
-			close(finish)
-		}
-	}()
+	start := newModelGate(2)
+	finish := newModelGate(2)
+	defer start.unblock()
+	defer finish.unblock()
+
 	fixture := func(peer string) modelFunc {
 		return modelFunc(
 			func(ctx context.Context, r runner.Request) (runner.Response, error) {
@@ -1475,17 +1156,9 @@ func (c *collaborationScenario) independentRoots() error {
 
 				if name == "" {
 
-					entered <- struct{}{}
-
-					select {
-
-					case <-proceed:
-
-					case <-ctx.Done():
-						return runner.Response{}, ctx.Err()
-
+					if err := start.block(ctx); err != nil {
+						return runner.Response{}, err
 					}
-
 					return toolCall("send_peer_message", map[string]any{"peer": peer, "message": "help"}), nil
 
 				}
@@ -1494,16 +1167,9 @@ func (c *collaborationScenario) independentRoots() error {
 					return runner.Response{}, fmt.Errorf("independent root callback wasn't busy: %v", result)
 				}
 
-				received <- struct{}{}
-
-				select {
-
-				case <-finish:
-
-				case <-ctx.Done():
-					return runner.Response{}, ctx.Err()
+				if err := finish.block(ctx); err != nil {
+					return runner.Response{}, err
 				}
-
 				return runner.Response{
 					Output: "continued after busy",
 				}, nil
@@ -1517,30 +1183,33 @@ func (c *collaborationScenario) independentRoots() error {
 		return err
 	}
 	results := make(chan heldResult, 2)
+	ctx := c.s.ctx
 	for _, name := range []string{"alice", "bob"} {
-		go func(name string) {
-			r, e := c.send("root", name, "independent root")
-			results <- heldResult{r, e}
-		}(name)
+		endpoint := c.nodes[name].server.URL
+		go func() {
+			result, err := sendPeerMessage(ctx, "root", endpoint, "independent root")
+			results <- heldResult{
+				result: result,
+				err:    err,
+			}
+		}()
 	}
-	for i := 0; i < 2; i++ {
-		select {
-		case <-entered:
-		case <-c.s.ctx.Done():
-			return c.s.ctx.Err()
+	for range 2 {
+		if err := start.awaitEntry(c.s.ctx); err != nil {
+			return err
 		}
 	}
-	close(proceed)
+	start.unblock()
 	for i := 0; i < 2; i++ {
 		select {
-		case <-received:
+		case <-finish.entered:
 		case r := <-results:
 			return fmt.Errorf("root finished before BUSY barrier: %+v", r)
 		case <-c.s.ctx.Done():
 			return c.s.ctx.Err()
 		}
 	}
-	close(finish)
+	finish.unblock()
 	for i := 0; i < 2; i++ {
 		select {
 		case r := <-results:
@@ -1555,538 +1224,4 @@ func (c *collaborationScenario) independentRoots() error {
 		return errors.New("independent roots reentered reasoning")
 	}
 	return nil
-}
-
-func (c *collaborationScenario) suppression() error {
-	if err := c.hold(); err != nil {
-		return err
-	}
-
-	if err := c.startNode("bob", modelFunc(
-		func(_ context.Context, r runner.Request) (runner.Response, error) {
-			name, result := lastTool(r)
-
-			if name == "" {
-				return toolCall("send_peer_message", map[string]any{"peer": "alice", "message": "first callback"}), nil
-			}
-
-			if result["status"] == "busy" {
-				return toolCall("send_peer_message", map[string]any{"peer": "alice", "message": "a different prompt"}), nil
-			}
-
-			if result["status"] != "no_new_context" {
-				return runner.Response{}, fmt.Errorf("repeat wasn't suppressed: %v", result)
-			}
-
-			return runner.Response{
-				Output: "continued without polling",
-			}, nil
-		},
-	)); err != nil {
-		return err
-	}
-	before := c.nodes["alice"].requests.Load()
-	for i := int32(1); i <= 2; i++ {
-		result, err := c.send("root", "bob", "consult alice twice")
-		if err != nil || result.Answer != "continued without polling" {
-			return fmt.Errorf("suppression in turn %d: %+v %v", i, result, err)
-		}
-		if c.nodes["alice"].requests.Load() != before+i {
-			return errors.New("BUSY suppression leaked between turns or permitted polling")
-		}
-	}
-	return c.finishHold()
-}
-
-func (c *collaborationScenario) lenderSelection() error {
-	turn := 0
-	var requests int32
-
-	var selected *pb.Ref
-
-	if err := c.startNode("bob", modelFunc(
-		func(_ context.Context, r runner.Request) (runner.Response, error) {
-			turn++
-
-			found := false
-
-			for _, spec := range r.Tools {
-
-				if spec.Name != "borrow_peer_context" {
-					continue
-				}
-
-				found = true
-
-				var schema struct {
-					Properties map[string]json.RawMessage `json:"properties"`
-				}
-
-				if err := json.Unmarshal(spec.InputSchema, &schema); err != nil {
-					return runner.Response{}, err
-				}
-
-				if len(schema.Properties) != 4 || schema.Properties["view"] != nil {
-					return runner.Response{}, fmt.Errorf("borrow tool exposes context selection: %s", spec.InputSchema)
-				}
-
-			}
-
-			if !found {
-				return runner.Response{}, errors.New("missing named peer borrow tool")
-			}
-
-			_, result := lastTool(r)
-
-			switch turn {
-
-			case 1:
-				return toolCall("send_peer_message", map[string]any{"peer": "alice", "message": "help with findings"}), nil
-
-			case 2:
-				if result["status"] != "busy" {
-					return runner.Response{}, fmt.Errorf("expected initial BUSY: %v", result)
-				}
-				return toolCall("borrow_peer_context", map[string]any{"peer": "alice", "requestId": "unchanged", "purpose": "continue research", "query": "findings"}), nil
-
-			case 3, 5:
-				raw, _ := json.Marshal(result["decision"])
-				var decision pb.Decision
-				if err := protojson.Unmarshal(raw, &decision); err != nil {
-					return runner.Response{}, err
-				}
-				expected := c.originalRef
-				if turn == 5 {
-					expected = selected
-				}
-				if decision.Status != a2a.Granted || decision.Lease == nil || !proto.Equal(decision.Lease.Ref, expected) {
-					return runner.Response{}, fmt.Errorf("lender did not select expected view: %v", &decision)
-				}
-				requests = c.nodes["alice"].requests.Load()
-				return toolCall("send_peer_message", map[string]any{"peer": "alice", "message": "reason using borrowed findings"}), nil
-
-			case 4:
-				if result["status"] != "no_new_context" || c.nodes["alice"].requests.Load() != requests {
-					return runner.Response{}, fmt.Errorf("unchanged borrowed findings permitted polling: %v", result)
-				}
-				if err := c.finishHold(); err != nil {
-					return runner.Response{}, err
-				}
-				if _, err := c.send("root", "alice", "new findings"); err != nil {
-					return runner.Response{}, err
-				}
-				var err error
-				selected, err = c.nodes["alice"].a.View(c.s.ctx, "bob", nil)
-				if err != nil || selected == nil || proto.Equal(selected, c.originalRef) {
-					return runner.Response{}, fmt.Errorf("lender has no newer view: %v", err)
-				}
-				if err := c.hold(); err != nil {
-					return runner.Response{}, err
-				}
-				return toolCall("borrow_peer_context", map[string]any{"peer": "alice", "requestId": "newer", "purpose": "continue research", "query": "findings"}), nil
-
-			case 6:
-				if result["status"] != "busy" || c.nodes["alice"].requests.Load() != requests+1 {
-					return runner.Response{}, fmt.Errorf("new lender-selected context did not permit one attempt: %v", result)
-				}
-				return runner.Response{
-					Output: "continued with lender-selected findings",
-				}, nil
-
-			}
-
-			return runner.Response{}, fmt.Errorf("unexpected model turn %d", turn)
-		},
-	)); err != nil {
-		return err
-	}
-	result, err := c.send("root", "bob", "consult alice")
-	if err != nil || result.Answer != "continued with lender-selected findings" {
-		return fmt.Errorf("lender selection failed: %+v %v", result, err)
-	}
-	return c.finishHold()
-}
-
-func (c *collaborationScenario) expiredDeadline() error {
-	n := c.nodes["alice"]
-	before, err := c.readEntries(n)
-	if err != nil {
-		return err
-	}
-	client, err := a2aclient.NewFromCard(c.s.ctx, n.card, a2aclient.WithJSONRPCTransport(a2a.TrustedHTTPClient("root")))
-	if err != nil {
-		return err
-	}
-	message := sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("deadline has expired"))
-	message.Extensions = []string{a2a.CollaborationURI}
-
-	metadata, err := metadataObject(
-		&cp.DelegationMetadata{
-			RootRequestId: "expired-root",
-			Deadline:      timestamppb.New(time.Now().Add(-time.Second)),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	message.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-
-	_, err = client.SendMessage(
-		c.s.ctx,
-		&sdk.SendMessageRequest{
-			Message: message,
-		},
-	)
-
-	if err == nil || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
-		return fmt.Errorf("expired delegation did not fail with a deadline error: %v", err)
-	}
-	after, err := c.readEntries(n)
-	if err != nil {
-		return err
-	}
-	if len(after) != len(before) || n.calls.Load() != 0 || n.requests.Load() != 1 {
-		return errors.New("expired deadline entered reasoning, changed tape, or called a peer")
-	}
-	return nil
-}
-
-func (c *collaborationScenario) suppliedContext() error {
-	if err := c.startNode("bob", modelFunc(
-		func(_ context.Context, r runner.Request) (runner.Response, error) {
-			name, result := lastTool(r)
-
-			switch name {
-
-			case "":
-				return toolCall("discover_peers", map[string]any{}), nil
-
-			case "discover_peers":
-				refs, ok := result["context"].([]any)
-				if !ok || len(refs) != 1 {
-					return runner.Response{}, fmt.Errorf("incoming references not discoverable: %v", result)
-				}
-				return toolCall("borrow_peer_context", map[string]any{"peer": "alice", "requestId": "supplied", "purpose": "answer from supplied findings", "query": "finding"}), nil
-
-			case "borrow_peer_context":
-				raw, _ := json.Marshal(result)
-				if !strings.Contains(string(raw), "published finding") {
-					return runner.Response{}, fmt.Errorf("supplied context not borrowed: %s", raw)
-				}
-				return runner.Response{
-					Output: "used supplied findings",
-				}, nil
-
-			}
-
-			return runner.Response{}, errors.New("unexpected tool")
-		},
-	)); err != nil {
-		return err
-	}
-	client, err := a2aclient.NewFromCard(c.s.ctx, c.nodes["bob"].card, a2aclient.WithJSONRPCTransport(a2a.TrustedHTTPClient("alice")))
-	if err != nil {
-		return err
-	}
-	message := sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("use supplied findings"))
-	message.Extensions = []string{a2a.CollaborationURI}
-
-	metadata, err := metadataObject(
-		&cp.DelegationMetadata{
-			RootRequestId: "supplied-root",
-			Deadline:      timestamppb.New(time.Now().Add(5 * time.Second)),
-			Ancestors:     []string{"alice"},
-			Context:       []*pb.Ref{c.originalRef},
-		},
-	)
-	if err != nil {
-		return err
-	}
-	message.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-	before := c.nodes["alice"].requests.Load()
-
-	response, err := client.SendMessage(
-		c.s.ctx,
-		&sdk.SendMessageRequest{
-			Message: message,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	answer, ok := response.(*sdk.Message)
-	if !ok || len(answer.Parts) != 1 || answer.Parts[0].Text() != "used supplied findings" || c.nodes["alice"].requests.Load() != before {
-		return fmt.Errorf("supplied context caused reasoning callback: %+v", response)
-	}
-	select {
-	case <-c.held:
-		return errors.New("owner unexpectedly finished before context borrowing")
-	default:
-	}
-	return nil
-}
-
-func (c *collaborationScenario) rejectMismatchedGrant(problem string) error {
-	ref := c.originalRef
-
-	seq := entry.MustParseSeq(ref.Scopes[len(ref.Scopes)-1].SeqE)
-
-	v := &pb.Lease{
-		Id:        "mismatched-grant",
-		Caller:    "bob",
-		Ref:       proto.Clone(ref).(*pb.Ref),
-		ExpiresAt: timestamppb.New(time.Now().Add(time.Hour)),
-	}
-
-	switch problem {
-	case "source":
-		v.Ref.Source.TapeId = "other-source"
-
-	case "range":
-		v.Ref.Scopes[0] = &pb.EntryRange{
-			SeqS: seq.Next().String(),
-			SeqE: seq.Next().Next().String(),
-		}
-
-	}
-	var reads atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/proto")
-
-			w.Header().Set(a2a.ExtensionHeader, a2a.ExtensionURI)
-
-			if strings.HasSuffix(r.URL.Path, "/Read") {
-
-				reads.Add(1)
-
-				http.Error(w, "must not read mismatched view", 500)
-
-				return
-
-			}
-
-			encoded, _ := proto.Marshal(
-				&rpcpb.BorrowResponse{
-					Decision: &pb.Decision{
-						RequestId: "mismatch",
-						Status:    a2a.Granted,
-						Lease:     v,
-					},
-				},
-			)
-
-			_, _ = w.Write(encoded)
-		},
-	))
-
-	defer server.Close()
-
-	card := &sdk.AgentCard{
-		Capabilities: sdk.AgentCapabilities{
-			Extensions: []sdk.AgentExtension{{
-				URI:    a2a.ExtensionURI,
-				Params: map[string]any{"endpoint": server.URL + a2a.ViewPath, "viewBorrowVersion": 1},
-			}},
-		},
-	}
-
-	client, err := a2a.NewClient(a2a.TrustedHTTPClient("bob"), card)
-	if err != nil {
-		return err
-	}
-
-	req := &pb.BorrowRequest{
-		RequestId: "mismatch",
-		Purpose:   "test mismatched provenance",
-		Query:     "finding",
-		View:      ref,
-	}
-
-	_, _, err = client.BorrowContext(c.s.ctx, req)
-	if !errors.Is(err, a2a.ErrInvalidParams) || reads.Load() != 0 {
-		return fmt.Errorf("mismatched view consumed: %v reads=%d", err, reads.Load())
-	}
-	return nil
-}
-
-func (c *collaborationScenario) toolWindow() error {
-	answer := strings.Repeat("x", 2304)
-
-	if err := c.replaceAlice(
-		thoughtCollaborationModel{modelFunc(
-			func(ctx context.Context, r runner.Request) (runner.Response, error) {
-				if r.Messages[len(r.Messages)-1].Text == "hold" {
-					return c.model()(ctx, r)
-				}
-
-				name, result := lastTool(r)
-
-				if name == "" {
-					return toolCall("bash", map[string]any{"command": "printf context-tool-finding"}), nil
-				}
-
-				if name != "bash" {
-					return runner.Response{}, fmt.Errorf("unexpected tool %q", name)
-				}
-
-				raw, _ := json.Marshal(result)
-
-				if !strings.Contains(string(raw), "context-tool-finding") {
-					return runner.Response{}, fmt.Errorf("missing real tool output: %s", raw)
-				}
-
-				return runner.Response{
-					Output: answer,
-				}, nil
-			},
-		)},
-	); err != nil {
-		return err
-	}
-	result, err := c.send("bob", "alice", "research with tools")
-	if err != nil || result.Answer != answer {
-		return fmt.Errorf("tool call failed: %v %v", result, err)
-	}
-	n := c.nodes["alice"]
-	ref, err := n.a.View(c.s.ctx, "bob", nil)
-	if err != nil || ref == nil {
-		return fmt.Errorf("completed context window missing: %v", err)
-	}
-	if err := c.hold(); err != nil {
-		return err
-	}
-	calls := n.calls.Load()
-	client, err := c.viewClient("bob")
-	if err != nil {
-		return err
-	}
-
-	d, err := client.Borrow(
-		c.s.ctx,
-		&pb.BorrowRequest{
-			RequestId: "tool-window",
-			Purpose:   "continue research",
-			Query:     "tool finding",
-		},
-	)
-
-	if err != nil || d.Status != a2a.Granted || !proto.Equal(d.Lease.Ref, ref) {
-		return fmt.Errorf("incorrect lender-selected TapeView: %v %v", d, err)
-	}
-
-	quote, err := client.ReadView(c.s.ctx, d.Lease)
-	if err != nil {
-		return err
-	}
-	if len(quote.Entries) != 4 {
-		return fmt.Errorf("view must contain user, tool call, tool result, assistant: %v", quote)
-	}
-	for i, kind := range []string{"user", "tool_call", "tool_result", "assistant"} {
-		e := quote.Entries[i]
-		if e.Kind != kind || e.Payload == nil || e.Payload.MediaType != a2a.ContextMediaType {
-			return fmt.Errorf("incorrect context entry %d: %v", i, e)
-		}
-	}
-	if !exportedTextIs(quote.Entries[0], "research with tools") {
-		return errors.New("view lost its prompt, authorized reasoning or long answer")
-	}
-	exported, _ := json.Marshal(quote)
-	if strings.Contains(string(exported), "adk:event") {
-		return errors.New("view leaked event metadata")
-	}
-	for _, e := range quote.Entries {
-		if strings.Contains(string(e.Payload.JsonData), "thoughtSignature") || strings.Contains(string(e.Payload.JsonData), "adk:event") {
-			return errors.New("view leaked provider thought signatures or event metadata")
-		}
-	}
-	for _, index := range []int{1, 3} {
-		var event ae.Content
-		if err := json.Unmarshal(quote.Entries[index].Payload.JsonData, &event); err != nil {
-			return err
-		}
-		if len(event.Parts) == 0 || !event.Parts[0].Thought || event.Parts[0].Text != "shared-reasoning-marker" {
-			return errors.New("view lost the original thought text, marker or part order")
-		}
-	}
-	var finalContent ae.Content
-	if err := json.Unmarshal(quote.Entries[3].Payload.JsonData, &finalContent); err != nil {
-		return err
-	}
-	if len(finalContent.Parts) != 2 || finalContent.Parts[1].Thought || finalContent.Parts[1].Text != answer {
-		return errors.New("view lost its complete final answer")
-	}
-
-	for _, index := range []int{1, 2} {
-		if !strings.Contains(string(quote.Entries[index].Payload.JsonData), "context-tool-finding") {
-			return fmt.Errorf("structured tool content missing: %v", quote.Entries[index])
-		}
-	}
-	response, err := client.Read(c.s.ctx, &rpcpb.ReadRequest{
-		LeaseId: d.Lease.Id,
-	})
-	if err != nil {
-		return err
-	}
-	if !proto.Equal(response.Quote, quote) || len(response.Quote.Entries) != 4 {
-		return errors.New("complete read changed the committed context")
-	}
-
-	physical, err := c.readEntries(n)
-	if err != nil {
-		return err
-	}
-	stored, _ := json.Marshal(physical)
-	if !strings.Contains(string(stored), "shared-reasoning-marker") || !strings.Contains(string(stored), "thoughtSignature") {
-		return errors.New("fixture did not persist thought content and provider signatures")
-	}
-	for _, e := range physical {
-		if e.GetKind().IsAnchor() && strings.Contains(e.GetSummary(), answer) {
-			return errors.New("terminal anchor duplicated the answer")
-		}
-	}
-	if calls != n.calls.Load() {
-		return errors.New("borrowing entered the owner's model")
-	}
-	select {
-	case <-c.held:
-		return errors.New("borrow waited for active reasoning")
-	default:
-	}
-	return c.finishHold()
-}
-
-type countedCollaborationModel struct {
-	model.LLM
-	calls *atomic.Int32
-}
-
-func (m countedCollaborationModel) GenerateContent(ctx context.Context, r *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
-	m.calls.Add(1)
-	return m.LLM.GenerateContent(ctx, r, stream)
-}
-
-type thoughtCollaborationModel struct {
-	model.LLM
-}
-
-func (m thoughtCollaborationModel) GenerateContent(ctx context.Context, r *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		for response, err := range m.LLM.GenerateContent(ctx, r, stream) {
-			if response != nil && response.Content != nil {
-				response.Content.Parts = append(
-					[]*genai.Part{{
-						Text:             "shared-reasoning-marker",
-						Thought:          true,
-						ThoughtSignature: []byte("private-thought-signature"),
-					}},
-					response.Content.Parts...,
-				)
-			}
-			if !yield(response, err) {
-				return
-			}
-		}
-	}
 }

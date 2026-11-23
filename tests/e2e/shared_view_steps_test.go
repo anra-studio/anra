@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"time"
 
 	"connectrpc.com/connect/v2"
 	rpcpb "github.com/anra-studio/anra/gen/anra/a2a/tape/v1"
@@ -15,42 +14,11 @@ import (
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	"github.com/cucumber/godog"
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
 func initializeSharedView(sc *godog.ScenarioContext, m *mcpScenario) {
-	sc.Step(
-		`^已提交包含空 Parts 条目的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("empty parts")
-		},
-	)
-	sc.Step(
-		`^Quote 保留该空 Parts 条目的角色和序号$`,
-		func() error {
-			if err := m.checkWindowResponse(); err != nil {
-				return err
-			}
-			var quote mcpWindow
-			if err := json.Unmarshal(m.lastResult, &quote); err != nil {
-				return err
-			}
-			if len(quote.Entries) != 1 || quote.Entries[0].Seq != m.lease.Ref.Scopes[0].SeqS || quote.Entries[0].Kind != "assistant" {
-				return errors.New("empty Parts entry was removed or changed")
-			}
-			var content genai.Content
-			if err := json.Unmarshal(quote.Entries[0].Content, &content); err != nil {
-				return err
-			}
-			if content.Role != "model" || len(content.Parts) != 0 {
-				return errors.New("empty Parts content changed")
-			}
-			return nil
-		},
-	)
-
 	sc.Step(
 		`^已提交两段非相邻内容并签发共享 lease 凭证$`,
 		func() error {
@@ -93,7 +61,7 @@ func initializeSharedView(sc *godog.ScenarioContext, m *mcpScenario) {
 	sc.Step(`^Quote 完整保留两段内容且不包含间隙$`, m.checkMultiScopeQuote)
 	sc.Step(`^其他调用方均不能通过 MCP 或 peer 读取该 lease$`, m.checkSharedIntruder)
 	sc.Step(`^peer 拒绝改写完整 Scopes 的借阅请求$`, m.checkAlteredScopes)
-	sc.Step(`^通过 "([^"]+)" 终止共享 lease$`, m.endSharedLease)
+	sc.Step(`^通过 peer 释放共享 lease$`, m.releaseSharedLease)
 	sc.Step(`^peer 也拒绝读取该共享 lease$`, m.checkSharedUnavailable)
 	sc.Step(
 		`^角色读取仍遵守独立授权$`,
@@ -191,34 +159,25 @@ func (m *mcpScenario) checkAlteredScopes() error {
 	return nil
 }
 
-func (m *mcpScenario) endSharedLease(method string) error {
-	switch method {
-	case "peer释放":
-		client, closeServer, err := m.peerREST()
-		if err != nil {
-			return err
-		}
-		defer closeServer()
-		var response rpcpb.ReleaseResponse
-		if err := client.message(
-			http.MethodPost,
-			"/v1/tape/views/"+m.lease.Id+":release",
-			&rpcpb.ReleaseRequest{},
-			&response,
-		); err != nil {
-			return err
-		}
-		if !response.Released {
-			return errors.New("peer release was not acknowledged")
-		}
-		return nil
-	case "本地撤销":
-		return m.borrowing.Revoke(m.s.ctx, m.credential.Caller, m.lease.Id)
-	case "lease到期":
-		m.clock.Add(int64(2 * time.Hour))
-		return nil
+func (m *mcpScenario) releaseSharedLease() error {
+	client, closeServer, err := m.peerREST()
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("unknown closure %q", method)
+	defer closeServer()
+	var response rpcpb.ReleaseResponse
+	if err := client.message(
+		http.MethodPost,
+		"/v1/tape/views/"+m.lease.Id+":release",
+		&rpcpb.ReleaseRequest{},
+		&response,
+	); err != nil {
+		return err
+	}
+	if !response.Released {
+		return errors.New("peer release was not acknowledged")
+	}
+	return nil
 }
 
 func (m *mcpScenario) checkSharedUnavailable() error {

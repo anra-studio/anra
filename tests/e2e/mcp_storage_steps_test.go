@@ -15,10 +15,8 @@ import (
 	"github.com/anra-studio/anra/pkg/flow/borrow"
 	anramcp "github.com/anra-studio/anra/pkg/mcp"
 	ae "github.com/anra-studio/anra/pkg/model/entry"
-	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
-	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 // The embedding runtime owns these fixtures across MCP service lifetimes.
@@ -83,12 +81,6 @@ func (p *mcpProviders) setRole(r anramcp.RoleDefinition) {
 	p.roles[r.RoleRef] = r
 }
 
-func (p *mcpProviders) revoke(credential string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.credentials, credential)
-}
-
 func (p *mcpProviders) review(ctx context.Context, _ string, _ *pb.BorrowRequest) (borrow.Selection, error) {
 	if err := ctx.Err(); err != nil {
 		return borrow.Selection{}, err
@@ -112,18 +104,7 @@ func (m *mcpScenario) viewStorage() storage.TapeStorage {
 }
 
 func (m *mcpScenario) useJSONLTape() error {
-	state, err := m.tape.Get(m.tapeContext())
-	if err != nil {
-		return err
-	}
-
-	entries, err := m.tape.Range(
-		m.tapeContext(),
-		tv.EntryRange{
-			SeqS: te.SeqFromUint64(1),
-			SeqE: state.Scope.SeqE.Next(),
-		},
-	)
+	entries, _, err := readAllEntries(m.tapeContext(), m.tape)
 	if err != nil {
 		return err
 	}
@@ -134,7 +115,7 @@ func (m *mcpScenario) useJSONLTape() error {
 	if err := tape.Init(m.tapeContext()); err != nil {
 		return err
 	}
-	for _, raw := range entries.Raw {
+	for _, raw := range entries {
 		value, err := ae.FromTape(raw)
 		if err != nil {
 			return err
@@ -145,25 +126,6 @@ func (m *mcpScenario) useJSONLTape() error {
 	}
 	m.server.Close()
 	m.server = nil
-	m.handoffTape = tape
-
-	err = m.configureViews(tape)
-	if err != nil {
-		return err
-	}
-	m.serve()
-	return nil
-}
-
-func (m *mcpScenario) restartJSONLTape() error {
-	m.server.Close()
-	tape, err := jsonl.NewJSONLStorage("mcp-session", filepath.Join(m.s.root, "jsonl-tape"))
-	if err != nil {
-		return err
-	}
-	if err := tape.Init(m.tapeContext()); err != nil {
-		return err
-	}
 	m.handoffTape = tape
 
 	err = m.configureViews(tape)

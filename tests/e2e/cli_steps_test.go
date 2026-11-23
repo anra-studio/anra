@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,12 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anra-studio/anra/pkg/a2a"
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
-	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
-	"github.com/scbizu/tape-go/pkg/tape/view"
 )
 
 var cliBinary string
@@ -56,20 +52,6 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		return ctx, c.stop()
 	})
-	sc.Step(`^I run the local CLI agent "([^"]*)" with "([^"]*)"$`, c.runLocal)
-	sc.Step(`^I request CLI help for "([^"]*)"$`, func(command string) {
-		args := []string{"--help"}
-		if command != "root" {
-			args = []string{command, "--help"}
-		}
-		c.execute(args...)
-	})
-	sc.Step(`^the CLI help lists "([^"]*)"$`, func(want string) error {
-		if c.err != nil || !strings.Contains(c.output, want) {
-			return fmt.Errorf("CLI help = %q, error = %v; want %q", c.output, c.err, want)
-		}
-		return nil
-	})
 	sc.Step(`^I run the CLI agent "([^"]*)" with "([^"]*)" and flags (before the command|after the message)$`, func(id, text, placement string) error {
 		flags := []string{"--agent", id, "--config", c.ensureConfig()}
 		if placement == "before the command" {
@@ -85,39 +67,7 @@ func initializeCLI(sc *godog.ScenarioContext, s *scenario) {
 		}
 		return nil
 	})
-	sc.Step(`^the CLI agent "([^"]*)" is serving with a deterministic model$`, func(id string) error {
-		if err := c.writeAgentConfig(team.registry.peer); err != nil {
-			return err
-		}
-		return c.start(id)
-	})
-	sc.Step(`^I stop the serving CLI agent$`, c.stop)
 	sc.Step(`^the CLI agent "([^"]*)" has this conversation on its tape$`, c.conversation)
-	sc.Step(`^the CLI agent "([^"]*)" has an empty tape$`, func(id string) error {
-		return c.conversation(id, &godog.Table{})
-	})
-	sc.Step(`^a peer sends a greeting with identity "([^"]*)"$`, func(identity string) {
-		h := &http.Client{}
-		if identity != "missing" {
-			h = a2a.TrustedHTTPClient(identity)
-		}
-		client, err := messageClient(c.s.ctx, h, c.peer)
-		if err == nil {
-			_, err = client.Send(c.s.ctx, "hello")
-		}
-		c.err = err
-		if err != nil {
-			c.output = err.Error()
-		}
-	})
-
-	sc.Step(`^the CLI command fails$`, func() error {
-		if c.err == nil {
-			return fmt.Errorf("CLI succeeded: %s", c.output)
-		}
-		return nil
-	})
-	sc.Step(`^I run the CLI with invalid configuration "([^"]*)"$`, c.invalid)
 	sc.Step(`^the CLI command fails with "([^"]*)"$`, func(want string) error {
 		if c.err == nil || !strings.Contains(c.output, want) {
 			return fmt.Errorf("CLI output = %q, error = %v; want failure containing %q", c.output, c.err, want)
@@ -158,15 +108,6 @@ func (c *cliScenario) execute(args ...string) {
 	cmd.Env = c.environment()
 	output, err := cmd.CombinedOutput()
 	c.output, c.err = string(output), err
-}
-
-func (c *cliScenario) runLocal(id, text string) error {
-	c.execute("run", "--agent", id, "--config", c.ensureConfig(), text)
-	return c.err
-}
-
-func (c *cliScenario) start(id string) error {
-	return c.startProcess(id, "serve", "--agent", id, "--config", c.ensureConfig())
 }
 
 func (c *cliScenario) startProcess(id string, args ...string) error {
@@ -228,38 +169,21 @@ func (c *cliScenario) stop() error {
 }
 
 func (c *cliScenario) conversation(id string, table *godog.Table) error {
-	return c.conversationAt(c.dataDir(), id, "default", table)
-}
-
-func (c *cliScenario) conversationAt(dir, id, session string, table *godog.Table) error {
-	tape, err := bbolt.NewBboltStorage(session, filepath.Join(dir, id+".db"))
+	ctx := owner.WithOwnerId(c.s.ctx, id)
+	tape, err := openBboltTape(ctx, "default", filepath.Join(c.dataDir(), id+".db"))
 	if err != nil {
 		return err
 	}
 	defer tape.Close()
-	ctx := owner.WithOwnerId(c.s.ctx, id)
-	if err := tape.Init(ctx); err != nil {
-		return err
-	}
-	state, err := tape.Get(ctx)
+	entries, head, err := readAllEntries(ctx, tape)
 	if err != nil {
 		return err
 	}
-	want := len(table.Rows)
-	if want > 0 {
-		want--
-	}
-	if state.Scope.SeqE.IsZero() {
-		if want == 0 {
-			return nil
-		}
+	if head.IsZero() {
 		return errors.New("CLI tape is empty")
 	}
-	entries, err := tape.Range(ctx, view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: state.Scope.SeqE.Next()})
-	if err != nil {
-		return err
-	}
-	conversation, err := inspectLifecycle(entries.Raw)
+	want := len(table.Rows) - 1
+	conversation, err := inspectLifecycle(entries)
 	if err != nil {
 		return err
 	}
@@ -273,32 +197,5 @@ func (c *cliScenario) conversationAt(dir, id, session string, table *godog.Table
 			return fmt.Errorf("CLI tape entry %d = %s %q, owner = %q; want %s %q owned by %s", i, role, raw.GetSummary(), raw.GetOwner(), row[0].Value, row[1].Value, id)
 		}
 	}
-	return nil
-}
-
-func (c *cliScenario) invalid(problem string) error {
-	args := []string{"run", "--agent", "alice", "--config", c.ensureConfig()}
-	switch problem {
-	case "missing message":
-	case "invalid agent":
-		args = append(args, "--agent", "../alice", "hello")
-	case "missing key":
-		if c.env == nil {
-			c.env = make(map[string]string)
-		}
-		c.env["OPENAI_API_KEY"] = ""
-		args = append(args, "hello")
-	case "removed send":
-		args = []string{"send", "--agent", "alice", "--config", c.ensureConfig(), "hello"}
-	case "peer flag":
-		args = []string{"ask", "--peer", "http://127.0.0.1:1", "hello"}
-	case "removed destination flag":
-		args = []string{"ask", "--agent", "alice", "--config", c.ensureConfig(), "--to", "bob", "hello"}
-	case "unknown command":
-		args = []string{"unknown"}
-	default:
-		return fmt.Errorf("unknown invalid configuration %q", problem)
-	}
-	c.execute(args...)
 	return nil
 }

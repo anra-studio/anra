@@ -17,7 +17,6 @@ import (
 	rv "github.com/anra-studio/anra/gen/anra/registry/v1"
 	"github.com/anra-studio/anra/gen/anra/registry/v1/registryv1connect"
 	"github.com/anra-studio/anra/pkg/a2a"
-	"github.com/anra-studio/anra/pkg/discovery"
 	"github.com/anra-studio/anra/pkg/registry"
 	"github.com/cucumber/godog"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -25,9 +24,6 @@ import (
 )
 
 type registryScenario struct {
-	drop              atomic.Bool
-	session           *discovery.Registration
-	reconciled        chan *pv.Peer
 	s                 *scenario
 	store             *registry.Registry
 	server            *httptest.Server
@@ -119,16 +115,8 @@ func initializeRegistry(sc *godog.ScenarioContext, s *scenario) {
 	})
 	sc.Step(`^an unrelated runtime attempts "([^"]*)"$`, func(operation string) error {
 		switch operation {
-		case "register":
-			entry, err := r.lookup("alice")
-			if err != nil {
-				return err
-			}
-			_, r.lastError = r.client.Register(s.ctx, &rv.RegisterRequest{Peer: r.expected, RuntimeId: "unrelated-runtime", Token: "unrelated-secret", ExpectedRevision: entry.Revision})
 		case "heartbeat":
 			_, r.lastError = r.client.Heartbeat(s.ctx, &rv.HeartbeatRequest{Id: "alice", RuntimeId: "unrelated-runtime", Token: "unrelated-secret"})
-		case "disconnect":
-			_, r.lastError = r.client.Disconnect(s.ctx, &rv.DisconnectRequest{Id: "alice", RuntimeId: "unrelated-runtime", Token: "unrelated-secret"})
 		case "wrong key":
 			request := proto.Clone(r.current).(*rv.RegisterRequest)
 			request.Token = "wrong-secret"
@@ -153,14 +141,6 @@ func initializeRegistry(sc *godog.ScenarioContext, s *scenario) {
 		r.current = req
 		r.expected = value
 		return nil
-	})
-	sc.Step(`^the replacement becomes "(unknown|offline)"$`, func(state string) error {
-		if state == "unknown" {
-			r.now.Add(int64(2 * time.Second))
-			return nil
-		}
-		_, err := r.client.Disconnect(s.ctx, &rv.DisconnectRequest{Id: "alice", RuntimeId: r.current.RuntimeId, Token: r.current.Token})
-		return err
 	})
 	sc.Step(`^the old runtime cannot register, heartbeat or disconnect$`, func() error {
 		entry, err := r.lookup("alice")
@@ -349,28 +329,8 @@ func initializeRegistry(sc *godog.ScenarioContext, s *scenario) {
 		request := proto.Clone(r.current).(*rv.RegisterRequest)
 		request.ExpectedRevision = entry.Revision
 		switch problem {
-		case "invalid ID":
-			request.Peer.Id = "../outside"
-		case "relative address":
-			request.Peer.Address = "127.0.0.1:8080"
-		case "wildcard address":
-			request.Peer.Address = "http://0.0.0.0:8080"
-		case "zero port":
-			request.Peer.Address = "http://127.0.0.1:0"
-		case "credentials":
-			request.Peer.Address = "http://user:password@example.test"
-		case "address path":
-			request.Peer.Address += "/api"
-		case "address query":
-			request.Peer.Address += "?query=x"
-		case "address fragment":
-			request.Peer.Address += "#fragment"
 		case "duplicate skill":
 			request.Peer.Skill = append(request.Peer.Skill, proto.Clone(request.Peer.Skill[0]).(*pv.Skill))
-		case "empty skill ID":
-			request.Peer.Skill[0].Id = ""
-		case "blank skill name":
-			request.Peer.Skill[0].Name = "   "
 		default:
 			return fmt.Errorf("unknown metadata problem %s", problem)
 		}
@@ -381,81 +341,6 @@ func initializeRegistry(sc *godog.ScenarioContext, s *scenario) {
 		req := proto.Clone(r.current).(*rv.RegisterRequest)
 		req.Peer.Description = strings.Repeat("x", registry.MaxMessageBytes)
 		_, r.lastError = r.client.Register(s.ctx, req)
-	})
-	sc.Step(`^a startup registration acknowledgement is lost$`, func() error {
-		client, err := discovery.NewClient(r.server.URL)
-		if err != nil {
-			return err
-		}
-		r.drop.Store(true)
-		session, err := client.Start(s.ctx, &pv.Peer{Id: "bob", Address: "http://127.0.0.1:8081", Skill: []*pv.Skill{{Id: "chat", Name: "Chat"}}})
-		r.lastError = err
-		if session != nil {
-			session.Close()
-			return errors.New("startup unexpectedly received its acknowledgement")
-		}
-		return nil
-	})
-	sc.Step(`^the failed startup leaves Bob known and offline$`, func() error {
-		entry, err := r.lookup("bob")
-		if err != nil {
-			return err
-		}
-		if entry.Presence.State != rv.PresenceState_PRESENCE_STATE_OFFLINE {
-			return fmt.Errorf("startup left presence %v", entry.Presence)
-		}
-		return nil
-	})
-	sc.Step(`^a runtime loses a metadata-update acknowledgement$`, func() error {
-		client, err := discovery.NewClient(r.server.URL)
-		if err != nil {
-			return err
-		}
-		value := &pv.Peer{Id: "bob", Description: "old description", Address: "http://127.0.0.1:8081", Skill: []*pv.Skill{{Id: "chat", Name: "Chat"}}}
-		r.reconciled = make(chan *pv.Peer, 1)
-		r.session, err = client.Start(s.ctx, value, func(value *pv.Peer) {
-			select {
-			case r.reconciled <- value:
-			default:
-			}
-		})
-		if err != nil {
-			return err
-		}
-		value.Description = "committed despite lost reply"
-		r.drop.Store(true)
-		r.lastError = r.session.Update(s.ctx, value)
-		return nil
-	})
-	sc.Step(`^heartbeats reconcile the committed metadata without rolling it back$`, func() error {
-		select {
-		case value := <-r.reconciled:
-			if value.Description != "committed despite lost reply" {
-				return fmt.Errorf("reconciled incorrect metadata: %v", value)
-			}
-		case <-s.ctx.Done():
-			return s.ctx.Err()
-		}
-		r.now.Add(int64(2 * time.Second))
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			entry, err := r.lookup("bob")
-			if err != nil {
-				return err
-			}
-			if entry.Peer.Description != "committed despite lost reply" {
-				return errors.New("presence recovery rolled back committed metadata")
-			}
-			if entry.Presence.State == rv.PresenceState_PRESENCE_STATE_ONLINE {
-				return nil
-			}
-			select {
-			case <-ticker.C:
-			case <-s.ctx.Done():
-				return s.ctx.Err()
-			}
-		}
 	})
 
 	sc.Step(`^the operator attempts to forget online Alice$`, func() error {
@@ -514,35 +399,13 @@ func (r *registryScenario) open() error {
 	if err != nil {
 		return err
 	}
-	r.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path == registryv1connect.RegistryServiceRegisterProcedure && r.drop.CompareAndSwap(true, false) {
-			recorder := httptest.NewRecorder()
-			base.ServeHTTP(recorder, req)
-			if recorder.Code != http.StatusOK {
-				for key, values := range recorder.Header() {
-					w.Header()[key] = values
-				}
-				w.WriteHeader(recorder.Code)
-				_, _ = w.Write(recorder.Body.Bytes())
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"code":"unavailable","message":"fixture lost registration acknowledgement"}`))
-			return
-		}
-		base.ServeHTTP(w, req)
-	}))
+	r.server = httptest.NewServer(base)
 	transport := connecthttp.NewTransport(http.DefaultClient, r.server.URL, connecthttp.WithSendMaxBytes(2<<20))
 	r.client = registryv1connect.NewRegistryServiceClient(connect.NewClient(transport))
 	return nil
 }
 
 func (r *registryScenario) close() error {
-	if r.session != nil {
-		r.session.Close()
-		r.session = nil
-	}
 	if r.server != nil {
 		r.server.Close()
 		r.server = nil

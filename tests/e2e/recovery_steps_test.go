@@ -19,8 +19,6 @@ import (
 	"github.com/cucumber/godog"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
-	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
-	"github.com/scbizu/tape-go/pkg/tape/view"
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
@@ -55,7 +53,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 			stopped = make(chan error, 1)
 
 			go func() {
-				client, err := messageClient(c.s.ctx, a2a.TrustedHTTPClient("bob"), team.agents["alice"].peer)
+				client, err := messageClient(c.s.ctx, "bob", team.agents["alice"].peer)
 
 				if err == nil {
 					_, err = client.Send(c.s.ctx, "crash before completion")
@@ -64,16 +62,11 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 				stopped <- err
 			}()
 
-			select {
-
-			case <-c.s.providerControl.entered:
-
-			case <-c.s.ctx.Done():
-				return c.s.ctx.Err()
-
+			if err := c.s.providerControl.awaitEntry(c.s.ctx); err != nil {
+				return err
 			}
 
-			client, err := messageClient(c.s.ctx, a2a.TrustedHTTPClient("bob"), team.agents["alice"].peer)
+			client, err := messageClient(c.s.ctx, "bob", team.agents["alice"].peer)
 			if err != nil {
 				return err
 			}
@@ -91,7 +84,7 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 
 			card = client.Card
 
-			views, err := a2a.NewClient(a2a.TrustedHTTPClient("bob"), card)
+			views, err := trustedViewClient("bob", card)
 			if err != nil {
 				return err
 			}
@@ -134,18 +127,13 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 
 			}
 
-			tape, err := bbolt.NewBboltStorage("default", filepath.Join(c.dataDir(), "alice.db"))
+			ctx := owner.WithOwnerId(c.s.ctx, "alice")
+			tape, err := openBboltTape(ctx, "default", filepath.Join(c.dataDir(), "alice.db"))
 			if err != nil {
 				return err
 			}
 
 			defer tape.Close()
-
-			ctx := owner.WithOwnerId(c.s.ctx, "alice")
-
-			if err = tape.Init(ctx); err != nil {
-				return err
-			}
 
 			event := session.NewEvent("interrupted-turn")
 
@@ -188,12 +176,12 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 				return fmt.Errorf("recovered answer: %s", c.output)
 			}
 
-			client, err := messageClient(c.s.ctx, a2a.TrustedHTTPClient("bob"), team.agents["alice"].peer)
+			client, err := messageClient(c.s.ctx, "bob", team.agents["alice"].peer)
 			if err != nil {
 				return err
 			}
 
-			views, err := a2a.NewClient(a2a.TrustedHTTPClient("bob"), client.Card)
+			views, err := trustedViewClient("bob", client.Card)
 			if err != nil {
 				return err
 			}
@@ -214,38 +202,22 @@ func initializeRecovery(sc *godog.ScenarioContext, team *teamScenario) {
 	sc.Step(
 		`^exactly one abandoned close excludes the unfinished turn$`,
 		func() error {
-			tape, err := bbolt.NewBboltStorage("default", filepath.Join(c.dataDir(), "alice.db"))
+			ctx := owner.WithOwnerId(c.s.ctx, "alice")
+			tape, err := openBboltTape(ctx, "default", filepath.Join(c.dataDir(), "alice.db"))
 			if err != nil {
 				return err
 			}
 
 			defer tape.Close()
 
-			ctx := owner.WithOwnerId(c.s.ctx, "alice")
-
-			if err = tape.Init(ctx); err != nil {
-				return err
-			}
-
-			h, err := tape.Get(ctx)
-			if err != nil {
-				return err
-			}
-
-			entries, err := tape.Range(
-				ctx,
-				view.EntryRange{
-					SeqS: entry.SeqFromUint64(1),
-					SeqE: h.Scope.SeqE.Next(),
-				},
-			)
+			entries, _, err := readAllEntries(ctx, tape)
 			if err != nil {
 				return err
 			}
 
 			abandoned, unmatched := 0, 0
 
-			for _, e := range entries.Raw {
+			for _, e := range entries {
 
 				if e.GetKind() == entry.EntryUser && e.GetSummary() == "rejected CLI callback" {
 					return errors.New("BUSY CLI request entered the conversation")

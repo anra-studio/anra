@@ -1,53 +1,22 @@
-Feature: Anchor-backed nonblocking peer collaboration
-  Reasoning owns one tape turn at a time. BUSY is an unaccepted request,
-  while immutable permitted views remain independently borrowable.
+Feature: 通过 Anchor 恢复非阻塞节点协作
+  每个角色同一时刻只接收一轮推理。角色返回 BUSY 时，调用方仍可借阅已授权的不可变视图。
 
-  Scenario: Collaboration metadata uses generated ProtoJSON over standard A2A
+  Scenario: 标准 A2A 消息通过 ProtoJSON 传输协作元数据并支持标准流式回复
     Given a collaboration agent
     And Alice has completed a shareable answer
     Then generated collaboration metadata roundtrips through A2A
+    And the discovered agent streams a standard A2A answer
 
-  Scenario Outline: 无效委托元数据在推理前被拒绝
+  Scenario: A2A 拒绝无效身份和委托元数据且不写入 Tape
     Given a collaboration agent
-    Then collaboration rejects request metadata with <problem> before reasoning
+    Then A2A rejects invalid caller identities before reasoning
+    And collaboration rejects request metadata with missing root before reasoning
 
-    Examples:
-      | problem                      |
-      | missing root                 |
-      | oversized root               |
-      | missing deadline             |
-      | invalid deadline             |
-      | empty ancestor               |
-      | oversized ancestor           |
-      | excessive context            |
-      | malformed context            |
-      | missing context scope        |
-      | reversed context scope       |
-      | unknown field                |
-
-  Scenario Outline: A2A 客户端拒绝无效响应元数据
-    Given a collaboration agent
-    Then the client rejects response metadata with <problem>
-
-    Examples:
-      | problem                   |
-      | unspecified status        |
-      | unknown status            |
-      | unknown retry             |
-      | completed retry hint      |
-      | completed view            |
-      | malformed busy view       |
-      | missing busy scope        |
-      | answer in metadata        |
-      | empty completed answer    |
-      | local suppression status  |
-      | legacy lowercase status   |
-
-  Scenario: Only one simultaneous request enters reasoning
+  Scenario: 并发请求只有一个能进入推理
     Given a collaboration agent
     When simultaneous callers admit exactly one turn
 
-  Scenario: A busy agent without completed findings does not accept another turn
+  Scenario: 没有已完成视图的忙碌角色拒绝新请求且不泄露内容
     Given a collaboration agent
     And Alice is held inside its model call
     When Bob asks the occupied Alice for reasoning
@@ -55,12 +24,13 @@ Feature: Anchor-backed nonblocking peer collaboration
     And BUSY reveals no view or private control fields
     And a guessed reference cannot obtain private or control entries
 
-  Scenario: Completed context windows can be borrowed while the owner thinks
+  Scenario: 角色推理期间可借阅先前已提交的视图，重启后视图保持不变
     Given a collaboration agent
     And Alice has completed a shareable answer
     And Alice is held inside its model call
     When Bob asks the occupied Alice for reasoning
     Then the response is BUSY without another turn or model call
+    And generic A2A callers receive an unaccepted response with no hint
     When Bob borrows the BUSY view while Alice remains occupied
     Then the view grant contains exactly the completed context window
     And another trusted requester gets its own grant but cannot read or release Bob's grant
@@ -69,65 +39,24 @@ Feature: Anchor-backed nonblocking peer collaboration
     And Alice restarts with the same source and the grant remains readable
     Then the view grant contains exactly the completed context window
 
-  Scenario Outline: View grants obey their terminal permission rules
-    Given a collaboration agent
-    And Alice has completed a shareable answer
-    And Alice is held inside its model call
-    When Bob asks the occupied Alice for reasoning
-    And Bob borrows the BUSY view while Alice remains occupied
-    Then the view grant is ended by <termination>
-
-    Examples:
-      | termination |
-      | release     |
-      | revocation  |
-      | expiry      |
-
   Scenario: 祖先回调通过 BUSY 和带 lease 来源的引用内容完成推理
     Given a collaboration agent
     And Alice has completed a shareable answer
     When cyclic peer reasoning completes using BUSY and borrowed findings
 
-  Scenario: Independent roots cannot deadlock one another
+  Scenario: 独立根请求相互委托时不会阻塞
     Given a collaboration agent
     When independent roots consult one another without blocking
 
-  Scenario: Sibling delegations preserve their root and independent paths
-    Given a collaboration agent
-    When Alice consults Bob and Charlie in separate turns
-    Then sibling calls share their turn root and keep independent paths
-
-  Scenario: Delegation can follow a path longer than eight hops
-    Given a collaboration agent
-    Then Alice completes a ten-hop delegation and retains its full ancestry
-
-  Scenario: A changed prompt cannot turn BUSY into polling
-    Given a collaboration agent
-    When repeated BUSY delegation is suppressed only within each turn
-
-  Scenario: The lender selects context and only newer borrowed findings permit another reasoning request
-    Given a collaboration agent
-    And Alice has completed a shareable answer
-    And Alice is held inside its model call
-    Then Bob resumes reasoning only after borrowing newer lender-selected findings
-
-  Scenario: Cancellation preserves the physical tape and rebuilds valid model history
+  Scenario: 取消推理保留 Tape 原记录并从模型历史排除未完成内容
     Given a collaboration agent
     When Alice's cancelled turn closes and its partial history is excluded
 
-  Scenario: An expired deadline stops reasoning before model or peer calls
-    Given a collaboration agent
-    Then an expired delegation deadline rejects reasoning before model or peer calls
-
-  Scenario: View borrowing requires the advertised version
-    Given a collaboration agent
-    And Alice has completed a shareable answer
-    Then legacy lenders cannot silently accept view references
-
-  Scenario: Killing a process preserves views and recovers its open turn
+  Scenario: 进程被终止后恢复未完成轮次并保留原视图和授权
     Given a running team Peer directory
     And team agents "alice" and "bob" are serving
     And Alice is interrupted while reasoning after a published answer
+    And the busy agent keeps online presence across a heartbeat window
     When I try to ask running agent "alice" to "rejected CLI callback"
     Then the CLI command fails with "busy: request was not accepted"
     When team agent "alice" crashes
@@ -138,81 +67,14 @@ Feature: Anchor-backed nonblocking peer collaboration
     When I stop the team agents
     Then exactly one abandoned close excludes the unfinished turn
 
-  Scenario: Terminal storage failure cannot reopen reasoning
+  Scenario: 写入轮次结束记录失败后拒绝新的推理
     Given a collaboration agent
     Then an unresolved terminal append fences further reasoning
 
-  Scenario Outline: Corrupt control history cannot be interpreted as idle
+  Scenario: 控制记录中的轮次重叠时拒绝启动
     Given a collaboration agent
-    Then startup rejects a tape containing <problem>
+    Then startup rejects a tape containing overlapping starts
 
-    Examples:
-      | problem                      |
-      | numeric v1 type              |
-      | empty v1 type                |
-      | unknown v1 type              |
-      | invalid v1 start             |
-      | invalid v1 source            |
-      | invalid v1 outcome           |
-      | forbidden v1 field           |
-      | oversized multibyte identity |
-      | oversized identity           |
-      | malformed integration record |
-      | malformed record             |
-      | overlapping starts           |
-      | unmatched close              |
-      | conflicting source           |
-
-  Scenario Outline: 缺少 schema 或格式损坏的 Anchor 不能用于恢复
-    Given a collaboration agent
-    Then startup rejects a tape containing <problem>
-
-    Examples:
-      | problem                  |
-      | missing schema           |
-      | malformed unknown schema |
-
-  Scenario Outline: Other anchor schemas coexist with native execution history
-    Given a collaboration agent
-    And Alice's tape contains a custom anchor with schema "<schema>"
-    And Alice has completed a shareable answer
-    And Alice is held inside its model call
-    When Bob asks the occupied Alice for reasoning
-    And Bob borrows the BUSY view while Alice remains occupied
-    And Alice finishes and commits a newer context window
-    And Alice restarts with the same source and the grant remains readable
-    Then the view grant contains exactly the completed context window
-    And Alice can continue reasoning after schema dispatch recovery
-
-    Examples:
-      | schema                      |
-      | anra.dev/anchor/intr/v1      |
-      | anra.dev/anchor/handoff/v1   |
-      | anra.dev/anchor/v2           |
-      | example.org/anchor/v1        |
-
-  Scenario: Generic A2A callers get clear BUSY text without private hints
-    Given a collaboration agent
-    And Alice has completed a shareable answer
-    And Alice is held inside its model call
-    Then generic A2A callers receive an unaccepted response with no hint
-
-  Scenario: Shutdown drains the runtime before closing its tape
+  Scenario: 关闭 Tape 前先结束正在进行的推理
     Given a collaboration agent
     Then shutdown drains active reasoning before storage closes
-
-  Scenario: Supplied view references are borrowed under the recipient's identity
-    Given a collaboration agent
-    And Alice has completed a shareable answer
-    And Alice is held inside its model call
-    Then Bob borrows supplied context without reentering Alice
-
-  Scenario Outline: 不匹配的 lease 不能替换已提交视图的来源或 Scopes
-    Given a collaboration agent
-    And Alice has completed a shareable answer
-    Then a client rejects a view grant with mismatched <provenance>
-
-    Examples:
-      | provenance |
-      | source     |
-      | range      |

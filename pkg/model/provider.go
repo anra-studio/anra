@@ -26,10 +26,18 @@ func New(provider, name string) (adkmodel.LLM, error) {
 	}
 	var opts []option.RequestOption
 	if apiBase := os.Getenv("OPENAI_BASE_URL"); apiBase != "" {
-		if _, err := url.Parse(apiBase); err != nil {
-			return nil, fmt.Errorf("parse OPENAI_BASE_URL: %w", err)
+		base, err := normalizeOpenAIBaseURL(apiBase)
+		if err != nil {
+			return nil, err
 		}
-		opts = append(opts, option.WithBaseURL(strings.TrimRight(apiBase, "/")+"/"))
+		opts = append(opts, option.WithBaseURL(base))
 	}
 	return openai.NewModel(key, name, opts...)
+}
+
+func normalizeOpenAIBaseURL(base string) (string, error) {
+	if _, err := url.Parse(base); err != nil {
+		return "", fmt.Errorf("parse OPENAI_BASE_URL: %w", err)
+	}
+	return strings.TrimRight(base, "/") + "/", nil
 }

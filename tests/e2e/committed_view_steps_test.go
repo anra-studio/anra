@@ -13,7 +13,6 @@ import (
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
-	tv "github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -46,24 +45,14 @@ func (v recoveredViews) View(ctx context.Context, caller string, ref *pb.Ref) (r
 		return proto.Clone(v.Selected).(*pb.Ref), nil
 	}
 	if ref == nil && v.All {
-		state, e := v.Tape.Get(owner.WithOwnerId(ctx, v.Owner))
-		if e != nil {
-			return nil, e
-		}
-		entries, e := v.Tape.Range(
-			owner.WithOwnerId(ctx, v.Owner),
-			tv.EntryRange{
-				SeqS: te.SeqFromUint64(1),
-				SeqE: state.Scope.SeqE.Next(),
-			},
-		)
+		entries, _, e := readAllEntries(owner.WithOwnerId(ctx, v.Owner), v.Tape)
 		if e != nil {
 			return nil, e
 		}
 		ref = &pb.Ref{
 			Source: a.Source(),
 		}
-		for _, raw := range entries.Raw {
+		for _, raw := range entries {
 			value, e := ae.FromTape(raw)
 			if e != nil {
 				return nil, e

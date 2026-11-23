@@ -12,7 +12,6 @@ import (
 	"github.com/scbizu/tape-go/pkg/runner"
 	"github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
-	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	"github.com/scbizu/tape-go/pkg/tape/view"
 	"google.golang.org/adk/session"
 )
@@ -32,7 +31,7 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		c.env = map[string]string{"OPENAI_BASE_URL": c.s.modelServer.URL + basePath}
 		return nil
 	})
-	sc.Step(`^the environment attempts to select an injected tool$`, func() { c.env = map[string]string{"ANRA_TOOLS": "injected"} })
+	sc.Step(`^the environment attempts to select an injected tool$`, func() { c.env["ANRA_TOOLS"] = "injected" })
 	sc.Step(`^an agent with persisted legacy model and tool history$`, func() error {
 		s := c.s
 		if err := s.openLocalTape(); err != nil {
@@ -105,28 +104,21 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		return nil
 	})
 	sc.Step(`^agent "([^"]*)" has persisted these ADK tool calls and results$`, func(id string, table *godog.Table) error {
-		tape, err := bbolt.NewBboltStorage("default", filepath.Join(c.dataDir(), id+".db"))
+		ctx := owner.WithOwnerId(c.s.ctx, id)
+		tape, err := openBboltTape(ctx, "default", filepath.Join(c.dataDir(), id+".db"))
 		if err != nil {
 			return err
 		}
 		defer tape.Close()
-		ctx := owner.WithOwnerId(c.s.ctx, id)
-		if err := tape.Init(ctx); err != nil {
-			return err
-		}
-		state, err := tape.Get(ctx)
+		values, _, err := readAllEntries(ctx, tape)
 		if err != nil {
 			return err
 		}
-		values, err := tape.Range(ctx, view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: state.Scope.SeqE.Next()})
-		if err != nil {
-			return err
-		}
-		if _, err := inspectLifecycle(values.Raw); err != nil {
+		if _, err := inspectLifecycle(values); err != nil {
 			return err
 		}
 		calls, results := map[string]bool{}, map[string]bool{}
-		for _, raw := range values.Raw {
+		for _, raw := range values {
 			if raw.GetKind().IsAnchor() {
 				continue
 			}
@@ -169,58 +161,23 @@ func initializeADK(sc *godog.ScenarioContext, t *teamScenario) {
 		}
 		return nil
 	})
-	sc.Step(`^I run the CLI with unsupported ADK configuration "([^"]*)"$`, func(problem string) error {
-		args := []string{"run", "--agent", "alice"}
-		switch problem {
-		case "runner flag":
-			args = append(args, "--runner", "echo")
-		case "echo provider", "removed deepseek provider":
-			provider := "echo"
-			if problem == "removed deepseek provider" {
-				provider = "deepseek"
-			}
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ndata-dir = \"cli\"\nprovider = \""+provider+"\"\ntimeout = \"2s\"\nendpoint = \"127.0.0.1:0\"\n"), 0o600); err != nil {
-				return err
-			}
-		case "tool flag":
-			args = append(args, "--tools", "unknown")
-		case "tool config":
-			if err := os.WriteFile(c.configPath(), []byte("[lobby]\naddress = \"http://127.0.0.1:1\"\n[agents.alice]\ntools = [\"bash\"]\n"), 0o600); err != nil {
-				return err
-			}
-		case "invalid API base":
-			c.ensureConfig()
-			c.env = map[string]string{"OPENAI_BASE_URL": "http://[invalid"}
-		default:
-			return fmt.Errorf("unknown ADK problem %q", problem)
-		}
-		c.execute(append(args, "--config", c.configPath(), "hello")...)
-		return nil
-	})
 	sc.Step(`^agent "([^"]*)" has one completed turn enclosing its model and tool steps$`, func(id string) error {
-		tape, err := bbolt.NewBboltStorage("default", filepath.Join(c.dataDir(), id+".db"))
+		ctx := owner.WithOwnerId(c.s.ctx, id)
+		tape, err := openBboltTape(ctx, "default", filepath.Join(c.dataDir(), id+".db"))
 		if err != nil {
 			return err
 		}
 		defer tape.Close()
-		ctx := owner.WithOwnerId(c.s.ctx, id)
-		if err := tape.Init(ctx); err != nil {
-			return err
-		}
-		state, err := tape.Get(ctx)
+		values, _, err := readAllEntries(ctx, tape)
 		if err != nil {
 			return err
 		}
-		values, err := tape.Range(ctx, view.EntryRange{SeqS: entry.SeqFromUint64(1), SeqE: state.Scope.SeqE.Next()})
-		if err != nil {
-			return err
-		}
-		if _, err := inspectLifecycle(values.Raw); err != nil {
+		if _, err := inspectLifecycle(values); err != nil {
 			return err
 		}
 		var turnID, startSeq string
 		starts, closes, modelSteps := 0, 0, 0
-		for _, raw := range values.Raw {
+		for _, raw := range values {
 			if !raw.GetKind().IsAnchor() {
 				if raw.GetKind() == entry.EntryToolCall || raw.GetKind() == entry.EntryAssistant {
 					modelSteps++

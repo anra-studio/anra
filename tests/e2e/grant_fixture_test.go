@@ -12,7 +12,6 @@ import (
 	te "github.com/scbizu/tape-go/pkg/tape/entry"
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
-	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
 	"github.com/scbizu/tape-go/pkg/tape/storage/jsonl"
 	tv "github.com/scbizu/tape-go/pkg/tape/view"
 )
@@ -30,6 +29,7 @@ type grantFixture struct {
 }
 
 func openGrantFixture(ctx context.Context, path string, source *pb.Source, identity string, content storage.TapeStorage, now func() time.Time, useJSONL bool) (*grantFixture, error) {
+	ownerCtx := owner.WithOwnerId(ctx, identity)
 	var store storage.TapeStorage
 	// JSONL keeps no persistent open descriptor; individual operations close files.
 	closeStore := func() error { return nil }
@@ -38,17 +38,17 @@ func openGrantFixture(ctx context.Context, path string, source *pb.Source, ident
 		if err != nil {
 			return nil, err
 		}
+		if err := value.Init(ownerCtx); err != nil {
+			return nil, err
+		}
 		store = value
 	} else {
-		value, err := bbolt.NewBboltStorage("lease/v1", path)
+		value, err := openBboltTape(ownerCtx, "lease/v1", path)
 		if err != nil {
 			return nil, err
 		}
 		store = value
 		closeStore = value.Close
-	}
-	if err := store.Init(owner.WithOwnerId(ctx, identity)); err != nil {
-		return nil, errors.Join(err, closeStore())
 	}
 	journal, err := borrow.NewJournal(
 		ctx,
@@ -97,22 +97,7 @@ func openGrantFixture(ctx context.Context, path string, source *pb.Source, ident
 // decisions inspects physical sidecar records without treating the sidecar as
 // a context Tape. Every entry is a borrowing decision or release.
 func (f *grantFixture) decisions(ctx context.Context) ([]te.EntryLike, te.Seq, error) {
-	ctx = owner.WithOwnerId(ctx, f.owner)
-	state, err := f.storage.Get(ctx)
-	if err != nil {
-		return nil, te.Seq{}, err
-	}
-	if state.Scope.SeqE.IsZero() {
-		return nil, state.Scope.SeqE, nil
-	}
-	batch, err := f.storage.Range(
-		ctx,
-		tv.EntryRange{
-			SeqS: te.SeqFromUint64(1),
-			SeqE: state.Scope.SeqE.Next(),
-		},
-	)
-	return batch.Raw, state.Scope.SeqE, err
+	return readAllEntries(owner.WithOwnerId(ctx, f.owner), f.storage)
 }
 
 // newService injects the same journal and authorizer into every service instance.

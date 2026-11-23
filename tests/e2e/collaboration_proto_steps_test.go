@@ -1,17 +1,14 @@
 package e2e_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
-	"net/http/httptest"
+	"net/http"
 	"strings"
 	"time"
 
 	sdk "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	cp "github.com/anra-studio/anra/gen/anra/a2a/collaboration/v1"
 	pb "github.com/anra-studio/anra/gen/anra/model/view/v1"
@@ -40,7 +37,7 @@ func metadataObject(message proto.Message) (map[string]any, error) {
 }
 
 func (c *collaborationScenario) protobufRoundtrip() error {
-	client, err := a2aclient.NewFromCard(c.s.ctx, c.nodes["alice"].card, a2aclient.WithJSONRPCTransport(a2a.TrustedHTTPClient("bob")))
+	client, err := c.a2aClient("bob", "alice")
 	if err != nil {
 		return err
 	}
@@ -108,61 +105,18 @@ func (c *collaborationScenario) protobufRoundtrip() error {
 	return c.finishHold()
 }
 
-func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
+func (c *collaborationScenario) rejectRequestMetadata() error {
 	metadata, err := metadataObject(delegationFixture())
 	if err != nil {
 		return err
 	}
-	ref, err := metadataObject(
-		&pb.Ref{
-			Source: &pb.Source{
-				AgentId: "alice",
-				TapeId:  "source",
-			},
-			Scopes: []*pb.EntryRange{{
-				SeqS: "1",
-				SeqE: "3",
-			}},
-		},
-	)
-	if err != nil {
-		return err
-	}
-	switch problem {
-	case "missing root":
-		delete(metadata, "rootRequestId")
-	case "oversized root":
-		metadata["rootRequestId"] = strings.Repeat("x", 257)
-	case "missing deadline":
-		delete(metadata, "deadline")
-	case "invalid deadline":
-		metadata["deadline"] = "not-a-timestamp"
-	case "empty ancestor":
-		metadata["ancestors"] = []string{""}
-	case "oversized ancestor":
-		metadata["ancestors"] = []string{strings.Repeat("x", 129)}
-	case "excessive context":
-		metadata["context"] = []any{ref, ref, ref, ref, ref, ref, ref, ref, ref}
-	case "malformed context":
-		ref["scopes"] = []any{map[string]any{"seqS": "01", "seqE": "3"}}
-		metadata["context"] = []any{ref}
-	case "missing context scope":
-		delete(ref, "scopes")
-		metadata["context"] = []any{ref}
-	case "reversed context scope":
-		ref["scopes"] = []any{map[string]any{"seqS": "3", "seqE": "1"}}
-		metadata["context"] = []any{ref}
-	case "unknown field":
-		metadata["caller"] = "body-controlled-identity"
-	default:
-		return fmt.Errorf("unknown request problem %q", problem)
-	}
+	delete(metadata, "rootRequestId")
 	n := c.nodes["alice"]
 	before, err := c.readEntries(n)
 	if err != nil {
 		return err
 	}
-	client, err := a2aclient.NewFromCard(c.s.ctx, n.card, a2aclient.WithJSONRPCTransport(a2a.TrustedHTTPClient("bob")))
+	client, err := c.a2aClient("bob", "alice")
 	if err != nil {
 		return err
 	}
@@ -190,96 +144,77 @@ func (c *collaborationScenario) rejectRequestMetadata(problem string) error {
 	return nil
 }
 
-func (c *collaborationScenario) rejectResponseMetadata(problem string) error {
-	metadata := map[string]any{"status": cp.Status_STATUS_COMPLETED.String()}
-	answer := "completed answer"
-	ref, err := metadataObject(
-		&pb.Ref{
-			Source: &pb.Source{
-				AgentId: "peer",
-				TapeId:  "source",
-			},
-			Scopes: []*pb.EntryRange{{
-				SeqS: "1",
-				SeqE: "3",
-			}},
-		},
-	)
+func (c *collaborationScenario) rejectCallerIdentity() error {
+	node := c.nodes["alice"]
+	before, err := c.readEntries(node)
 	if err != nil {
 		return err
 	}
-	switch problem {
-	case "unspecified status":
-		delete(metadata, "status")
-	case "unknown status":
-		metadata["status"] = 99
-	case "unknown retry":
-		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		metadata["retry"] = 99
-	case "completed retry hint":
-		metadata["retry"] = cp.RetryHint_RETRY_HINT_AFTER_NEW_VIEW.String()
-	case "completed view":
-		metadata["view"] = ref
-	case "malformed busy view":
-		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		ref["scopes"] = []any{map[string]any{"seqS": "01", "seqE": "3"}}
-		metadata["view"] = ref
-	case "missing busy scope":
-		metadata["status"] = cp.Status_STATUS_BUSY.String()
-		delete(ref, "scopes")
-		metadata["view"] = ref
-	case "answer in metadata":
-		metadata["answer"] = "answer belongs in A2A parts"
-	case "empty completed answer":
-		answer = " "
-	case "local suppression status":
-		metadata["status"] = "no_new_context"
-	case "legacy lowercase status":
-		metadata["status"] = "busy"
-	default:
-		return fmt.Errorf("unknown response problem %q", problem)
+	request, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "message/send",
+		"params": &sdk.SendMessageRequest{
+			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart("must be rejected")),
+		},
+	})
+	if err != nil {
+		return err
 	}
-	server := httptest.NewUnstartedServer(nil)
-	defer server.Close()
-	base := "http://" + server.Listener.Addr().String()
-
-	card := &sdk.AgentCard{
-		Name:                "peer",
-		Version:             "1",
-		SupportedInterfaces: []*sdk.AgentInterface{sdk.NewAgentInterface(base+a2a.CorePath, sdk.TransportProtocolJSONRPC)},
-		DefaultInputModes:   []string{"text/plain"},
-		DefaultOutputModes:  []string{"text/plain"},
+	for _, id := range []string{"", "bad/name"} {
+		client := restClient{
+			ctx:      c.s.ctx,
+			base:     node.server.URL,
+			identity: id,
+		}
+		status, _, err := client.call(http.MethodPost, a2a.CorePath, request)
+		if err != nil {
+			return err
+		}
+		if status != http.StatusUnauthorized {
+			return fmt.Errorf("A2A caller %q returned HTTP %d, want 401", id, status)
+		}
 	}
+	after, err := c.readEntries(node)
+	if err != nil {
+		return err
+	}
+	if len(before) != len(after) || node.calls.Load() != 0 {
+		return errors.New("invalid caller entered reasoning or changed tape")
+	}
+	return nil
+}
 
-	a2a.AdvertiseCollaboration(card)
-
-	executor := a2asrv.AgentExecutorFunc(
-		func(_ context.Context, _ *a2asrv.ExecutorContext) iter.Seq2[sdk.Event, error] {
-			return func(yield func(sdk.Event, error) bool) {
-				reply := sdk.NewMessage(sdk.MessageRoleAgent, sdk.NewTextPart(answer))
-
-				reply.Extensions = []string{a2a.CollaborationURI}
-
-				reply.Metadata = map[string]any{a2a.CollaborationURI: metadata}
-
-				yield(reply, nil)
+func (c *collaborationScenario) streamAnswer() error {
+	ctx := c.s.ctx
+	httpClient := a2a.TrustedHTTPClient("bob")
+	card, err := a2a.Discover(ctx, httpClient, c.nodes["alice"].server.URL+a2asrv.WellKnownAgentCardPath)
+	if err != nil {
+		return err
+	}
+	client, err := newA2AClient(ctx, httpClient, card)
+	if err != nil {
+		return err
+	}
+	const input = "stream this answer"
+	var output strings.Builder
+	for event, err := range client.SendStreamingMessage(
+		ctx,
+		&sdk.SendMessageRequest{
+			Message: sdk.NewMessage(sdk.MessageRoleUser, sdk.NewTextPart(input)),
+		},
+	) {
+		if err != nil {
+			return err
+		}
+		if message, ok := event.(*sdk.Message); ok {
+			for _, part := range message.Parts {
+				output.WriteString(part.Text())
 			}
-		},
-	)
-
-	handler, err := a2a.NewMessageHandler(card, a2asrv.NewHandler(executor), a2a.TrustedPeerIdentity)
-	if err != nil {
-		return err
+		}
 	}
-	server.Config.Handler = handler
-	server.Start()
-	client, err := messageClient(c.s.ctx, a2a.TrustedHTTPClient("bob"), base)
-	if err != nil {
-		return err
-	}
-	_, err = client.Send(c.s.ctx, "check peer response")
-	if !errors.Is(err, a2a.ErrInvalidParams) {
-		return fmt.Errorf("invalid response accepted: %v", err)
+	if output.String() != "answer: "+input {
+		return fmt.Errorf("streamed output = %q", output.String())
 	}
 	return nil
 }

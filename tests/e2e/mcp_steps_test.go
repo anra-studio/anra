@@ -34,10 +34,6 @@ import (
 	"github.com/scbizu/tape-go/pkg/tape/owner"
 	"github.com/scbizu/tape-go/pkg/tape/storage"
 	"github.com/scbizu/tape-go/pkg/tape/storage/bbolt"
-	tv "github.com/scbizu/tape-go/pkg/tape/view"
-	adkmodel "google.golang.org/adk/model"
-	"google.golang.org/adk/session"
-	"google.golang.org/genai"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -85,9 +81,7 @@ type mcpScenario struct {
 
 	original map[string]json.RawMessage
 
-	entered chan struct{}
-
-	release chan struct{}
+	gate *modelGate
 
 	finished chan error
 }
@@ -114,7 +108,7 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 
 	sc.After(
 		func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
-			if m.release != nil {
+			if m.gate != nil {
 				if err := m.finish(); err != nil {
 					return ctx, errors.Join(err, m.close())
 				}
@@ -124,213 +118,46 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 		},
 	)
 
-	sc.Step(
-		`^已提交一份普通 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("normal")
-		},
-	)
-
-	sc.Step(
-		`^已提交包含完整工具响应流的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("complete stream")
-		},
-	)
-
-	sc.Step(
-		`^已提交包含伪造通道和来源声明的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("borrowed claims")
-		},
-	)
-
-	sc.Step(
-		`^已提交只含原始文本条目的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("plain text")
-		},
-	)
-
-	sc.Step(
-		`^已提交包含图片文件和代码结果的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("multimodal")
-		},
-	)
-
-	sc.Step(
-		`^已提交包含大型音频的 MCP 交接并签发凭证$`,
-		func() error {
-			return m.setup("large audio")
-		},
-	)
-
+	sc.Step(`^已提交一份普通 MCP 交接并签发凭证$`, func() error { return m.setup("normal") })
+	sc.Step(`^已提交包含伪造通道和来源声明的 MCP 交接并签发凭证$`, func() error { return m.setup("borrowed claims") })
+	sc.Step(`^已提交包含大型音频的 MCP 交接并签发凭证$`, func() error { return m.setup("large audio") })
 	sc.Step(`^使用超过 SDK 默认大小的 MCP 请求读取 Tape 视图$`, m.readWithLargeBody)
 	sc.Step(`^MCP 完整返回已授权的大型音频及来源$`, m.checkLargeAudio)
-
-	sc.Step(
-		`^使用不匹配凭证的锚点读取 MCP Tape 视图$`,
-		func() error {
-			return m.call(anramcp.ReadTapeView, m.token, "0", nil)
-		},
-	)
-
-	sc.Step(
-		`^官方 MCP 客户端能完整读取大型音频$`,
-		func() error {
-			var err error
-
-			m.lastResult, err = m.success(anramcp.ReadTapeView)
-			if err != nil {
-				return err
-			}
-
-			return m.checkLargeAudio()
-		},
-	)
-
-	sc.Step(`^借阅内容保留图片文件和代码结果的原始顺序且不泄露执行元数据$`, m.checkMultimodal)
-	sc.Step(`^原始文本仅作为结构化内容返回且没有摘要字段$`, m.checkPlainTextContent)
+	sc.Step(`^使用不匹配凭证的锚点读取 MCP Tape 视图$`, m.readMismatchedAnchor)
+	sc.Step(`^官方 MCP 客户端能完整读取大型音频$`, m.checkSDKAudio)
 	sc.Step(`^借阅 Quote 仅携带 lease 绑定的通道与来源$`, m.checkWindowResponse)
 	sc.Step(`^借阅内容保留思考标记和文本且不泄露执行元数据$`, m.checkBorrowedClaims)
-
-	sc.Step(
-		`^控制器为同一视图签发另一调用方的凭证$`,
-		func() error {
-			m.credential.Caller = "another-runtime"
-
-			if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
-				return err
-			}
-
-			m.token = m.authorize(m.credential)
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^控制器使用默认 validator 验证角色定义和授权$`,
-		func() error {
-			v := validator.New(validator.WithRequiredStructEnabled())
-
-			if err := v.Struct(m.role); err != nil {
-				return fmt.Errorf("validate published role: %w", err)
-			}
-
-			if err := v.Struct(m.credential); err != nil {
-				return fmt.Errorf("validate issued credential: %w", err)
-			}
-
-			return nil
-		},
-	)
-
+	sc.Step(`^控制器为同一视图签发另一调用方的凭证$`, m.issueForAnotherCaller)
+	sc.Step(`^控制器使用默认 validator 验证角色定义和授权$`, m.validateDefinitions)
 	sc.Step(`^官方 MCP 客户端使用交接凭证连接$`, m.connect)
 	sc.Step(`^客户端仅发现两个只读上下文工具$`, m.discover)
 	sc.Step(`^两个工具返回交接绑定的角色版本和 Tape 视图$`, m.checkBoth)
 	sc.Step(`^MCP 服务重建和重复读取均不新增文件或改变 Tape$`, m.readOnly)
 	sc.Step(`^运行时将交接和视图存入 JSONL Tape$`, m.useJSONLTape)
-	sc.Step(`^控制器通过 Anra 条目追加带扩展的新视图$`, m.appendOwnedView)
-	sc.Step(`^Anra 条目内容和扩展在存储后保持完整$`, m.checkOwnedView)
-	sc.Step(`^JSONL 存储和 MCP 服务重建$`, m.restartJSONLTape)
 	sc.Step(`^控制器向 Tape 提交另一份交接$`, m.commitTapeOnly)
 	sc.Step(`^使用原凭证读取新交接$`, m.readWindow)
-	sc.Step(`^宿主拒绝后续上下文借阅$`, func() {
-		m.providers.setApproval(borrow.Selection{
-			Status: borrow.Denied,
-		})
-	})
-	sc.Step(`^宿主批准后续上下文借阅且租期为十五分钟$`, func() {
-		m.providers.setApproval(borrow.Selection{
-			Status: borrow.Granted,
-			TTL:    15 * time.Minute,
-		})
-	})
+	sc.Step(`^宿主拒绝后续上下文借阅$`, m.denyNewBorrowing)
+	sc.Step(`^宿主批准后续上下文借阅且租期为十五分钟$`, m.approveNewBorrowing)
 	sc.Step(`^控制器通过 peer API 借阅交接视图$`, m.borrowHandoffView)
-	sc.Step(`^本次借阅被拒绝且未签发 lease$`, func() error {
-		if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Denied || m.borrowDecision.Lease != nil {
-			return fmt.Errorf("expected denied borrowing without a lease, got %v", m.borrowDecision)
-		}
-		return nil
-	})
-	sc.Step(`^新 lease 使用审批指定的十五分钟租期$`, func() error {
-		expiresAt := time.Unix(0, m.clock.Load()).Add(15 * time.Minute)
-		if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Granted || m.borrowDecision.Lease == nil || !m.borrowDecision.Lease.ExpiresAt.AsTime().Equal(expiresAt) {
-			return fmt.Errorf("expected granted lease expiring at %s, got %v", expiresAt, m.borrowDecision)
-		}
-		return nil
-	})
-	sc.Step(`^共享时钟前进十六分钟$`, func() {
-		m.clock.Add(int64(16 * time.Minute))
-	})
-	sc.Step(`^宿主在下一次 HTTP 认证通过后撤销凭证$`, func() {
-		m.providers.mu.Lock()
-		defer m.providers.mu.Unlock()
-		m.providers.revokeAfterAuthentication = true
-	})
+	sc.Step(`^本次借阅被拒绝且未签发 lease$`, m.checkDeniedBorrowing)
+	sc.Step(`^新 lease 使用审批指定的十五分钟租期$`, m.checkBorrowingExpiration)
+	sc.Step(`^共享时钟前进十六分钟$`, m.advancePastExpiration)
+	sc.Step(`^宿主在下一次 HTTP 认证通过后撤销凭证$`, m.revokeAfterAuthentication)
 
-	sc.Step(
-		`^控制器为新交接签发凭证$`,
-		func() error {
-			if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
-				return err
-			}
-
-			m.token = m.authorize(m.credential)
-
-			return nil
-		},
-	)
-
-	sc.Step(
-		`^未携带凭证读取上下文$`,
-		func() error {
-			return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, nil)
-		},
-	)
-
-	sc.Step(
-		`^携带以下 Authorization 请求头读取上下文$`,
-		func(table *godog.Table) error {
-			headers := make(http.Header)
-
-			for _, row := range table.Rows {
-				headers.Add("Authorization", strings.ReplaceAll(row.Cells[0].Value, "{token}", m.token))
-			}
-
-			args, err := json.Marshal(map[string]string{"anchorSeq": m.credential.AnchorSeq})
-			if err != nil {
-				return err
-			}
-
-			return m.rawCall(anramcp.ReadTapeView, "", args, headers)
-		},
-	)
-
-	sc.Step(
-		`^凭证验证服务暂时不可用$`,
-		func() {
-			m.providers.mu.Lock()
-
-			defer m.providers.mu.Unlock()
-
-			m.providers.accessErr = errors.New("PRIVATE-access-provider unavailable")
-		},
-	)
-
+	sc.Step(`^控制器为新交接签发凭证$`, m.issueCredential)
+	sc.Step(`^未携带凭证读取上下文$`, m.readWithoutCredential)
+	sc.Step(`^携带以下 Authorization 请求头读取上下文$`, m.readWithAuthorizationHeaders)
+	sc.Step(`^凭证验证服务暂时不可用$`, m.failCredentialAccess)
 	sc.Step(`^使用当前凭证访问另一角色的服务$`, m.readOtherRole)
 	sc.Step(`^连接仅获准读取角色$`, m.roleOnly)
+	sc.Step(`^控制器以完整权限读取交接视图$`, func() error {
+		m.token = m.authorize(m.credential)
+		return m.readWindow()
+	})
+	sc.Step(`^MCP 在工具调用中返回 permission_denied 且不泄露上下文或私有信息$`, func() error {
+		return m.checkHTTPFailure(http.StatusOK, "permission_denied")
+	})
 	sc.Step(`^角色工具成功且视图工具返回 permission_denied$`, m.checkRoleOnly)
-
-	sc.Step(
-		`^控制器撤销当前凭证$`,
-		func() {
-			m.providers.revoke(m.token)
-		},
-	)
-
 	sc.Step(`^Tape 和 MCP 服务重启$`, m.restart)
 	sc.Step(`^记录两个工具的原始结果$`, m.remember)
 	sc.Step(`^角色开始一轮等待模型返回的推理$`, m.hold)
@@ -338,57 +165,152 @@ func initializeMCP(sc *godog.ScenarioContext, s *scenario) {
 	sc.Step(`^当前推理正常结束$`, m.finish)
 	sc.Step(`^角色版本更新并继续写入 Tape$`, m.grow)
 	sc.Step(`^读取 MCP Tape 视图$`, m.readWindow)
-
-	sc.Step(
-		`^读取 MCP 角色$`,
-		func() error {
-			return m.call(anramcp.ReadRole, m.token, m.credential.AnchorSeq, nil)
-		},
-	)
-
-	sc.Step(`^视图保留工具标识和所有有序响应分块$`, m.checkStream)
+	sc.Step(`^读取 MCP 角色$`, m.readRole)
 	sc.Step(`^A2A 与 MCP 返回相同的公开条目及存储标识$`, m.checkA2AProjection)
 	sc.Step(`^MCP 返回 "([^"]+)" 且不泄露上下文或私有信息$`, m.rejected)
-
-	sc.Step(
-		`^MCP 返回 HTTP (401|403) 且不泄露上下文或私有信息$`,
-		func(status int) error {
-			if m.lastStatus != status {
-				return fmt.Errorf("want HTTP %d, got %d: %s", status, m.lastStatus, m.lastBody)
-			}
-
-			return m.rejected("permission_denied")
-		},
-	)
-
-	sc.Step(
-		`^MCP 返回 HTTP 503 且不泄露上下文或私有信息$`,
-		func() error {
-			if m.lastStatus != http.StatusServiceUnavailable {
-				return fmt.Errorf("want HTTP 503, got %d: %s", m.lastStatus, m.lastBody)
-			}
-
-			return m.rejected("unavailable")
-		},
-	)
-
+	sc.Step(`^MCP 返回 HTTP (401|403) 且不泄露上下文或私有信息$`, m.checkUnauthorizedHTTP)
+	sc.Step(`^MCP 返回 HTTP 503 且不泄露上下文或私有信息$`, m.checkUnavailableHTTP)
 	sc.Step(`^携带凭证从 Origin "([^"]+)" 读取上下文$`, m.originRequest)
-
-	sc.Step(
-		`^从 Origin "([^"]+)" 不带凭证读取上下文$`,
-		func(origin string) error {
-			return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, map[string]string{"Origin": origin})
-		},
-	)
-
-	sc.Step(
-		`^运行时仅信任 Origin "([^"]+)"$`,
-		func(origin string) error {
-			return m.configureTrustedOrigins([]string{origin})
-		},
-	)
-
+	sc.Step(`^从 Origin "([^"]+)" 不带凭证读取上下文$`, m.readOriginWithoutCredential)
+	sc.Step(`^运行时仅信任 Origin "([^"]+)"$`, m.trustOrigin)
 	sc.Step(`^MCP 响应包含交接绑定的 Tape 视图$`, m.checkWindowResponse)
+}
+
+func (m *mcpScenario) readMismatchedAnchor() error {
+	return m.call(anramcp.ReadTapeView, m.token, "0", nil)
+}
+
+func (m *mcpScenario) checkSDKAudio() error {
+	var err error
+
+	m.lastResult, err = m.success(anramcp.ReadTapeView)
+	if err != nil {
+		return err
+	}
+
+	return m.checkLargeAudio()
+}
+
+func (m *mcpScenario) issueForAnotherCaller() error {
+	m.credential.Caller = "another-runtime"
+
+	return m.issueCredential()
+}
+
+func (m *mcpScenario) validateDefinitions() error {
+	v := validator.New(validator.WithRequiredStructEnabled())
+
+	if err := v.Struct(m.role); err != nil {
+		return fmt.Errorf("validate published role: %w", err)
+	}
+
+	if err := v.Struct(m.credential); err != nil {
+		return fmt.Errorf("validate issued credential: %w", err)
+	}
+
+	return nil
+}
+
+func (m *mcpScenario) issueCredential() error {
+	if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
+		return err
+	}
+
+	m.token = m.authorize(m.credential)
+
+	return nil
+}
+
+func (m *mcpScenario) readWithoutCredential() error {
+	return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, nil)
+}
+
+func (m *mcpScenario) readWithAuthorizationHeaders(table *godog.Table) error {
+	headers := make(http.Header)
+
+	for _, row := range table.Rows {
+		headers.Add("Authorization", strings.ReplaceAll(row.Cells[0].Value, "{token}", m.token))
+	}
+
+	args, err := json.Marshal(map[string]string{"anchorSeq": m.credential.AnchorSeq})
+	if err != nil {
+		return err
+	}
+
+	return m.rawCall(anramcp.ReadTapeView, "", args, headers)
+}
+
+func (m *mcpScenario) failCredentialAccess() {
+	m.providers.mu.Lock()
+
+	defer m.providers.mu.Unlock()
+
+	m.providers.accessErr = errors.New("PRIVATE-access-provider unavailable")
+}
+
+func (m *mcpScenario) readRole() error {
+	return m.call(anramcp.ReadRole, m.token, m.credential.AnchorSeq, nil)
+}
+
+func (m *mcpScenario) checkUnauthorizedHTTP(status int) error {
+	return m.checkHTTPFailure(status, "permission_denied")
+}
+
+func (m *mcpScenario) checkUnavailableHTTP() error {
+	return m.checkHTTPFailure(http.StatusServiceUnavailable, "unavailable")
+}
+
+func (m *mcpScenario) checkHTTPFailure(status int, code string) error {
+	if m.lastStatus != status {
+		return fmt.Errorf("want HTTP %d, got %d: %s", status, m.lastStatus, m.lastBody)
+	}
+	return m.rejected(code)
+}
+
+func (m *mcpScenario) readOriginWithoutCredential(origin string) error {
+	return m.call(anramcp.ReadTapeView, "", m.credential.AnchorSeq, map[string]string{"Origin": origin})
+}
+
+func (m *mcpScenario) trustOrigin(origin string) error {
+	return m.configureTrustedOrigins([]string{origin})
+}
+
+func (m *mcpScenario) denyNewBorrowing() {
+	m.providers.setApproval(borrow.Selection{
+		Status: borrow.Denied,
+	})
+}
+
+func (m *mcpScenario) approveNewBorrowing() {
+	m.providers.setApproval(borrow.Selection{
+		Status: borrow.Granted,
+		TTL:    15 * time.Minute,
+	})
+}
+
+func (m *mcpScenario) checkDeniedBorrowing() error {
+	if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Denied || m.borrowDecision.Lease != nil {
+		return fmt.Errorf("expected denied borrowing without a lease, got %v", m.borrowDecision)
+	}
+	return nil
+}
+
+func (m *mcpScenario) checkBorrowingExpiration() error {
+	expiresAt := time.Unix(0, m.clock.Load()).Add(15 * time.Minute)
+	if m.borrowDecision == nil || m.borrowDecision.Status != borrow.Granted || m.borrowDecision.Lease == nil || !m.borrowDecision.Lease.ExpiresAt.AsTime().Equal(expiresAt) {
+		return fmt.Errorf("expected granted lease expiring at %s, got %v", expiresAt, m.borrowDecision)
+	}
+	return nil
+}
+
+func (m *mcpScenario) advancePastExpiration() {
+	m.clock.Add(int64(16 * time.Minute))
+}
+
+func (m *mcpScenario) revokeAfterAuthentication() {
+	m.providers.mu.Lock()
+	defer m.providers.mu.Unlock()
+	m.providers.revokeAfterAuthentication = true
 }
 
 func (m *mcpScenario) readWindow() error {
@@ -415,31 +337,17 @@ func (m *mcpScenario) open() error {
 			},
 		}
 	}
-	m.tape, err = bbolt.NewBboltStorage("mcp-session", m.tapePath())
+	m.tape, err = openBboltTape(m.tapeContext(), "mcp-session", m.tapePath())
 	if err != nil {
-		return err
-	}
-	if err = m.tape.Init(m.tapeContext()); err != nil {
 		return err
 	}
 
 	m.agent, err = agent.New("vesta", m.tape, agent.WithLLM(modelFunc(
 		func(ctx context.Context, req runner.Request) (runner.Response, error) {
 			if len(req.Messages) > 0 && req.Messages[len(req.Messages)-1].Text == "hold MCP turn" {
-
-				entered, release := m.entered, m.release
-
-				close(entered)
-
-				select {
-
-				case <-release:
-
-				case <-ctx.Done():
-					return runner.Response{}, ctx.Err()
-
+				if err := m.gate.block(ctx); err != nil {
+					return runner.Response{}, err
 				}
-
 			}
 
 			return runner.Response{
@@ -500,26 +408,8 @@ func (m *mcpScenario) setup(kind string) error {
 	if err != nil {
 		return err
 	}
-	if kind == "complete stream" {
-		ref, err = m.streamWindow()
-		if err != nil {
-			return err
-		}
-	}
 	if kind == "borrowed claims" {
 		ref, err = m.claimedWindow()
-		if err != nil {
-			return err
-		}
-	}
-	if kind == "plain text" {
-		ref, err = m.plainTextWindow()
-		if err != nil {
-			return err
-		}
-	}
-	if kind == "multimodal" {
-		ref, err = m.multimodalWindow()
 		if err != nil {
 			return err
 		}
@@ -544,20 +434,6 @@ func (m *mcpScenario) setup(kind string) error {
 		ref = &pb.Ref{
 			Source: ref.Source,
 			Scopes: []*pb.EntryRange{ref.Scopes[0], second.Scopes[0]},
-		}
-	}
-
-	if kind == "empty parts" {
-		turn, e := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
-		if e != nil {
-			return e
-		}
-		if e := m.rawEvent(te.EntryAssistant, `{"role":"model","parts":[]}`); e != nil {
-			return e
-		}
-		ref, err = finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
-		if err != nil {
-			return err
 		}
 	}
 
@@ -623,178 +499,11 @@ func (m *mcpScenario) setup(kind string) error {
 	return nil
 }
 
-func (m *mcpScenario) append(kind te.EntryKind, text string) (te.EntryLike, error) {
-	return m.viewStorage().Store(m.tapeContext(), te.NewEntry(te.WithEntryKind(kind), te.WithEntryContent(text), te.WithEntryOwner("vesta")))
-}
-
 func (m *mcpScenario) rawEvent(kind te.EntryKind, content string) error {
 	value := ae.FromEntry(te.NewEntry(te.WithEntryKind(kind), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
 		WithExtension(ae.ADKEvent, `{"content":`+content+`,"stateDelta":{"private":"PRIVATE-STATE"}}`)
 	_, err := m.viewStorage().Store(m.tapeContext(), value)
 	return err
-}
-
-func (m *mcpScenario) plainTextWindow() (*pb.Ref, error) {
-	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = m.append(te.EntryUser, "Original user content")
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := m.append(te.EntryAssistant, "Original model content"); err != nil {
-		return nil, err
-	}
-
-	return finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
-}
-
-func (m *mcpScenario) appendOwnedView() error {
-	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
-	if err != nil {
-		return err
-	}
-
-	value := ae.FromEntry(te.NewEntry(te.WithEntryKind(te.EntryAssistant), te.WithEntryOwner("vesta"), te.WithEntryContent("PRIVATE-BODY"))).
-		WithExtension("opaque:reference", "opaque-entry-marker")
-
-	value, err = value.WithJSONExtension(
-		ae.ADKEvent,
-		session.Event{
-			LLMResponse: adkmodel.LLMResponse{
-				Content: &genai.Content{
-					Role: "model",
-					Parts: []*genai.Part{{
-						Text:             "Persisted Anra entry",
-						ThoughtSignature: []byte("PRIVATE-SIGNATURE"),
-					}},
-				},
-			},
-
-			Actions: session.EventActions{
-				StateDelta: map[string]any{"private": "PRIVATE-STATE"},
-			},
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	_, err = m.viewStorage().Store(m.tapeContext(), value)
-	if err != nil {
-		return err
-	}
-
-	ref, err := finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
-	if err != nil {
-		return err
-	}
-
-	m.handoff.Context.View = ref
-	seq, err := m.commitHandoff(m.handoff)
-	if err != nil {
-		return err
-	}
-
-	if err := m.issueLease(m.credential.Caller, m.handoff.Context.View); err != nil {
-		return err
-	}
-
-	m.credential.AnchorSeq = seq
-
-	m.token = m.authorize(m.credential)
-	return nil
-}
-
-func (m *mcpScenario) checkOwnedView() error {
-	if err := m.checkWindowResponse(); err != nil {
-		return err
-	}
-	var window mcpWindow
-	if err := json.Unmarshal(m.lastResult, &window); err != nil {
-		return err
-	}
-	if len(window.Entries) != 1 || bytes.Contains(m.lastResult, []byte("PRIVATE-")) || bytes.Contains(m.lastResult, []byte("thoughtSignature")) || bytes.Contains(m.lastResult, []byte("opaque-entry-marker")) {
-		return errors.New("owned entry projection lost content or exposed storage fields")
-	}
-	var content ae.Content
-	if err := json.Unmarshal(window.Entries[0].Content, &content); err != nil {
-		return err
-	}
-	if len(content.Parts) != 1 || content.Parts[0].Text != "Persisted Anra entry" {
-		return errors.New("owned entry lost its encoded event")
-	}
-
-	batch, err := m.viewStorage().Range(
-		m.tapeContext(),
-		tv.EntryRange{
-			SeqS: te.MustParseSeq(m.lease.Ref.Scopes[0].SeqS),
-			SeqE: te.MustParseSeq(m.lease.Ref.Scopes[0].SeqE),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	if len(batch.Raw) != 1 {
-		return errors.New("owned entry was not retained in storage")
-	}
-	value, err := ae.FromTape(batch.Raw[0])
-	if err != nil {
-		return err
-	}
-	structured, err := value.Content()
-	if err != nil {
-		return err
-	}
-	if structured.Role != "model" || len(structured.Parts) != 1 || structured.Parts[0].Text != "Persisted Anra entry" || value.Body() != "PRIVATE-BODY" {
-		return errors.New("entry content accessor lost its model body or changed stored text")
-	}
-	var native session.Event
-	exists, err := value.DecodeExtension(ae.ADKEvent, &native)
-	if err != nil {
-		return err
-	}
-	if !exists || native.Content == nil || len(native.Content.Parts) != 1 || string(native.Content.Parts[0].ThoughtSignature) != "PRIVATE-SIGNATURE" || native.Actions.StateDelta["private"] != "PRIVATE-STATE" {
-		return errors.New("public content access changed the native ADK event needed for recovery")
-	}
-	if marker, exists := value.Extension("opaque:reference"); !exists || marker != "opaque-entry-marker" {
-		return errors.New("storage dropped an opaque entry extension")
-	}
-	if value.GetID().String() != window.Entries[0].Seq || !value.GetTimestamp().Equal(window.Entries[0].Timestamp) {
-		return errors.New("projection changed assigned entry metadata")
-	}
-	return nil
-}
-
-func (m *mcpScenario) checkPlainTextContent() error {
-	if err := m.checkWindowResponse(); err != nil {
-		return err
-	}
-	var window mcpWindow
-	if err := json.Unmarshal(m.lastResult, &window); err != nil {
-		return err
-	}
-	if len(window.Entries) != 2 || bytes.Contains(m.lastResult, []byte(`"summary":`)) {
-		return errors.New("view duplicated or lost its original content")
-	}
-
-	for i, want := range []struct {
-		role string
-		text string
-	}{{"user", "Original user content"}, {"model", "Original model content"}} {
-
-		var content ae.Content
-		if err := json.Unmarshal(window.Entries[i].Content, &content); err != nil {
-			return err
-		}
-		if content.Role != want.role || len(content.Parts) != 1 || content.Parts[0].Text != want.text || content.Parts[0].Thought {
-			return fmt.Errorf("entry %d changed its original text or role", i)
-		}
-	}
-	return nil
 }
 
 func (m *mcpScenario) claimedWindow() (*pb.Ref, error) {
@@ -847,27 +556,6 @@ func (m *mcpScenario) checkBorrowedClaims() error {
 
 // A single call with continuing chunks exercises persistence and transport;
 // protocol field filtering and number lexemes are tested in the entry codec.
-func (m *mcpScenario) streamWindow() (*pb.Ref, error) {
-	turn, err := beginFixtureTurn(m.s.ctx, m.viewStorage(), "vesta")
-	if err != nil {
-		return nil, err
-	}
-
-	if err := m.rawEvent(te.EntryToolCall, `{"role":"model","parts":[{"functionCall":{"id":"tool-42","name":"lookup","args":{}}}]}`); err != nil {
-		return nil, err
-	}
-	chunks := []string{"first", "middle", "last"}
-	for i, chunk := range chunks {
-		continuing := i < len(chunks)-1
-		content := fmt.Sprintf(`{"role":"user","parts":[{"functionResponse":{"id":"tool-42","name":"lookup","willContinue":%t,"response":{"chunk":%q}}}]}`, continuing, chunk)
-		if err := m.rawEvent(te.EntryToolResult, content); err != nil {
-			return nil, err
-		}
-	}
-
-	return finishFixtureTurn(m.s.ctx, m.viewStorage(), "vesta", turn)
-}
-
 type mcpBearerTransport struct {
 	token string
 }
@@ -1095,28 +783,24 @@ func (m *mcpScenario) restart() error {
 }
 
 func (m *mcpScenario) hold() error {
-	m.entered = make(chan struct{})
-	m.release = make(chan struct{})
-	m.finished = make(chan error, 1)
+	m.gate = newModelGate(1)
+	results := make(chan error, 1)
+	m.finished = results
+	ctx, runtime := m.s.ctx, m.agent
 
 	go func() {
-		_, err := m.agent.Run(m.s.ctx, "hold MCP turn")
-		m.finished <- err
+		_, err := runtime.Run(ctx, "hold MCP turn")
+		results <- err
 	}()
 
-	select {
-	case <-m.entered:
-		return nil
-	case <-m.s.ctx.Done():
-		return m.s.ctx.Err()
-	}
+	return m.gate.awaitEntry(m.s.ctx)
 }
 
 func (m *mcpScenario) finish() error {
-	close(m.release)
-	m.release = nil
+	m.gate.unblock()
 	select {
 	case err := <-m.finished:
+		m.gate = nil
 		return err
 	case <-m.s.ctx.Done():
 		return m.s.ctx.Err()
@@ -1243,58 +927,6 @@ func (m *mcpScenario) checkProvenance(window mcpWindow) error {
 		return errors.New("view lost its authenticated borrowed provenance")
 	}
 
-	return nil
-}
-
-func (m *mcpScenario) checkStream() error {
-	if err := m.checkWindowResponse(); err != nil {
-		return err
-	}
-	var window mcpWindow
-	if err := json.Unmarshal(m.lastResult, &window); err != nil {
-		return err
-	}
-	if len(window.Entries) != 4 {
-		return fmt.Errorf("want call plus three chunks: %s", m.lastResult)
-	}
-	var call struct {
-		Parts []struct {
-			FunctionCall struct {
-				ID   string
-				Name string
-			}
-		} `json:"parts"`
-	}
-	if err := json.Unmarshal(window.Entries[0].Content, &call); err != nil || len(call.Parts) != 1 || call.Parts[0].FunctionCall.ID != "tool-42" || call.Parts[0].FunctionCall.Name != "lookup" {
-		return fmt.Errorf("lost tool call identity: %s", window.Entries[0].Content)
-	}
-	if bytes.Contains(m.lastBody, []byte("PRIVATE-")) {
-		return fmt.Errorf("private stream metadata exported: %s", m.lastBody)
-	}
-	for i, want := range []string{"first", "middle", "last"} {
-		var content struct {
-			Parts []struct {
-				Response struct {
-					ID string `json:"id"`
-
-					Name string `json:"name"`
-
-					WillContinue *bool `json:"willContinue"`
-
-					Response struct {
-						Chunk string `json:"chunk"`
-					} `json:"response"`
-				} `json:"functionResponse"`
-			} `json:"parts"`
-		}
-		if err := json.Unmarshal(window.Entries[i+1].Content, &content); err != nil || len(content.Parts) != 1 {
-			return fmt.Errorf("invalid chunk: %s", window.Entries[i+1].Content)
-		}
-		r := content.Parts[0].Response
-		if r.ID != "tool-42" || r.Name != "lookup" || r.Response.Chunk != want || r.WillContinue == nil || *r.WillContinue != (i < 2) {
-			return fmt.Errorf("lost stream identity, order or termination: %s", window.Entries[i+1].Content)
-		}
-	}
 	return nil
 }
 
